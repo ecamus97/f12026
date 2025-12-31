@@ -36,6 +36,7 @@ interface RaceDriverState {
   retired: boolean;
   finished: boolean;
   finishOrder: number;
+  justOvertaken: boolean;
 }
 
 interface RacePhaseProps {
@@ -65,10 +66,7 @@ type BattleInfo = {
   result: "overtake" | "defend";
 };
 
-const RACE_DISTANCE = 50; // Total distance units to complete
-
-// Probabilidad por turno (por piloto) de intentar un chequeo de pits.
-// La tirada real (d50) + checkPitStop() ya filtran bastante, así que este valor puede ser “moderado”.
+const RACE_DISTANCE = 50;
 const PIT_CHECK_CHANCE_PER_TURN = 0.07;
 
 function isPlayable(d: RaceDriverState) {
@@ -92,7 +90,7 @@ function resolveBattle(attacker: RaceDriverState, defender: RaceDriverState): { 
   const attackerRoll1 = rollDice();
   const defenderRoll1 = rollDice();
 
-  const attackerWinsFirst = attackerRoll1 > defenderRoll1; // empate favorece al que se defiende
+  const attackerWinsFirst = attackerRoll1 > defenderRoll1;
   const advantagedSideLostOrTied =
     advantage === "attacker"
       ? !attackerWinsFirst
@@ -100,11 +98,10 @@ function resolveBattle(attacker: RaceDriverState, defender: RaceDriverState): { 
         ? attackerWinsFirst
         : false;
 
-  // Si el que tenía ventaja “perdió” el primer duelo, tiene una segunda oportunidad.
   if (advantage !== "none" && advantagedSideLostOrTied) {
     const attackerRoll2 = rollDice();
     const defenderRoll2 = rollDice();
-    const attackerWinsSecond = attackerRoll2 > defenderRoll2; // empate defiende
+    const attackerWinsSecond = attackerRoll2 > defenderRoll2;
 
     return {
       overtake: attackerWinsSecond,
@@ -149,6 +146,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
         retired: false,
         finished: false,
         finishOrder: 0,
+        justOvertaken: false,
       }))
   );
 
@@ -173,11 +171,9 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
     const newPitStops = driver.pitStops + 1;
 
     if (newPitStops >= 4) {
-      // Retire after 4th pit
       return { ...driver, retired: true, pitStops: newPitStops };
     }
 
-    // Check if retire on subsequent pits
     if (newPitStops > 1) {
       const retireRoll = rollDice(2);
       if (retireRoll === 2) {
@@ -185,7 +181,6 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
       }
     }
 
-    // Pit stop duration
     const pitDurations: Record<number, number> = { 1: 5, 2: 7, 3: 10 };
     const duration = pitDurations[newPitStops] || 5;
 
@@ -218,7 +213,26 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
 
         setCurrentAction(`Turno: ${d.driver.shortName}`);
 
-        // 1) Pits cooldown (si está en pits, solo baja el contador)
+        // Si fue adelantado en este turno, solo limpia el flag y pasa al siguiente
+        if (d.justOvertaken) {
+          d = { ...d, justOvertaken: false };
+          updated[currentIdx] = d;
+          
+          const nextIdx = findNextPlayableIndex(updated, currentIdx + 1);
+          if (nextIdx == null) {
+            updated = updated.map(drv => ({ ...drv, justOvertaken: false }));
+            setLap(l => l + 1);
+            setTurnCursor(0);
+          } else {
+            setTurnCursor(nextIdx);
+          }
+          
+          setIsRolling(false);
+          setCurrentAction(null);
+          return updated;
+        }
+
+        // 1) Pits cooldown
         if (d.inPits) {
           const newRemaining = d.pitsRemaining - 1;
           d = newRemaining <= 0 ? { ...d, inPits: false, pitsRemaining: 0 } : { ...d, pitsRemaining: newRemaining };
@@ -231,7 +245,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
 
           d = { ...d, distance: newDistance };
 
-          // 3) Chequeo pits (por turno)
+          // 3) Chequeo pits
           if (Math.random() < PIT_CHECK_CHANCE_PER_TURN) {
             const pitRoll = rollDice50();
             if (checkPitStop(d.driver.avoidingCollision, pitRoll)) {
@@ -239,7 +253,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
             }
           }
 
-          // 4) Meta: al cruzar, se congela el orden actual (NO se permite adelantar en la meta)
+          // 4) Meta
           if (!d.retired && newDistance >= RACE_DISTANCE) {
             d = { ...d, finished: true, finishOrder: nextFinishOrder };
             setNextFinishOrder(n => n + 1);
@@ -247,7 +261,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
 
           updated[currentIdx] = d;
 
-          // 5) Batalla de adelantamiento (solo si NO finalizó en este turno)
+          // 5) Batalla de adelantamiento
           if (isPlayable(d) && currentIdx > 0) {
             const defender = updated[currentIdx - 1];
 
@@ -263,11 +277,10 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
               setBattleInfo(info);
 
               if (overtake) {
-                // Swap (adelanta)
+                // Swap - marcar al defensor como justOvertaken
                 updated[currentIdx - 1] = { ...d, distance: Math.max(d.distance, defender.distance) };
-                updated[currentIdx] = { ...defender, distance: Math.max(d.distance, defender.distance) };
+                updated[currentIdx] = { ...defender, distance: Math.max(d.distance, defender.distance), justOvertaken: true };
               } else {
-                // No adelanta: se queda detrás (y no puede quedar “más avanzado” que el de adelante)
                 updated[currentIdx] = { ...d, distance: Math.min(d.distance, defender.distance) };
               }
             }
@@ -276,7 +289,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
 
         updated = recalcPositions(updated);
 
-        // 6) Fin de vuelta / siguiente piloto
+        // 6) Siguiente piloto
         const processedId = updated.find(u => u.driver.id === prev[currentIdx].driver.id)?.driver.id;
         const processedNewIndex = processedId
           ? updated.findIndex(x => x.driver.id === processedId)
@@ -284,6 +297,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
 
         const nextIdx = findNextPlayableIndex(updated, processedNewIndex + 1);
         if (nextIdx == null) {
+          updated = updated.map(drv => ({ ...drv, justOvertaken: false }));
           setLap(l => l + 1);
           setTurnCursor(0);
         } else {
@@ -310,7 +324,6 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
     setBattleInfo(null);
 
     setTimeout(() => {
-      // Simulación rápida en memoria (misma lógica conceptual, sin animación por turno)
       let simulated = drivers.slice();
       let cursor = turnCursor;
       let localFinishOrder = nextFinishOrder;
@@ -321,11 +334,26 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
 
         const currentIdx = findNextPlayableIndex(simulated, cursor);
         if (currentIdx == null) {
+          simulated = simulated.map(drv => ({ ...drv, justOvertaken: false }));
           cursor = 0;
           continue;
         }
 
         let d = { ...simulated[currentIdx] };
+
+        // Skip si fue adelantado
+        if (d.justOvertaken) {
+          d = { ...d, justOvertaken: false };
+          simulated[currentIdx] = d;
+          const nextIdx = findNextPlayableIndex(simulated, currentIdx + 1);
+          if (nextIdx == null) {
+            simulated = simulated.map(drv => ({ ...drv, justOvertaken: false }));
+            cursor = 0;
+          } else {
+            cursor = nextIdx;
+          }
+          continue;
+        }
 
         if (d.inPits) {
           const newRemaining = d.pitsRemaining - 1;
@@ -363,7 +391,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
                 const { overtake } = resolveBattle(d, defender);
                 if (overtake) {
                   simulated[currentIdx - 1] = { ...d, distance: Math.max(d.distance, defender.distance) };
-                  simulated[currentIdx] = { ...defender, distance: Math.max(d.distance, defender.distance) };
+                  simulated[currentIdx] = { ...defender, distance: Math.max(d.distance, defender.distance), justOvertaken: true };
                 } else {
                   simulated[currentIdx] = { ...d, distance: Math.min(d.distance, defender.distance) };
                 }
@@ -379,6 +407,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
         const nextIdx = findNextPlayableIndex(simulated, processedNewIndex + 1);
 
         if (nextIdx == null) {
+          simulated = simulated.map(drv => ({ ...drv, justOvertaken: false }));
           cursor = 0;
         } else {
           cursor = nextIdx;
@@ -394,7 +423,12 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
   }, [drivers, handlePitStop, isRolling, nextFinishOrder, raceComplete, recalcPositions, turnCursor]);
 
   const completeRace = useCallback(() => {
-    const classified = drivers.filter(d => !d.retired);
+    // Ordenar por finishOrder para los que terminaron, luego los que no terminaron por distancia
+    const finished = drivers.filter(d => d.finished).sort((a, b) => a.finishOrder - b.finishOrder);
+    const notFinished = drivers.filter(d => !d.finished && !d.retired).sort((a, b) => b.distance - a.distance);
+    const retired = drivers.filter(d => d.retired);
+
+    const classified = [...finished, ...notFinished];
 
     const finalPositions = classified.map((d, index) => ({
       position: index + 1,
@@ -407,24 +441,30 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
       retired: false,
     }));
 
-    const retiredDrivers = drivers
-      .filter(d => d.retired)
-      .map(d => ({
-        position: 99,
-        driverId: d.driver.id,
-        driverName: d.driver.name,
-        shortName: d.driver.shortName,
-        teamId: d.driver.teamId,
-        teamColor: d.driver.teamColor,
-        points: 0,
-        retired: true,
-      }));
+    const retiredDrivers = retired.map(d => ({
+      position: 99,
+      driverId: d.driver.id,
+      driverName: d.driver.name,
+      shortName: d.driver.shortName,
+      teamId: d.driver.teamId,
+      teamColor: d.driver.teamColor,
+      points: 0,
+      retired: true,
+    }));
 
     onComplete([...finalPositions, ...retiredDrivers]);
   }, [drivers, onComplete]);
 
+  // Ordenar drivers para display: finished por finishOrder, luego activos por distancia, retirados al final
+  const sortedDrivers = useMemo(() => {
+    const finished = drivers.filter(d => d.finished).sort((a, b) => a.finishOrder - b.finishOrder);
+    const active = drivers.filter(d => !d.finished && !d.retired).sort((a, b) => b.distance - a.distance);
+    const retired = drivers.filter(d => d.retired);
+    return [...finished, ...active, ...retired];
+  }, [drivers]);
+
   if (raceComplete) {
-    const winner = drivers.find(d => !d.retired);
+    const winner = sortedDrivers.find(d => !d.retired);
 
     return (
       <motion.div className="space-y-6" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -442,7 +482,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
         </div>
 
         <div className="grid gap-2 max-h-[350px] overflow-y-auto">
-          {drivers.map((d, index) => (
+          {sortedDrivers.map((d, index) => (
             <motion.div
               key={d.driver.id}
               className={`flex items-center gap-3 p-2 rounded-lg border ${
@@ -538,8 +578,9 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
       </div>
 
       <div className="grid gap-1 max-h-[350px] overflow-y-auto">
-        {drivers.map((d, index) => {
-          const isActive = nextPlayableIndex === index && !raceComplete;
+        {sortedDrivers.map((d, index) => {
+          const originalIndex = drivers.findIndex(dr => dr.driver.id === d.driver.id);
+          const isActive = nextPlayableIndex === originalIndex && !raceComplete;
 
           return (
             <motion.div
@@ -548,7 +589,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
                 d.retired ? "bg-destructive/10 opacity-50" : ""
               } ${d.finished ? "bg-green-500/10" : ""} ${d.inPits ? "bg-yellow-500/10" : ""} ${
                 isActive ? "border-primary/40 bg-primary/5" : ""
-              }`}
+              } ${d.justOvertaken ? "bg-orange-500/10" : ""}`}
               layout
             >
               <span className="w-5 font-racing text-muted-foreground">{d.retired ? "-" : index + 1}</span>
@@ -557,6 +598,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
               <span className="font-racing flex-1">{d.driver.shortName}</span>
 
               <div className="flex items-center gap-2">
+                {d.justOvertaken && <span className="text-xs text-orange-400">↓</span>}
                 {d.inPits && (
                   <div className="flex items-center gap-1 text-yellow-400">
                     <Wrench className="w-3 h-3" />
