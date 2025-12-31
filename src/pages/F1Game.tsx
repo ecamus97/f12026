@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useGameState } from "@/hooks/useGameState";
 import { RaceCard } from "@/components/RaceCard";
-import { DriverStandings, TeamStandings } from "@/components/StandingsTable";
+import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
 import { QualifyingPhase } from "@/components/QualifyingPhase";
 import { RacePhase } from "@/components/RacePhase";
+import { ConfigDialog } from "@/components/ConfigDialog";
 import heroImage from "@/assets/f1-hero.jpg";
 import { 
   Flag, 
@@ -24,7 +25,17 @@ import {
 type GameScreen = "home" | "calendar" | "qualifying" | "race" | "standings";
 
 export default function F1Game() {
-  const { gameState, getCurrentRace, recordRaceResult, resetSeason, saveProgress, loadProgress, hasSavedProgress, races } = useGameState();
+  const { 
+    gameState, 
+    getCurrentRace, 
+    recordRaceResult, 
+    resetSeason, 
+    saveProgress, 
+    loadProgress, 
+    updateRaceConfig,
+    updateTeamsData,
+    races 
+  } = useGameState();
   const [screen, setScreen] = useState<GameScreen>("home");
   const [qualifyingGrid, setQualifyingGrid] = useState<any[]>([]);
 
@@ -61,6 +72,12 @@ export default function F1Game() {
             </motion.h1>
             
             <nav className="flex items-center gap-1 md:gap-2">
+              <ConfigDialog
+                raceConfig={gameState.raceConfig}
+                onRaceConfigChange={updateRaceConfig}
+                teamsData={gameState.teamsData}
+                onTeamsDataChange={updateTeamsData}
+              />
               <Button
                 variant="ghost"
                 size="sm"
@@ -208,9 +225,12 @@ export default function F1Game() {
                 >
                   <div className="flex items-center gap-2 mb-3">
                     <Trophy className="w-5 h-5 text-yellow-400" />
-                    <h3 className="font-racing text-sm">Pilotos</h3>
+                    <h3 className="font-racing text-sm">Top 5 Pilotos</h3>
                   </div>
-                  <DriverStandings standings={gameState.driverStandings} limit={5} />
+                  <DriverChampionshipTable 
+                    standings={gameState.driverStandings.slice(0, 5)} 
+                    raceResults={gameState.raceResults}
+                  />
                 </motion.div>
 
                 <motion.div
@@ -221,9 +241,12 @@ export default function F1Game() {
                 >
                   <div className="flex items-center gap-2 mb-3">
                     <Users className="w-5 h-5 text-primary" />
-                    <h3 className="font-racing text-sm">Constructores</h3>
+                    <h3 className="font-racing text-sm">Top 5 Constructores</h3>
                   </div>
-                  <TeamStandings standings={gameState.teamStandings} limit={5} />
+                  <TeamChampionshipTable 
+                    standings={gameState.teamStandings.slice(0, 5)} 
+                    raceResults={gameState.raceResults}
+                  />
                 </motion.div>
               </div>
             </motion.div>
@@ -276,7 +299,11 @@ export default function F1Game() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
             >
-              <QualifyingPhase race={currentRace} onComplete={handleQualifyingComplete} />
+              <QualifyingPhase 
+                race={currentRace} 
+                onComplete={handleQualifyingComplete}
+                teamsData={gameState.teamsData}
+              />
             </motion.div>
           )}
 
@@ -292,6 +319,7 @@ export default function F1Game() {
                 race={currentRace}
                 grid={qualifyingGrid}
                 onComplete={handleRaceComplete}
+                raceConfig={gameState.raceConfig}
               />
             </motion.div>
           )}
@@ -330,11 +358,17 @@ export default function F1Game() {
                 </TabsList>
                 
                 <TabsContent value="drivers" className="mt-4">
-                  <DriverStandings standings={gameState.driverStandings} />
+                  <DriverChampionshipTable 
+                    standings={gameState.driverStandings}
+                    raceResults={gameState.raceResults}
+                  />
                 </TabsContent>
                 
                 <TabsContent value="teams" className="mt-4">
-                  <TeamStandings standings={gameState.teamStandings} />
+                  <TeamChampionshipTable 
+                    standings={gameState.teamStandings}
+                    raceResults={gameState.raceResults}
+                  />
                 </TabsContent>
               </Tabs>
 

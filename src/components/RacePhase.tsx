@@ -37,6 +37,7 @@ interface RacePhaseProps {
     finalPosition?: number;
   }[];
   onComplete: (positions: RaceResult["positions"]) => void;
+  raceConfig?: RaceConfig;
 }
 
 function isPlayable(d: RaceDriverState) {
@@ -50,8 +51,8 @@ function findNextPlayableIndex(drivers: RaceDriverState[], startIndex: number): 
   return null;
 }
 
-export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
-  const [config, setConfig] = useState<RaceConfig | null>(null);
+export function RacePhase({ race, grid, onComplete, raceConfig }: RacePhaseProps) {
+  const [config, setConfig] = useState<RaceConfig | null>(raceConfig || null);
   const [drivers, setDrivers] = useState<RaceDriverState[]>(() =>
     grid
       .slice()
