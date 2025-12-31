@@ -77,7 +77,7 @@ export const teams: Team[] = [
     id: "aston-martin",
     name: "Aston Martin F1 Team",
     shortName: "AMR",
-    carLevel: 4.5,
+    carLevel: 4,
     color: "bg-aston-martin",
     drivers: [
       { id: "alo", name: "Fernando Alonso", shortName: "ALO", nationality: "🇪🇸", overtaking: 6, maintainingPosition: 6, avoidingCollision: 5 },
