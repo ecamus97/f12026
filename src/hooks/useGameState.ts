@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import { races2026, getAllDrivers, pointsSystem, Driver, Race } from '@/data/f1Data';
+import { races2026, pointsSystem, Race, Team, teams as defaultTeams } from '@/data/f1Data';
 import { toast } from '@/hooks/use-toast';
+import { RaceConfig, DEFAULT_CONFIG } from '@/components/race/types';
 
 const STORAGE_KEY = 'f1-dice-game-2026-save';
 
@@ -45,54 +46,86 @@ export interface GameState {
   teamStandings: TeamStanding[];
   raceResults: RaceResult[];
   seasonComplete: boolean;
+  raceConfig: RaceConfig;
+  teamsData: Team[];
 }
 
-const initialDriverStandings = (): DriverStanding[] => {
-  return getAllDrivers().map(driver => ({
-    driverId: driver.id,
-    driverName: driver.name,
-    shortName: driver.shortName,
-    teamId: driver.teamId,
-    teamName: driver.teamName,
-    teamColor: driver.teamColor,
-    nationality: driver.nationality,
+const initialDriverStandings = (teamsData: Team[]): DriverStanding[] => {
+  return teamsData.flatMap(team =>
+    team.drivers.map(driver => ({
+      driverId: driver.id,
+      driverName: driver.name,
+      shortName: driver.shortName,
+      teamId: team.id,
+      teamName: team.name,
+      teamColor: team.color,
+      nationality: driver.nationality,
+      points: 0,
+      wins: 0,
+    }))
+  );
+};
+
+const initialTeamStandings = (teamsData: Team[]): TeamStanding[] => {
+  return teamsData.map(team => ({
+    teamId: team.id,
+    teamName: team.name,
+    teamColor: team.color,
     points: 0,
     wins: 0,
   }));
 };
 
-const initialTeamStandings = (): TeamStanding[] => {
-  const allDrivers = getAllDrivers();
-  const teamMap = new Map<string, TeamStanding>();
-  
-  allDrivers.forEach(driver => {
-    if (!teamMap.has(driver.teamId)) {
-      teamMap.set(driver.teamId, {
-        teamId: driver.teamId,
-        teamName: driver.teamName,
-        teamColor: driver.teamColor,
-        points: 0,
-        wins: 0,
-      });
-    }
-  });
-  
-  return Array.from(teamMap.values());
-};
+const getInitialState = (): GameState => ({
+  currentRaceIndex: 0,
+  driverStandings: initialDriverStandings(defaultTeams),
+  teamStandings: initialTeamStandings(defaultTeams),
+  raceResults: [],
+  seasonComplete: false,
+  raceConfig: DEFAULT_CONFIG,
+  teamsData: defaultTeams,
+});
 
 export function useGameState() {
-  const [gameState, setGameState] = useState<GameState>({
-    currentRaceIndex: 0,
-    driverStandings: initialDriverStandings(),
-    teamStandings: initialTeamStandings(),
-    raceResults: [],
-    seasonComplete: false,
-  });
+  const [gameState, setGameState] = useState<GameState>(getInitialState());
 
   const getCurrentRace = useCallback((): Race | null => {
     if (gameState.currentRaceIndex >= races2026.length) return null;
     return races2026[gameState.currentRaceIndex];
   }, [gameState.currentRaceIndex]);
+
+  const updateRaceConfig = useCallback((config: RaceConfig) => {
+    setGameState(prev => ({ ...prev, raceConfig: config }));
+  }, []);
+
+  const updateTeamsData = useCallback((teams: Team[]) => {
+    setGameState(prev => ({
+      ...prev,
+      teamsData: teams,
+      driverStandings: prev.driverStandings.map(standing => {
+        const team = teams.find(t => t.id === standing.teamId);
+        const driver = team?.drivers.find(d => d.id === standing.driverId);
+        if (!team || !driver) return standing;
+        return {
+          ...standing,
+          driverName: driver.name,
+          shortName: driver.shortName,
+          teamName: team.name,
+          teamColor: team.color,
+          nationality: driver.nationality,
+        };
+      }),
+      teamStandings: prev.teamStandings.map(standing => {
+        const team = teams.find(t => t.id === standing.teamId);
+        if (!team) return standing;
+        return {
+          ...standing,
+          teamName: team.name,
+          teamColor: team.color,
+        };
+      }),
+    }));
+  }, []);
 
   const recordRaceResult = useCallback((positions: RaceResult['positions']) => {
     setGameState(prev => {
@@ -102,7 +135,6 @@ export function useGameState() {
         completed: true,
       };
 
-      // Update driver standings
       const newDriverStandings = prev.driverStandings.map(standing => {
         const result = positions.find(p => p.driverId === standing.driverId);
         if (!result) return standing;
@@ -114,7 +146,6 @@ export function useGameState() {
         };
       }).sort((a, b) => b.points - a.points);
 
-      // Update team standings
       const newTeamStandings = prev.teamStandings.map(standing => {
         const teamResults = positions.filter(p => p.teamId === standing.teamId);
         const teamPoints = teamResults.reduce((sum, r) => sum + r.points, 0);
@@ -142,13 +173,13 @@ export function useGameState() {
   }, []);
 
   const resetSeason = useCallback(() => {
-    setGameState({
-      currentRaceIndex: 0,
-      driverStandings: initialDriverStandings(),
-      teamStandings: initialTeamStandings(),
-      raceResults: [],
-      seasonComplete: false,
-    });
+    setGameState(prev => ({
+      ...getInitialState(),
+      raceConfig: prev.raceConfig,
+      teamsData: prev.teamsData,
+      driverStandings: initialDriverStandings(prev.teamsData),
+      teamStandings: initialTeamStandings(prev.teamsData),
+    }));
   }, []);
 
   const saveProgress = useCallback(() => {
@@ -183,6 +214,13 @@ export function useGameState() {
       }
       
       const parsedState = JSON.parse(savedData) as GameState;
+      // Ensure backwards compatibility
+      if (!parsedState.raceConfig) {
+        parsedState.raceConfig = DEFAULT_CONFIG;
+      }
+      if (!parsedState.teamsData) {
+        parsedState.teamsData = defaultTeams;
+      }
       setGameState(parsedState);
       toast({
         title: "Progreso cargado",
@@ -211,6 +249,8 @@ export function useGameState() {
     saveProgress,
     loadProgress,
     hasSavedProgress,
+    updateRaceConfig,
+    updateTeamsData,
     races: races2026,
   };
 }

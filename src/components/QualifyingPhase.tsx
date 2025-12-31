@@ -3,8 +3,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Dice } from "@/components/Dice";
 import { DriverCard } from "@/components/DriverCard";
-import { Race, getAllDrivers, rollDice, canAdvance, Driver, pointsSystem } from "@/data/f1Data";
-import { RaceResult } from "@/hooks/useGameState";
+import { Race, getAllDrivers, rollDice, canAdvance, Driver, Team } from "@/data/f1Data";
 import { Flag, Play, SkipForward, Zap } from "lucide-react";
 
 interface QualifyingDriverState {
@@ -19,11 +18,25 @@ interface QualifyingDriverState {
 interface QualifyingPhaseProps {
   race: Race;
   onComplete: (grid: QualifyingDriverState[]) => void;
+  teamsData?: Team[];
 }
 
-export function QualifyingPhase({ race, onComplete }: QualifyingPhaseProps) {
+const getDriversFromTeams = (teamsData?: Team[]) => {
+  if (!teamsData) return getAllDrivers();
+  return teamsData.flatMap(team =>
+    team.drivers.map(driver => ({
+      ...driver,
+      teamId: team.id,
+      teamName: team.name,
+      teamColor: team.color,
+      carLevel: team.carLevel,
+    }))
+  );
+};
+
+export function QualifyingPhase({ race, onComplete, teamsData }: QualifyingPhaseProps) {
   const [drivers, setDrivers] = useState<QualifyingDriverState[]>(() =>
-    getAllDrivers().map(d => ({
+    getDriversFromTeams(teamsData).map(d => ({
       driver: d,
       totalScore: 0,
       advances: 0,
