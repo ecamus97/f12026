@@ -16,13 +16,15 @@ import {
   Play, 
   RotateCcw,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Save,
+  Download
 } from "lucide-react";
 
 type GameScreen = "home" | "calendar" | "qualifying" | "race" | "standings";
 
 export default function F1Game() {
-  const { gameState, getCurrentRace, recordRaceResult, resetSeason, races } = useGameState();
+  const { gameState, getCurrentRace, recordRaceResult, resetSeason, saveProgress, loadProgress, hasSavedProgress, races } = useGameState();
   const [screen, setScreen] = useState<GameScreen>("home");
   const [qualifyingGrid, setQualifyingGrid] = useState<any[]>([]);
 
@@ -58,7 +60,27 @@ export default function F1Game() {
               F1 DICE GAME 2026
             </motion.h1>
             
-            <nav className="flex items-center gap-2">
+            <nav className="flex items-center gap-1 md:gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={saveProgress}
+                className="font-racing text-xs"
+                title="Guardar progreso"
+              >
+                <Save className="w-4 h-4" />
+                <span className="hidden lg:inline ml-1">Guardar</span>
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={loadProgress}
+                className="font-racing text-xs"
+                title="Cargar progreso"
+              >
+                <Download className="w-4 h-4" />
+                <span className="hidden lg:inline ml-1">Cargar</span>
+              </Button>
               <Button
                 variant={screen === "calendar" ? "default" : "ghost"}
                 size="sm"

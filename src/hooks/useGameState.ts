@@ -1,5 +1,8 @@
 import { useState, useCallback } from 'react';
 import { races2026, getAllDrivers, pointsSystem, Driver, Race } from '@/data/f1Data';
+import { toast } from '@/hooks/use-toast';
+
+const STORAGE_KEY = 'f1-dice-game-2026-save';
 
 export interface DriverStanding {
   driverId: string;
@@ -148,11 +151,66 @@ export function useGameState() {
     });
   }, []);
 
+  const saveProgress = useCallback(() => {
+    try {
+      const saveData = JSON.stringify(gameState);
+      localStorage.setItem(STORAGE_KEY, saveData);
+      toast({
+        title: "Progreso guardado",
+        description: `Carrera ${gameState.currentRaceIndex} de ${races2026.length} guardada correctamente.`,
+      });
+      return true;
+    } catch (error) {
+      toast({
+        title: "Error al guardar",
+        description: "No se pudo guardar el progreso. Verifica el almacenamiento del navegador.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  }, [gameState]);
+
+  const loadProgress = useCallback(() => {
+    try {
+      const savedData = localStorage.getItem(STORAGE_KEY);
+      if (!savedData) {
+        toast({
+          title: "Sin datos guardados",
+          description: "No se encontró ningún progreso guardado.",
+          variant: "destructive",
+        });
+        return false;
+      }
+      
+      const parsedState = JSON.parse(savedData) as GameState;
+      setGameState(parsedState);
+      toast({
+        title: "Progreso cargado",
+        description: `Carrera ${parsedState.currentRaceIndex} de ${races2026.length} cargada correctamente.`,
+      });
+      return true;
+    } catch (error) {
+      toast({
+        title: "Error al cargar",
+        description: "El archivo de guardado está corrupto o es incompatible.",
+        variant: "destructive",
+      });
+      return false;
+    }
+  }, []);
+
+  const hasSavedProgress = useCallback(() => {
+    return localStorage.getItem(STORAGE_KEY) !== null;
+  }, []);
+
   return {
     gameState,
     getCurrentRace,
     recordRaceResult,
     resetSeason,
+    saveProgress,
+    loadProgress,
+    hasSavedProgress,
     races: races2026,
   };
 }
