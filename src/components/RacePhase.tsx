@@ -230,17 +230,27 @@ export function RacePhase({ race, grid, onComplete, raceConfig }: RacePhaseProps
               setBattleInfo(info);
 
               if (overtake) {
-                // SWAP: intercambiar posiciones en el array
-                // El atacante toma la posición del defensor
-                // El defensor baja una posición
-                // La distancia del atacante se iguala a la del defensor (no puede tener más)
-                const attackerWithNewDist = { ...d, distance: defender.distance };
+                // Verificar si el defensor era el primero en esa distancia
+                const isDefenderFirstAtDistance = !updated
+                  .slice(0, defenderIdx)
+                  .some((other) => isPlayable(other) && other.distance === defender.distance);
+
+                // Si el defensor era el primero en esa distancia, el atacante avanza una vuelta
+                const attackerNewDistance = isDefenderFirstAtDistance 
+                  ? defender.distance + 1 
+                  : defender.distance;
+
+                const attackerWithNewDist = { ...d, distance: attackerNewDistance };
                 const defenderMarked = { ...defender, justOvertaken: true };
                 
                 updated[defenderIdx] = attackerWithNewDist;
                 updated[currentIdx] = defenderMarked;
                 
-                addEvent(d.driver.shortName, "battle_win", `Adelanta a ${defender.driver.shortName}`);
+                if (isDefenderFirstAtDistance) {
+                  addEvent(d.driver.shortName, "battle_win", `Adelanta a ${defender.driver.shortName} y avanza a ${attackerNewDistance}/${RACE_DISTANCE}`);
+                } else {
+                  addEvent(d.driver.shortName, "battle_win", `Adelanta a ${defender.driver.shortName}`);
+                }
               } else {
                 // No adelanta - su distancia se iguala a la del defensor (no puede tener más)
                 d = { ...d, distance: defender.distance };
@@ -360,7 +370,16 @@ export function RacePhase({ race, grid, onComplete, raceConfig }: RacePhaseProps
               if (canBattle) {
                 const { overtake } = resolveBattle(d, defender);
                 if (overtake) {
-                  const attackerWithNewDist = { ...d, distance: defender.distance };
+                  // Verificar si el defensor era el primero en esa distancia
+                  const isDefenderFirstAtDistance = !simulated
+                    .slice(0, defenderIdx)
+                    .some((other) => isPlayable(other) && other.distance === defender.distance);
+
+                  const attackerNewDistance = isDefenderFirstAtDistance 
+                    ? defender.distance + 1 
+                    : defender.distance;
+
+                  const attackerWithNewDist = { ...d, distance: attackerNewDistance };
                   const defenderMarked = { ...defender, justOvertaken: true };
                   simulated[defenderIdx] = attackerWithNewDist;
                   simulated[currentIdx] = defenderMarked;
