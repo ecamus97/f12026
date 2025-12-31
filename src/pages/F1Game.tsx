@@ -2,6 +2,17 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { useGameState } from "@/hooks/useGameState";
 import { RaceCard } from "@/components/RaceCard";
 import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
@@ -98,6 +109,34 @@ export default function F1Game() {
                 <Download className="w-4 h-4" />
                 <span className="hidden lg:inline ml-1">Cargar</span>
               </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="font-racing text-xs text-destructive hover:text-destructive"
+                    title="Reiniciar campeonato"
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    <span className="hidden lg:inline ml-1">Reiniciar</span>
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>¿Reiniciar campeonato?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      Esta acción eliminará todo el progreso actual del campeonato. 
+                      Los puntos, resultados y clasificaciones se perderán. Esta acción no se puede deshacer.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                    <AlertDialogAction onClick={resetSeason} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                      Reiniciar
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <Button
                 variant={screen === "calendar" ? "default" : "ghost"}
                 size="sm"
