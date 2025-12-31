@@ -15,6 +15,7 @@ interface RaceDriverState {
   pitStops: number;
   retired: boolean;
   finished: boolean;
+  finishOrder: number; // Track the order in which drivers finish
 }
 
 interface RacePhaseProps {
@@ -38,8 +39,10 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
         pitStops: 0,
         retired: false,
         finished: false,
+        finishOrder: 0,
       }))
   );
+  const [nextFinishOrder, setNextFinishOrder] = useState(1);
   
   const [lap, setLap] = useState(1);
   const [isRolling, setIsRolling] = useState(false);
@@ -61,6 +64,8 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
       const sorted = [...prev]
         .filter(d => !d.retired)
         .sort((a, b) => {
+          // Finished drivers are sorted by their finish order (first to finish = position 1)
+          if (a.finished && b.finished) return a.finishOrder - b.finishOrder;
           if (a.finished && !b.finished) return -1;
           if (!a.finished && b.finished) return 1;
           return b.distance - a.distance;
@@ -78,6 +83,8 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
     setCurrentAction("Simulando vuelta...");
 
     setTimeout(() => {
+      let currentFinishOrder = nextFinishOrder;
+      
       setDrivers(prev => {
         let updatedDrivers = prev.map(d => {
           if (d.retired || d.finished) return d;
@@ -95,51 +102,50 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
           const roll = rollDice();
           const advances = canAdvance(d.driver.carLevel, roll);
           const newDistance = d.distance + (advances ? 1 : 0);
-          const finished = newDistance >= RACE_DISTANCE;
+          const justFinished = newDistance >= RACE_DISTANCE && !d.finished;
 
-          return { ...d, distance: newDistance, finished };
-        });
-
-        // Check for battles (drivers at same distance)
-        const activeByDistance = new Map<number, RaceDriverState[]>();
-        updatedDrivers
-          .filter(d => !d.retired && !d.finished && !d.inPits)
-          .forEach(d => {
-            const existing = activeByDistance.get(d.distance) || [];
-            activeByDistance.set(d.distance, [...existing, d]);
-          });
-
-        // Resolve battles and check for pit stops
-        activeByDistance.forEach((driversAtDistance) => {
-          if (driversAtDistance.length > 1) {
-            // Battle between drivers
-            for (let i = 0; i < driversAtDistance.length - 1; i++) {
-              const attacker = driversAtDistance[i + 1];
-              const defender = driversAtDistance[i];
-
-              // Check pit stops for both
-              const attackerPitRoll = rollDice50();
-              const defenderPitRoll = rollDice50();
-
-              const attackerPits = checkPitStop(attacker.driver.avoidingCollision, attackerPitRoll);
-              const defenderPits = checkPitStop(defender.driver.avoidingCollision, defenderPitRoll);
-
-              updatedDrivers = updatedDrivers.map(d => {
-                if (d.driver.id === attacker.driver.id && attackerPits) {
-                  return handlePitStop(d);
-                }
-                if (d.driver.id === defender.driver.id && defenderPits) {
-                  return handlePitStop(d);
-                }
-                return d;
-              });
-            }
+          if (justFinished) {
+            const order = currentFinishOrder++;
+            return { ...d, distance: newDistance, finished: true, finishOrder: order };
           }
+
+          return { ...d, distance: newDistance };
         });
+
+        // Check for battles (drivers at same distance) - only 10% chance per lap to trigger pit check
+        if (Math.random() < 0.10) {
+          const activeByDistance = new Map<number, RaceDriverState[]>();
+          updatedDrivers
+            .filter(d => !d.retired && !d.finished && !d.inPits)
+            .forEach(d => {
+              const existing = activeByDistance.get(d.distance) || [];
+              activeByDistance.set(d.distance, [...existing, d]);
+            });
+
+          // Resolve battles and check for pit stops - only when there's actually a battle
+          activeByDistance.forEach((driversAtDistance) => {
+            if (driversAtDistance.length > 1) {
+              // Battle between drivers - only one pit check per battle, not per driver
+              const randomDriver = driversAtDistance[Math.floor(Math.random() * driversAtDistance.length)];
+              const pitRoll = rollDice50();
+              const pits = checkPitStop(randomDriver.driver.avoidingCollision, pitRoll);
+
+              if (pits) {
+                updatedDrivers = updatedDrivers.map(d => {
+                  if (d.driver.id === randomDriver.driver.id) {
+                    return handlePitStop(d);
+                  }
+                  return d;
+                });
+              }
+            }
+          });
+        }
 
         return updatedDrivers;
       });
 
+      setNextFinishOrder(currentFinishOrder);
       updatePositions();
       setLap(prev => prev + 1);
       setIsRolling(false);
@@ -151,7 +157,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
         setRaceComplete(true);
       }
     }, 800);
-  }, [updatePositions, drivers]);
+  }, [updatePositions, drivers, nextFinishOrder]);
 
   const handlePitStop = (driver: RaceDriverState): RaceDriverState => {
     const newPitStops = driver.pitStops + 1;
@@ -189,6 +195,7 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
       let simulatedDrivers = [...drivers];
       let safeguard = 0;
       const maxIterations = 1000;
+      let finishOrder = nextFinishOrder;
 
       while (
         !simulatedDrivers.every(d => d.finished || d.retired) && 
@@ -210,10 +217,10 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
           const roll = rollDice();
           const advances = canAdvance(d.driver.carLevel, roll);
           const newDistance = d.distance + (advances ? 1 : 0);
-          const finished = newDistance >= RACE_DISTANCE;
+          const justFinished = newDistance >= RACE_DISTANCE && !d.finished;
 
-          // Random pit check
-          if (!finished && Math.random() < 0.02) {
+          // Random pit check - reduced probability (0.5% per iteration)
+          if (!justFinished && Math.random() < 0.005) {
             const pitRoll = rollDice50();
             if (checkPitStop(d.driver.avoidingCollision, pitRoll)) {
               const newPitStops = d.pitStops + 1;
@@ -237,14 +244,21 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
             }
           }
 
-          return { ...d, distance: newDistance, finished };
+          if (justFinished) {
+            return { ...d, distance: newDistance, finished: true, finishOrder: finishOrder++ };
+          }
+
+          return { ...d, distance: newDistance };
         });
       }
 
-      // Sort by finish order
+      // Sort by finish order for finished drivers, then by distance for others
       simulatedDrivers.sort((a, b) => {
         if (a.retired && !b.retired) return 1;
         if (!a.retired && b.retired) return -1;
+        if (a.finished && b.finished) return a.finishOrder - b.finishOrder;
+        if (a.finished && !b.finished) return -1;
+        if (!a.finished && b.finished) return 1;
         return b.distance - a.distance;
       });
 
@@ -258,12 +272,16 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
       setIsRolling(false);
       setCurrentAction(null);
     }, 1000);
-  }, [drivers]);
+  }, [drivers, nextFinishOrder]);
 
   const completeRace = useCallback(() => {
     const finalPositions = [...drivers]
       .filter(d => !d.retired)
-      .sort((a, b) => b.distance - a.distance)
+      .sort((a, b) => {
+        // Sort by finish order to respect the order they crossed the line
+        if (a.finished && b.finished) return a.finishOrder - b.finishOrder;
+        return b.distance - a.distance;
+      })
       .map((d, index) => ({
         position: index + 1,
         driverId: d.driver.id,
@@ -299,6 +317,8 @@ export function RacePhase({ race, grid, onComplete }: RacePhaseProps) {
   const sortedDrivers = [...drivers].sort((a, b) => {
     if (a.retired && !b.retired) return 1;
     if (!a.retired && b.retired) return -1;
+    // Finished drivers sorted by finish order (first to finish = first position)
+    if (a.finished && b.finished) return a.finishOrder - b.finishOrder;
     if (a.finished && !b.finished) return -1;
     if (!a.finished && b.finished) return 1;
     return b.distance - a.distance;
