@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { DriverStanding, TeamStanding } from "@/hooks/useGameState";
-import { Trophy } from "lucide-react";
+
 
 interface DriverStandingsProps {
   standings: DriverStanding[];
@@ -39,12 +39,6 @@ export function DriverStandings({ standings, limit }: DriverStandingsProps) {
             </div>
           </div>
 
-          {driver.wins > 0 && (
-            <div className="flex items-center gap-1 text-yellow-400">
-              <Trophy className="w-3 h-3" />
-              <span className="text-xs">{driver.wins}</span>
-            </div>
-          )}
 
           <div className="text-right min-w-[50px]">
             <p className="font-racing text-sm text-primary">{driver.points}</p>
@@ -89,12 +83,6 @@ export function TeamStandings({ standings, limit }: TeamStandingsProps) {
             <span className="font-racing text-sm text-foreground truncate">{team.teamName}</span>
           </div>
 
-          {team.wins > 0 && (
-            <div className="flex items-center gap-1 text-yellow-400">
-              <Trophy className="w-3 h-3" />
-              <span className="text-xs">{team.wins}</span>
-            </div>
-          )}
 
           <div className="text-right min-w-[50px]">
             <p className="font-racing text-sm text-primary">{team.points}</p>
