@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { Trophy } from "lucide-react";
+
 import { DriverStanding, TeamStanding, RaceResult } from "@/hooks/useGameState";
 import { races2026, teams } from "@/data/f1Data";
 
@@ -100,12 +100,7 @@ export function DriverChampionshipTable({ standings, raceResults }: DriverChampi
                       );
                     })}
                     <td className="px-3 py-2 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {driver.wins > 0 && (
-                          <Trophy className="w-3 h-3 text-yellow-400" />
-                        )}
-                        <span className="font-racing text-primary font-bold">{driver.points}</span>
-                      </div>
+                      <span className="font-racing text-primary font-bold">{driver.points}</span>
                     </td>
                   </motion.tr>
                 );
@@ -214,12 +209,7 @@ export function TeamChampionshipTable({ standings, raceResults }: TeamChampionsh
                       })}
                       {isFirstDriver && (
                         <td className="px-3 py-2 text-right" rowSpan={teamDrivers.length}>
-                          <div className="flex items-center justify-end gap-1">
-                            {team.wins > 0 && (
-                              <Trophy className="w-3 h-3 text-yellow-400" />
-                            )}
-                            <span className="font-racing text-primary font-bold">{team.points}</span>
-                          </div>
+                          <span className="font-racing text-primary font-bold">{team.points}</span>
                         </td>
                       )}
                     </motion.tr>
