@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
@@ -7,53 +7,71 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Settings, Users, Car, Save } from "lucide-react";
-import { teams, Team, Driver } from "@/data/f1Data";
-import { RaceConfig, DEFAULT_CONFIG } from "@/components/race/types";
+import { Settings, Users, Car, Save, RotateCcw } from "lucide-react";
+import { teams as defaultTeams, type Driver, type Team } from "@/data/f1Data";
+import { DEFAULT_SIM_CONFIG, type SimConfig } from "@/engine";
 import { toast } from "@/hooks/use-toast";
+import { TeamStripe } from "@/components/game/common";
 
 interface ConfigDialogProps {
-  raceConfig: RaceConfig;
-  onRaceConfigChange: (config: RaceConfig) => void;
+  simConfig: SimConfig;
+  onSimConfigChange: (config: SimConfig) => void;
   teamsData: Team[];
   onTeamsDataChange: (teams: Team[]) => void;
 }
 
-export function ConfigDialog({
-  raceConfig,
-  onRaceConfigChange,
-  teamsData,
-  onTeamsDataChange,
-}: ConfigDialogProps) {
+const DRIVER_STATS: { key: keyof Driver; label: string }[] = [
+  { key: "pace", label: "Ritmo" },
+  { key: "racecraft", label: "Ataque" },
+  { key: "defending", label: "Defensa" },
+  { key: "consistency", label: "Consistencia" },
+  { key: "tyreMgmt", label: "Neumáticos" },
+];
+
+const TEAM_STATS: { key: "pace" | "reliability" | "pitCrew"; label: string }[] = [
+  { key: "pace", label: "Rendimiento auto" },
+  { key: "reliability", label: "Fiabilidad" },
+  { key: "pitCrew", label: "Pit crew" },
+];
+
+function RatingSlider({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <div className="space-y-1">
+      <Label className="text-xs flex justify-between">
+        <span>{label}</span>
+        <span className="font-mono">{value}</span>
+      </Label>
+      <Slider value={[value]} onValueChange={([v]) => onChange(v)} min={60} max={100} step={1} />
+    </div>
+  );
+}
+
+export function ConfigDialog({ simConfig, onSimConfigChange, teamsData, onTeamsDataChange }: ConfigDialogProps) {
   const [open, setOpen] = useState(false);
-  const [localConfig, setLocalConfig] = useState<RaceConfig>(raceConfig);
+  const [cfg, setCfg] = useState<SimConfig>(simConfig);
   const [localTeams, setLocalTeams] = useState<Team[]>(teamsData);
 
   useEffect(() => {
-    setLocalConfig(raceConfig);
-    setLocalTeams(teamsData);
-  }, [raceConfig, teamsData, open]);
+    if (open) {
+      setCfg(simConfig);
+      setLocalTeams(teamsData);
+    }
+  }, [open, simConfig, teamsData]);
 
   const handleSave = () => {
-    onRaceConfigChange(localConfig);
+    onSimConfigChange(cfg);
     onTeamsDataChange(localTeams);
-    toast({ title: "Configuración guardada", description: "Los cambios se aplicarán en la próxima carrera." });
+    toast({ title: "Configuración guardada", description: "Se aplica desde la próxima sesión." });
     setOpen(false);
   };
 
-  const updateDriver = (teamIndex: number, driverIndex: number, field: keyof Driver, value: string | number) => {
-    const newTeams = [...localTeams];
-    const newDrivers = [...newTeams[teamIndex].drivers];
-    newDrivers[driverIndex] = { ...newDrivers[driverIndex], [field]: value };
-    newTeams[teamIndex] = { ...newTeams[teamIndex], drivers: newDrivers };
-    setLocalTeams(newTeams);
-  };
+  const updateDriver = (ti: number, di: number, field: keyof Driver, value: string | number) =>
+    setLocalTeams((ts) =>
+      ts.map((t, i) => (i !== ti ? t : { ...t, drivers: t.drivers.map((d, j) => (j !== di ? d : { ...d, [field]: value })) })),
+    );
 
-  const updateTeam = (teamIndex: number, field: keyof Team, value: string | number) => {
-    const newTeams = [...localTeams];
-    newTeams[teamIndex] = { ...newTeams[teamIndex], [field]: value };
-    setLocalTeams(newTeams);
-  };
+  const updateTeam = (ti: number, field: keyof Team, value: string | number) =>
+    setLocalTeams((ts) => ts.map((t, i) => (i !== ti ? t : { ...t, [field]: value })));
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -63,128 +81,58 @@ export function ConfigDialog({
           <span className="hidden lg:inline ml-1">Config</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="max-w-2xl max-h-[85vh]">
+      <DialogContent className="max-w-2xl max-h-[90vh]">
         <DialogHeader>
           <DialogTitle className="font-racing text-xl">Configuración</DialogTitle>
         </DialogHeader>
 
         <Tabs defaultValue="race" className="w-full">
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="race" className="gap-1 text-xs">
-              <Settings className="w-3 h-3" /> Carrera
-            </TabsTrigger>
-            <TabsTrigger value="teams" className="gap-1 text-xs">
-              <Car className="w-3 h-3" /> Constructores
-            </TabsTrigger>
-            <TabsTrigger value="drivers" className="gap-1 text-xs">
-              <Users className="w-3 h-3" /> Pilotos
-            </TabsTrigger>
+            <TabsTrigger value="race" className="gap-1 text-xs"><Settings className="w-3 h-3" /> Simulación</TabsTrigger>
+            <TabsTrigger value="teams" className="gap-1 text-xs"><Car className="w-3 h-3" /> Equipos</TabsTrigger>
+            <TabsTrigger value="drivers" className="gap-1 text-xs"><Users className="w-3 h-3" /> Pilotos</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="race" className="space-y-4 mt-4">
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">
-                Probabilidad de pits por turno: {Math.round(localConfig.pitCheckChance * 100)}%
+          <TabsContent value="race" className="space-y-6 mt-4">
+            <div className="space-y-2">
+              <Label className="text-sm flex justify-between">
+                <span>Aleatoriedad del ritmo</span>
+                <span className="font-mono">{cfg.randomness.toFixed(1)}x</span>
               </Label>
-              <Slider
-                value={[localConfig.pitCheckChance * 100]}
-                onValueChange={([v]) => setLocalConfig(c => ({ ...c, pitCheckChance: v / 100 }))}
-                min={1}
-                max={20}
-                step={1}
-              />
+              <Slider value={[cfg.randomness * 10]} onValueChange={([v]) => setCfg((c) => ({ ...c, randomness: v / 10 }))} min={5} max={20} step={1} />
+              <p className="text-xs text-muted-foreground">Más alto = más sorpresas y menos dominio del mejor auto.</p>
             </div>
-
-            <div className="grid grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs">Pit 1 (turnos)</Label>
-                <Slider
-                  value={[localConfig.pitDurations[1]]}
-                  onValueChange={([v]) =>
-                    setLocalConfig(c => ({ ...c, pitDurations: { ...c.pitDurations, 1: v } }))
-                  }
-                  min={1}
-                  max={10}
-                  step={1}
-                />
-                <span className="text-xs text-muted-foreground">{localConfig.pitDurations[1]}</span>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs">Pit 2 (turnos)</Label>
-                <Slider
-                  value={[localConfig.pitDurations[2]]}
-                  onValueChange={([v]) =>
-                    setLocalConfig(c => ({ ...c, pitDurations: { ...c.pitDurations, 2: v } }))
-                  }
-                  min={1}
-                  max={15}
-                  step={1}
-                />
-                <span className="text-xs text-muted-foreground">{localConfig.pitDurations[2]}</span>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs">Pit 3 (turnos)</Label>
-                <Slider
-                  value={[localConfig.pitDurations[3]]}
-                  onValueChange={([v]) =>
-                    setLocalConfig(c => ({ ...c, pitDurations: { ...c.pitDurations, 3: v } }))
-                  }
-                  min={1}
-                  max={20}
-                  step={1}
-                />
-                <span className="text-xs text-muted-foreground">{localConfig.pitDurations[3]}</span>
-              </div>
+            <div className="space-y-2">
+              <Label className="text-sm flex justify-between">
+                <span>Incidentes y averías</span>
+                <span className="font-mono">{cfg.incidents.toFixed(1)}x</span>
+              </Label>
+              <Slider value={[cfg.incidents * 10]} onValueChange={([v]) => setCfg((c) => ({ ...c, incidents: v / 10 }))} min={0} max={25} step={1} />
+              <p className="text-xs text-muted-foreground">Multiplica errores de pilotos, choques y fallas mecánicas.</p>
             </div>
-
             <div className="flex items-center justify-between">
-              <Label className="text-sm">Chance de DNF en 2do pit</Label>
-              <Switch
-                checked={localConfig.dnfOnSecondPitChance}
-                onCheckedChange={v => setLocalConfig(c => ({ ...c, dnfOnSecondPitChance: v }))}
-              />
+              <Label className="text-sm">Safety car</Label>
+              <Switch checked={cfg.safetyCar} onCheckedChange={(v) => setCfg((c) => ({ ...c, safetyCar: v }))} />
             </div>
-
-            <div className="space-y-3">
-              <Label className="text-sm font-medium">
-                Pits máximos antes de DNF: {localConfig.maxPitsBeforeDNF}
-              </Label>
-              <Slider
-                value={[localConfig.maxPitsBeforeDNF]}
-                onValueChange={([v]) => setLocalConfig(c => ({ ...c, maxPitsBeforeDNF: v }))}
-                min={2}
-                max={6}
-                step={1}
-              />
-            </div>
+            <Button variant="outline" size="sm" onClick={() => setCfg(DEFAULT_SIM_CONFIG)}>
+              <RotateCcw className="w-3 h-3 mr-1" /> Valores por defecto
+            </Button>
           </TabsContent>
 
           <TabsContent value="teams" className="mt-4">
-            <ScrollArea className="h-[350px] pr-4">
-              <div className="space-y-4">
-                {localTeams.map((team, teamIndex) => (
-                  <div
-                    key={team.id}
-                    className="p-3 rounded-lg border border-border/30 bg-card/50 space-y-3"
-                  >
+            <ScrollArea className="h-[420px] pr-4">
+              <div className="space-y-3">
+                {localTeams.map((team, ti) => (
+                  <div key={team.id} className="p-3 rounded-lg border border-border/30 bg-card/50 space-y-3">
                     <div className="flex items-center gap-2">
-                      <div className={`w-3 h-8 rounded ${team.color}`} />
-                      <Input
-                        value={team.name}
-                        onChange={(e) => updateTeam(teamIndex, "name", e.target.value)}
-                        className="flex-1 font-medium"
-                      />
+                      <TeamStripe color={team.hex} className="h-8 w-1.5" />
+                      <Input value={team.name} onChange={(e) => updateTeam(ti, "name", e.target.value)} className="flex-1" />
+                      <Input type="color" value={team.hex} onChange={(e) => updateTeam(ti, "hex", e.target.value)} className="w-14 p-1" />
                     </div>
-                    <div className="flex items-center gap-4">
-                      <Label className="text-xs whitespace-nowrap">Nivel auto: {team.carLevel}</Label>
-                      <Slider
-                        value={[team.carLevel]}
-                        onValueChange={([v]) => updateTeam(teamIndex, "carLevel", v)}
-                        min={2}
-                        max={6}
-                        step={0.5}
-                        className="flex-1"
-                      />
+                    <div className="grid grid-cols-3 gap-3">
+                      {TEAM_STATS.map((s) => (
+                        <RatingSlider key={s.key} label={s.label} value={team[s.key]} onChange={(v) => updateTeam(ti, s.key, v)} />
+                      ))}
                     </div>
                   </div>
                 ))}
@@ -193,69 +141,35 @@ export function ConfigDialog({
           </TabsContent>
 
           <TabsContent value="drivers" className="mt-4">
-            <ScrollArea className="h-[350px] pr-4">
+            <ScrollArea className="h-[420px] pr-4">
               <div className="space-y-4">
-                {localTeams.map((team, teamIndex) => (
+                {localTeams.map((team, ti) => (
                   <div key={team.id} className="space-y-2">
                     <div className="flex items-center gap-2">
-                      <div className={`w-2 h-6 rounded ${team.color}`} />
-                      <span className="font-racing text-sm text-muted-foreground">{team.shortName}</span>
+                      <TeamStripe color={team.hex} />
+                      <span className="font-racing text-sm text-muted-foreground">{team.name}</span>
                     </div>
-                    {team.drivers.map((driver, driverIndex) => (
-                      <div
-                        key={driver.id}
-                        className="p-3 rounded-lg border border-border/20 bg-card/30 space-y-3 ml-4"
-                      >
+                    {team.drivers.map((driver, di) => (
+                      <div key={driver.id} className="p-3 rounded-lg border border-border/20 bg-card/30 space-y-3 ml-3">
                         <div className="flex items-center gap-2">
-                          <Input
-                            value={driver.nationality}
-                            onChange={(e) => updateDriver(teamIndex, driverIndex, "nationality", e.target.value)}
-                            className="w-14 text-center"
-                            placeholder="🏳️"
-                          />
-                          <Input
-                            value={driver.name}
-                            onChange={(e) => updateDriver(teamIndex, driverIndex, "name", e.target.value)}
-                            className="flex-1"
-                          />
+                          <Input value={driver.nationality} onChange={(e) => updateDriver(ti, di, "nationality", e.target.value)} className="w-14 text-center" />
+                          <Input value={driver.name} onChange={(e) => updateDriver(ti, di, "name", e.target.value)} className="flex-1" />
                           <Input
                             value={driver.shortName}
-                            onChange={(e) => updateDriver(teamIndex, driverIndex, "shortName", e.target.value)}
-                            className="w-16 uppercase font-mono text-center"
+                            onChange={(e) => updateDriver(ti, di, "shortName", e.target.value.toUpperCase())}
+                            className="w-16 font-mono text-center"
                             maxLength={3}
                           />
                         </div>
-                        <div className="grid grid-cols-3 gap-3">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Overtaking: {driver.overtaking}</Label>
-                            <Slider
-                              value={[driver.overtaking]}
-                              onValueChange={([v]) => updateDriver(teamIndex, driverIndex, "overtaking", v)}
-                              min={1}
-                              max={6}
-                              step={1}
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                          {DRIVER_STATS.map((s) => (
+                            <RatingSlider
+                              key={s.key}
+                              label={s.label}
+                              value={driver[s.key] as number}
+                              onChange={(v) => updateDriver(ti, di, s.key, v)}
                             />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Defending: {driver.maintainingPosition}</Label>
-                            <Slider
-                              value={[driver.maintainingPosition]}
-                              onValueChange={([v]) => updateDriver(teamIndex, driverIndex, "maintainingPosition", v)}
-                              min={1}
-                              max={6}
-                              step={1}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Avoid Collision: {driver.avoidingCollision}</Label>
-                            <Slider
-                              value={[driver.avoidingCollision]}
-                              onValueChange={([v]) => updateDriver(teamIndex, driverIndex, "avoidingCollision", v)}
-                              min={1}
-                              max={6}
-                              step={1}
-                            />
-                          </div>
+                          ))}
                         </div>
                       </div>
                     ))}
@@ -266,10 +180,14 @@ export function ConfigDialog({
           </TabsContent>
         </Tabs>
 
-        <Button onClick={handleSave} className="w-full gap-2 mt-4">
-          <Save className="w-4 h-4" />
-          Guardar Cambios
-        </Button>
+        <div className="flex gap-2 mt-2">
+          <Button variant="outline" onClick={() => setLocalTeams(defaultTeams)} className="gap-1 text-xs">
+            <RotateCcw className="w-3 h-3" /> Ratings originales
+          </Button>
+          <Button onClick={handleSave} className="flex-1 gap-2">
+            <Save className="w-4 h-4" /> Guardar cambios
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
   );

@@ -1,73 +1,36 @@
-# Welcome to your Lovable project
+# F1 Manager 2026
 
-## Project info
+Juego de gestión de F1 (temporada 2026): eliges una escudería y diriges la estrategia de tus dos pilotos durante los 24 Grandes Premios.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## Cómo se juega
 
-## How can I edit this code?
+1. **Elige tu equipo** al iniciar la temporada.
+2. **Clasificación**: Q1 (elimina 6), Q2 (elimina 6) y Q3 (top 10) con tiempos simulados.
+3. **Carrera vuelta a vuelta** (1x / 4x / 16x, de a una vuelta o directo al final). Desde el *muro de boxes* controlas:
+   - modo del piloto: **Atacar** (más rápido, gasta más neumático y arriesga errores), **Normal**, **Cuidar**;
+   - **parada en boxes** con el compuesto que elijas (blando / medio / duro). Es obligatorio usar dos compuestos.
+   - La carrera se pausa sola cuando sale el safety car (parar en boxes cuesta ~45% menos).
+4. Puntos 2026 (25-18-15-12-10-8-6-4-2-1, sin punto por vuelta rápida). El progreso se autoguarda en el navegador.
 
-There are several ways of editing your application.
+## Motor de simulación (`src/engine`)
 
-**Use Lovable**
+Funciones puras y deterministas (PRNG con semilla), separadas de la UI:
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+- `model.ts` – convierte ratings en segundos: ritmo de auto y piloto, desgaste por compuesto (con "cliff"), combustible, aire sucio, probabilidad de adelantamiento según circuito.
+- `race.ts` – simulación por vuelta: tiempos, adelantamientos, paradas, abandonos, errores, safety car y clasificación.
+- `strategy.ts` – estrategia de la IA (planes 1-2 paradas según desgaste del circuito, paradas oportunistas con SC).
+- `qualifying.ts` – formato Q1/Q2/Q3 de 22 autos.
+- `championship.ts` – standings calculados siempre desde los resultados (con desempate por countback).
 
-Changes made via Lovable will be committed automatically to this repo.
+Los ratings de autos/pilotos y los datos de cada circuito están en `src/data/f1Data.ts` (también editables desde **Config** en el juego). Son valores de juego, no datos oficiales.
 
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
+## Desarrollo
 
 ```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
 npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+npm run dev        # servidor local
+npm test           # tests del motor
+npm run calibrate  # reporte estadístico (ganadores, abandonos, adelantamientos por circuito...)
 ```
 
-**Edit a file directly in GitHub**
-
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
-
-**Use GitHub Codespaces**
-
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+Stack: Vite + React + TypeScript + Tailwind + shadcn/ui. Proyecto sincronizado con Lovable vía GitHub.

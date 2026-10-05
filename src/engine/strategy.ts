@@ -1,0 +1,84 @@
+// AI strategy: builds a tyre plan before the race and makes in-race pit calls.
+import type { Track } from "@/data/f1Data";
+import type { Rng } from "./rng";
+import type { CarState, Compound, Stint } from "./types";
+import { tyreLife } from "./model";
+
+interface Template {
+  stints: Compound[];
+  split: number[]; // fraction of race where each stop happens
+  weight: number;
+}
+
+const TEMPLATES: Template[] = [
+  { stints: ["M", "H"], split: [0.42], weight: 5 },
+  { stints: ["H", "M"], split: [0.58], weight: 2 },
+  { stints: ["S", "H"], split: [0.3], weight: 3 },
+  { stints: ["M", "S"], split: [0.68], weight: 1 },
+  { stints: ["S", "M", "M"], split: [0.28, 0.64], weight: 2 },
+  { stints: ["M", "H", "S"], split: [0.33, 0.75], weight: 2 },
+  { stints: ["S", "H", "S"], split: [0.25, 0.72], weight: 1 },
+  { stints: ["S", "M", "S"], split: [0.27, 0.62], weight: 1 },
+];
+
+/** Build a feasible tyre plan; adjusts weights so stints fit within tyre life. */
+export function buildPlan(track: Track, tyreMgmt: number, rng: Rng): Stint[] {
+  const laps = track.laps;
+  const options = TEMPLATES.map((tpl) => {
+    const bounds = [0, ...tpl.split.map((f) => f * laps), laps];
+    let feasible = true;
+    tpl.stints.forEach((c, i) => {
+      const len = bounds[i + 1] - bounds[i];
+      if (len > tyreLife(c, track, tyreMgmt) * 1.1) feasible = false;
+    });
+    // high-deg tracks prefer more stops, low-deg tracks prefer fewer
+    const stopBias = tpl.stints.length === 2 ? 1 / track.deg ** 2 : track.deg ** 2;
+    return { item: tpl, weight: feasible ? tpl.weight * stopBias : 0.01 };
+  });
+  const tpl = rng.weighted(options);
+  const stints: Stint[] = [];
+  let last = 0;
+  tpl.stints.forEach((c, i) => {
+    let until = i < tpl.split.length ? Math.round(tpl.split[i] * laps + rng.int(-3, 3)) : laps;
+    until = Math.max(last + 5, Math.min(laps - 3, until));
+    if (i === tpl.stints.length - 1) until = laps;
+    stints.push({ compound: c, untilLap: until });
+    last = until;
+  });
+  return stints;
+}
+
+/** Decide whether an AI car pits at the end of `lap`. Returns compound to fit or null. */
+export function aiPitDecision(car: CarState, lap: number, totalLaps: number, track: Track, scActive: boolean): Compound | null {
+  const lapsLeft = totalLaps - lap;
+  if (lapsLeft <= 1) return null;
+  const [current, next] = car.plan;
+  const life = tyreLife(car.compound, track, car.entry.driver.tyreMgmt);
+
+  // Planned stop
+  if (next && lap >= current.untilLap) return next.compound;
+
+  // Cheap stop under safety car if a stop is coming anyway or tyres are worn
+  if (scActive && lapsLeft > 6) {
+    if (next && current.untilLap - lap <= 10) return next.compound;
+    if (!next && car.tyreAge > life * 0.55 && lapsLeft > 10) {
+      return lapsLeft < 22 ? "S" : lapsLeft < 34 ? "M" : "H";
+    }
+  }
+
+  // Emergency: tyres well past the cliff
+  if (car.tyreAge > life * 1.2 && lapsLeft > 4) {
+    if (next) return next.compound;
+    return lapsLeft < 20 ? "S" : lapsLeft < 32 ? "M" : "H";
+  }
+  return null;
+}
+
+/** After a stop, drop the finished stint (or rebuild the remainder if the stop was unplanned). */
+export function advancePlan(car: CarState, fitted: Compound, lap: number, totalLaps: number): Stint[] {
+  const [, next, ...rest] = car.plan;
+  if (next && next.compound === fitted) return [next, ...rest];
+  // Unplanned stop: run the new tyre to the end, or keep the following stint if there is one
+  if (next) return [{ compound: fitted, untilLap: Math.max(lap + 5, next.untilLap) }, ...rest];
+  return [{ compound: fitted, untilLap: totalLaps }];
+}

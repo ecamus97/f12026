@@ -1,256 +1,174 @@
-import { useState, useCallback } from 'react';
-import { races2026, pointsSystem, Race, Team, teams as defaultTeams } from '@/data/f1Data';
-import { toast } from '@/hooks/use-toast';
-import { RaceConfig, DEFAULT_CONFIG } from '@/components/race/types';
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { races2026, teams as defaultTeams, teamInfo, type Team } from "@/data/f1Data";
+import {
+  classify,
+  computeStandings,
+  createRace,
+  DEFAULT_SIM_CONFIG,
+  randomSeed,
+  runQualifying,
+  type Entry,
+  type QualifyingResult,
+  type RaceState,
+  type SimConfig,
+  type StoredRaceResult,
+} from "@/engine";
 
-const STORAGE_KEY = 'f1-dice-game-2026-save';
+const STORAGE_KEY = "f1-manager-2026-v2";
 
-export interface DriverStanding {
-  driverId: string;
-  driverName: string;
-  shortName: string;
-  teamId: string;
-  teamName: string;
-  teamColor: string;
-  nationality: string;
-  points: number;
-  wins: number;
-}
-
-export interface TeamStanding {
-  teamId: string;
-  teamName: string;
-  teamColor: string;
-  points: number;
-  wins: number;
-}
-
-export interface RaceResult {
-  raceId: number;
-  positions: {
-    position: number;
-    driverId: string;
-    driverName: string;
-    shortName: string;
-    teamId: string;
-    teamColor: string;
-    points: number;
-    retired: boolean;
-  }[];
-  completed: boolean;
+export interface Weekend {
+  raceIndex: number;
+  quali: QualifyingResult;
+  qualiRevealed: number; // sessions shown to the player (0-3)
+  race: RaceState | null;
 }
 
 export interface GameState {
+  version: 2;
+  playerTeamId: string | null;
   currentRaceIndex: number;
-  driverStandings: DriverStanding[];
-  teamStandings: TeamStanding[];
-  raceResults: RaceResult[];
-  seasonComplete: boolean;
-  raceConfig: RaceConfig;
+  results: StoredRaceResult[];
+  simConfig: SimConfig;
   teamsData: Team[];
+  weekend: Weekend | null;
 }
 
-const initialDriverStandings = (teamsData: Team[]): DriverStanding[] => {
-  return teamsData.flatMap(team =>
-    team.drivers.map(driver => ({
-      driverId: driver.id,
-      driverName: driver.name,
-      shortName: driver.shortName,
-      teamId: team.id,
-      teamName: team.name,
-      teamColor: team.color,
-      nationality: driver.nationality,
-      points: 0,
-      wins: 0,
-    }))
-  );
-};
-
-const initialTeamStandings = (teamsData: Team[]): TeamStanding[] => {
-  return teamsData.map(team => ({
-    teamId: team.id,
-    teamName: team.name,
-    teamColor: team.color,
-    points: 0,
-    wins: 0,
-  }));
-};
-
-const getInitialState = (): GameState => ({
+const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = DEFAULT_SIM_CONFIG): GameState => ({
+  version: 2,
+  playerTeamId: null,
   currentRaceIndex: 0,
-  driverStandings: initialDriverStandings(defaultTeams),
-  teamStandings: initialTeamStandings(defaultTeams),
-  raceResults: [],
-  seasonComplete: false,
-  raceConfig: DEFAULT_CONFIG,
-  teamsData: defaultTeams,
+  results: [],
+  simConfig,
+  teamsData,
+  weekend: null,
 });
 
+function loadState(): GameState {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return initialState();
+    const parsed = JSON.parse(raw) as GameState;
+    if (parsed?.version !== 2 || !Array.isArray(parsed.teamsData)) return initialState();
+    return { ...initialState(), ...parsed };
+  } catch {
+    return initialState();
+  }
+}
+
+export const entriesFromTeams = (teams: Team[]): Entry[] =>
+  teams.flatMap((t) => t.drivers.map((driver) => ({ driver, team: teamInfo(t) })));
+
 export function useGameState() {
-  const [gameState, setGameState] = useState<GameState>(getInitialState());
+  const [gameState, setGameState] = useState<GameState>(loadState);
 
-  const getCurrentRace = useCallback((): Race | null => {
-    if (gameState.currentRaceIndex >= races2026.length) return null;
-    return races2026[gameState.currentRaceIndex];
-  }, [gameState.currentRaceIndex]);
+  // Debounced autosave
+  const saveTimer = useRef<number>();
+  useEffect(() => {
+    window.clearTimeout(saveTimer.current);
+    saveTimer.current = window.setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+      } catch {
+        /* storage unavailable: game keeps working in memory */
+      }
+    }, 400);
+  }, [gameState]);
 
-  const updateRaceConfig = useCallback((config: RaceConfig) => {
-    setGameState(prev => ({ ...prev, raceConfig: config }));
+  const standings = useMemo(
+    () => computeStandings(gameState.teamsData, gameState.results),
+    [gameState.teamsData, gameState.results],
+  );
+
+  const entries = useMemo(() => entriesFromTeams(gameState.teamsData), [gameState.teamsData]);
+  const entryMap = useMemo(() => new Map(entries.map((e) => [e.driver.id, e])), [entries]);
+
+  const currentRace = races2026[gameState.currentRaceIndex] ?? null;
+  const seasonComplete = gameState.currentRaceIndex >= races2026.length;
+
+  const chooseTeam = useCallback((teamId: string) => {
+    setGameState((s) => ({ ...s, playerTeamId: teamId }));
   }, []);
 
-  const updateTeamsData = useCallback((teams: Team[]) => {
-    setGameState(prev => ({
-      ...prev,
-      teamsData: teams,
-      driverStandings: prev.driverStandings.map(standing => {
-        const team = teams.find(t => t.id === standing.teamId);
-        const driver = team?.drivers.find(d => d.id === standing.driverId);
-        if (!team || !driver) return standing;
-        return {
-          ...standing,
-          driverName: driver.name,
-          shortName: driver.shortName,
-          teamName: team.name,
-          teamColor: team.color,
-          nationality: driver.nationality,
-        };
-      }),
-      teamStandings: prev.teamStandings.map(standing => {
-        const team = teams.find(t => t.id === standing.teamId);
-        if (!team) return standing;
-        return {
-          ...standing,
-          teamName: team.name,
-          teamColor: team.color,
-        };
-      }),
-    }));
+  const startWeekend = useCallback(() => {
+    setGameState((s) => {
+      const race = races2026[s.currentRaceIndex];
+      if (!race) return s;
+      if (s.weekend?.raceIndex === s.currentRaceIndex) return s; // resume
+      const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig);
+      return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null } };
+    });
   }, []);
 
-  const recordRaceResult = useCallback((positions: RaceResult['positions']) => {
-    setGameState(prev => {
-      const newRaceResult: RaceResult = {
-        raceId: races2026[prev.currentRaceIndex].id,
-        positions,
-        completed: true,
+  const revealSession = useCallback((all = false) => {
+    setGameState((s) =>
+      s.weekend
+        ? { ...s, weekend: { ...s.weekend, qualiRevealed: all ? 3 : Math.min(3, s.weekend.qualiRevealed + 1) } }
+        : s,
+    );
+  }, []);
+
+  const startRace = useCallback(() => {
+    setGameState((s) => {
+      const w = s.weekend;
+      if (!w || w.race) return s;
+      const race = races2026[w.raceIndex];
+      const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
+      const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
+      return { ...s, weekend: { ...w, race: createRace(race, grid, randomSeed(), s.simConfig) } };
+    });
+  }, []);
+
+  const updateRace = useCallback((race: RaceState) => {
+    setGameState((s) => (s.weekend ? { ...s, weekend: { ...s.weekend, race } } : s));
+  }, []);
+
+  const finishRace = useCallback(() => {
+    setGameState((s) => {
+      const w = s.weekend;
+      if (!w?.race?.finished) return s;
+      const result: StoredRaceResult = {
+        raceId: races2026[w.raceIndex].id,
+        rows: classify(w.race),
+        pole: w.quali.grid[0],
+        fastestLap: w.race.fastest ? { driverId: w.race.fastest.driverId, time: w.race.fastest.time } : null,
       };
-
-      const newDriverStandings = prev.driverStandings.map(standing => {
-        const result = positions.find(p => p.driverId === standing.driverId);
-        if (!result) return standing;
-        
-        return {
-          ...standing,
-          points: standing.points + result.points,
-          wins: result.position === 1 ? standing.wins + 1 : standing.wins,
-        };
-      }).sort((a, b) => b.points - a.points);
-
-      const newTeamStandings = prev.teamStandings.map(standing => {
-        const teamResults = positions.filter(p => p.teamId === standing.teamId);
-        const teamPoints = teamResults.reduce((sum, r) => sum + r.points, 0);
-        const teamWins = teamResults.filter(r => r.position === 1).length;
-        
-        return {
-          ...standing,
-          points: standing.points + teamPoints,
-          wins: standing.wins + teamWins,
-        };
-      }).sort((a, b) => b.points - a.points);
-
-      const nextRaceIndex = prev.currentRaceIndex + 1;
-      const seasonComplete = nextRaceIndex >= races2026.length;
-
       return {
-        ...prev,
-        currentRaceIndex: nextRaceIndex,
-        driverStandings: newDriverStandings,
-        teamStandings: newTeamStandings,
-        raceResults: [...prev.raceResults, newRaceResult],
-        seasonComplete,
+        ...s,
+        results: [...s.results.filter((r) => r.raceId !== result.raceId), result],
+        currentRaceIndex: w.raceIndex + 1,
+        weekend: null,
       };
     });
   }, []);
 
   const resetSeason = useCallback(() => {
-    setGameState(prev => ({
-      ...getInitialState(),
-      raceConfig: prev.raceConfig,
-      teamsData: prev.teamsData,
-      driverStandings: initialDriverStandings(prev.teamsData),
-      teamStandings: initialTeamStandings(prev.teamsData),
-    }));
+    setGameState((s) => initialState(s.teamsData, s.simConfig));
   }, []);
 
-  const saveProgress = useCallback(() => {
-    try {
-      const saveData = JSON.stringify(gameState);
-      localStorage.setItem(STORAGE_KEY, saveData);
-      toast({
-        title: "Progreso guardado",
-        description: `Carrera ${gameState.currentRaceIndex} de ${races2026.length} guardada correctamente.`,
-      });
-      return true;
-    } catch (error) {
-      toast({
-        title: "Error al guardar",
-        description: "No se pudo guardar el progreso. Verifica el almacenamiento del navegador.",
-        variant: "destructive",
-      });
-      return false;
-    }
-  }, [gameState]);
-
-  const loadProgress = useCallback(() => {
-    try {
-      const savedData = localStorage.getItem(STORAGE_KEY);
-      if (!savedData) {
-        toast({
-          title: "Sin datos guardados",
-          description: "No se encontró ningún progreso guardado.",
-          variant: "destructive",
-        });
-        return false;
-      }
-      
-      const parsedState = JSON.parse(savedData) as GameState;
-      // Ensure backwards compatibility
-      if (!parsedState.raceConfig) {
-        parsedState.raceConfig = DEFAULT_CONFIG;
-      }
-      if (!parsedState.teamsData) {
-        parsedState.teamsData = defaultTeams;
-      }
-      setGameState(parsedState);
-      toast({
-        title: "Progreso cargado",
-        description: `Carrera ${parsedState.currentRaceIndex} de ${races2026.length} cargada correctamente.`,
-      });
-      return true;
-    } catch (error) {
-      toast({
-        title: "Error al cargar",
-        description: "El archivo de guardado está corrupto o es incompatible.",
-        variant: "destructive",
-      });
-      return false;
-    }
+  const updateSimConfig = useCallback((simConfig: SimConfig) => {
+    setGameState((s) => ({ ...s, simConfig }));
   }, []);
 
-  const hasSavedProgress = useCallback(() => {
-    return localStorage.getItem(STORAGE_KEY) !== null;
+  const updateTeamsData = useCallback((teamsData: Team[]) => {
+    setGameState((s) => ({ ...s, teamsData }));
   }, []);
 
   return {
     gameState,
-    getCurrentRace,
-    recordRaceResult,
-    resetSeason,
-    saveProgress,
-    loadProgress,
-    hasSavedProgress,
-    updateRaceConfig,
-    updateTeamsData,
+    standings,
+    entries,
+    entryMap,
+    currentRace,
+    seasonComplete,
     races: races2026,
+    chooseTeam,
+    startWeekend,
+    revealSession,
+    startRace,
+    updateRace,
+    finishRace,
+    resetSeason,
+    updateSimConfig,
+    updateTeamsData,
   };
 }

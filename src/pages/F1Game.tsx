@@ -3,326 +3,217 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { useGameState } from "@/hooks/useGameState";
 import { RaceCard } from "@/components/RaceCard";
 import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
-import { QualifyingPhase } from "@/components/QualifyingPhase";
-import { RacePhase } from "@/components/RacePhase";
 import { ConfigDialog } from "@/components/ConfigDialog";
+import { TeamSelect } from "@/components/game/TeamSelect";
+import { QualifyingView } from "@/components/game/QualifyingView";
+import { RaceView } from "@/components/game/RaceView";
+import { TeamStripe } from "@/components/game/common";
 import heroImage from "@/assets/f1-hero.jpg";
-import { 
-  Flag, 
-  Trophy, 
-  Users, 
-  Calendar, 
-  Play, 
-  RotateCcw,
-  ChevronRight,
-  Sparkles,
-  Save,
-  Download
-} from "lucide-react";
+import { Trophy, Users, Calendar, Play, RotateCcw, ChevronRight, Flag, Home } from "lucide-react";
 
-type GameScreen = "home" | "calendar" | "qualifying" | "race" | "standings";
+type Screen = "home" | "calendar" | "weekend" | "standings";
+
+const fade = {
+  initial: { opacity: 0, y: 16 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -16 },
+  transition: { duration: 0.2 },
+};
 
 export default function F1Game() {
-  const { 
-    gameState, 
-    getCurrentRace, 
-    recordRaceResult, 
-    resetSeason, 
-    saveProgress, 
-    loadProgress, 
-    updateRaceConfig,
-    updateTeamsData,
-    races 
-  } = useGameState();
-  const [screen, setScreen] = useState<GameScreen>("home");
-  const [qualifyingGrid, setQualifyingGrid] = useState<any[]>([]);
+  const game = useGameState();
+  const { gameState, standings, currentRace, seasonComplete, races, entryMap } = game;
+  const [screen, setScreen] = useState<Screen>(gameState.weekend ? "weekend" : "home");
 
-  const currentRace = getCurrentRace();
+  const playerTeam = gameState.teamsData.find((t) => t.id === gameState.playerTeamId) ?? null;
+  const weekend = gameState.weekend;
+  const weekendRace = weekend ? races[weekend.raceIndex] : null;
 
-  const handleQualifyingComplete = (grid: any[]) => {
-    setQualifyingGrid(grid);
-    setScreen("race");
+  const goToWeekend = () => {
+    game.startWeekend();
+    setScreen("weekend");
   };
 
-  const handleRaceComplete = (positions: any[]) => {
-    recordRaceResult(positions);
-    setScreen("standings");
-  };
-
-  const startNextRace = () => {
-    if (currentRace) {
-      setScreen("qualifying");
-    }
-  };
+  const navButton = (to: Screen, Icon: typeof Home, label: string) => (
+    <Button
+      variant={screen === to ? "default" : "ghost"}
+      size="sm"
+      onClick={() => setScreen(to)}
+      className="font-racing text-xs"
+    >
+      <Icon className="w-4 h-4 md:mr-1" />
+      <span className="hidden md:inline">{label}</span>
+    </Button>
+  );
 
   return (
-    <div className="min-h-screen bg-background overflow-hidden">
-      {/* Header */}
+    <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 bg-background/95 backdrop-blur border-b border-border">
-        <div className="container mx-auto px-4 py-3">
-          <div className="flex items-center justify-between">
-            <motion.h1 
-              className="font-racing text-xl md:text-2xl text-gradient-primary cursor-pointer"
-              onClick={() => setScreen("home")}
-              whileHover={{ scale: 1.02 }}
-            >
-              F1 DICE GAME 2026
-            </motion.h1>
-            
-            <nav className="flex items-center gap-1 md:gap-2">
-              <ConfigDialog
-                raceConfig={gameState.raceConfig}
-                onRaceConfigChange={updateRaceConfig}
-                teamsData={gameState.teamsData}
-                onTeamsDataChange={updateTeamsData}
-              />
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={saveProgress}
-                className="font-racing text-xs"
-                title="Guardar progreso"
-              >
-                <Save className="w-4 h-4" />
-                <span className="hidden lg:inline ml-1">Guardar</span>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={loadProgress}
-                className="font-racing text-xs"
-                title="Cargar progreso"
-              >
-                <Download className="w-4 h-4" />
-                <span className="hidden lg:inline ml-1">Cargar</span>
-              </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="font-racing text-xs text-destructive hover:text-destructive"
-                    title="Reiniciar campeonato"
+        <div className="container mx-auto px-4 py-3 flex items-center justify-between gap-2">
+          <button onClick={() => setScreen("home")} className="flex items-center gap-2">
+            {playerTeam && <TeamStripe color={playerTeam.hex} className="h-6 w-1.5" />}
+            <span className="font-racing text-lg md:text-2xl text-gradient-primary whitespace-nowrap">F1 <span className="hidden sm:inline">MANAGER </span>2026</span>
+          </button>
+          <nav className="flex items-center gap-1">
+            {navButton("home", Home, "Inicio")}
+            {weekend && navButton("weekend", Flag, weekend.race ? "Carrera" : "Clasificación")}
+            {navButton("calendar", Calendar, "Calendario")}
+            {navButton("standings", Trophy, "Campeonato")}
+            <ConfigDialog
+              simConfig={gameState.simConfig}
+              onSimConfigChange={game.updateSimConfig}
+              teamsData={gameState.teamsData}
+              onTeamsDataChange={game.updateTeamsData}
+            />
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" title="Nueva temporada">
+                  <RotateCcw className="w-4 h-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Empezar una nueva temporada?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se borran los resultados, el campeonato y tu equipo elegido. La configuración y los ratings se mantienen.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      game.resetSeason();
+                      setScreen("home");
+                    }}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >
-                    <RotateCcw className="w-4 h-4" />
-                    <span className="hidden lg:inline ml-1">Reiniciar</span>
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>¿Reiniciar campeonato?</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      Esta acción eliminará todo el progreso actual del campeonato. 
-                      Los puntos, resultados y clasificaciones se perderán. Esta acción no se puede deshacer.
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                    <AlertDialogAction onClick={resetSeason} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                      Reiniciar
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              <Button
-                variant={screen === "calendar" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setScreen("calendar")}
-                className="font-racing text-xs"
-              >
-                <Calendar className="w-4 h-4 md:mr-1" />
-                <span className="hidden md:inline">Calendario</span>
-              </Button>
-              <Button
-                variant={screen === "standings" ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setScreen("standings")}
-                className="font-racing text-xs"
-              >
-                <Trophy className="w-4 h-4 md:mr-1" />
-                <span className="hidden md:inline">Campeonato</span>
-              </Button>
-            </nav>
-          </div>
+                    Reiniciar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </nav>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6">
+      <main className="container mx-auto px-4 py-6 max-w-6xl">
         <AnimatePresence mode="wait">
-          {/* HOME SCREEN */}
           {screen === "home" && (
-            <motion.div
-              key="home"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-8"
-            >
-              <div className="relative text-center space-y-4 py-12">
-                {/* Hero Background */}
-                <div className="absolute inset-0 -z-10 overflow-hidden rounded-xl opacity-30">
-                  <img 
-                    src={heroImage} 
-                    alt="F1 Racing" 
-                    className="w-full h-full object-cover"
+            <motion.div key="home" {...fade} className="space-y-6">
+              {!playerTeam ? (
+                <>
+                  <div className="relative overflow-hidden rounded-xl py-10 text-center isolate">
+                    <img src={heroImage} alt="" className="absolute inset-0 -z-10 w-full h-full object-cover opacity-25" />
+                    <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background via-background/70 to-transparent" />
+                    <h1 className="font-racing text-4xl md:text-5xl text-gradient-primary">Temporada 2026</h1>
+                    <p className="text-muted-foreground mt-2">24 carreras · 11 equipos · 22 pilotos</p>
+                  </div>
+                  <TeamSelect teams={gameState.teamsData} onChoose={game.chooseTeam} />
+                </>
+              ) : (
+                <>
+                  <TeamOverview
+                    teamName={playerTeam.name}
+                    hex={playerTeam.hex}
+                    drivers={standings.drivers
+                      .map((d, i) => ({ ...d, pos: i + 1 }))
+                      .filter((d) => d.teamId === playerTeam.id)}
+                    teamPos={standings.teams.findIndex((t) => t.teamId === playerTeam.id) + 1}
+                    teamPoints={standings.teams.find((t) => t.teamId === playerTeam.id)?.points ?? 0}
+                    racesDone={gameState.results.length}
+                    totalRaces={races.length}
                   />
-                  <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
-                </div>
 
-                <motion.div
-                  initial={{ scale: 0 }}
-                  animate={{ scale: 1 }}
-                  transition={{ type: "spring", delay: 0.2 }}
-                >
-                  <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-primary/20 mb-4 animate-pulse-glow">
-                    <Flag className="w-10 h-10 text-primary" />
+                  {currentRace && !seasonComplete && (
+                    <div className="rounded-xl border border-border bg-gradient-card p-5 space-y-4 glow-primary">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="font-racing text-sm text-muted-foreground uppercase tracking-wider">
+                          {weekend ? "Fin de semana en curso" : "Próxima carrera"}
+                        </h3>
+                        <span className="text-xs text-muted-foreground">
+                          {currentRace.track.laps} vueltas · adelantar:{" "}
+                          {currentRace.track.overtaking > 0.7 ? "difícil" : currentRace.track.overtaking < 0.4 ? "fácil" : "medio"} · desgaste:{" "}
+                          {currentRace.track.deg >= 1.2 ? "alto" : currentRace.track.deg <= 0.8 ? "bajo" : "medio"}
+                        </span>
+                      </div>
+                      <RaceCard race={currentRace} status="current" />
+                      <Button onClick={goToWeekend} className="w-full font-racing" size="lg">
+                        <Play className="w-4 h-4 mr-2" />
+                        {weekend ? (weekend.race ? "Volver a la carrera" : "Volver a la clasificación") : "Comenzar fin de semana"}
+                      </Button>
+                    </div>
+                  )}
+
+                  {seasonComplete && (
+                    <div className="rounded-xl border border-yellow-500/40 bg-card p-6 text-center space-y-3">
+                      <Trophy className="w-16 h-16 mx-auto text-yellow-400" />
+                      <h2 className="font-racing text-2xl text-gradient-primary">¡Temporada completa!</h2>
+                      <p className="text-muted-foreground">
+                        Campeón: <span className="text-foreground font-semibold">{standings.drivers[0]?.driverName}</span> ·
+                        Constructores: <span className="text-foreground font-semibold">{standings.teams[0]?.teamName}</span>
+                      </p>
+                      <Button onClick={game.resetSeason} className="font-racing">
+                        <RotateCcw className="w-4 h-4 mr-2" /> Nueva temporada
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="grid md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <h3 className="font-racing text-sm flex items-center gap-2">
+                        <Trophy className="w-4 h-4 text-yellow-400" /> Pilotos
+                      </h3>
+                      <DriverChampionshipTable
+                        standings={standings.drivers.slice(0, 8)}
+                        results={gameState.results}
+                        playerTeamId={gameState.playerTeamId}
+                        compact
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <h3 className="font-racing text-sm flex items-center gap-2">
+                        <Users className="w-4 h-4 text-primary" /> Constructores
+                      </h3>
+                      <TeamChampionshipTable
+                        standings={standings.teams.slice(0, 8)}
+                        results={gameState.results}
+                        playerTeamId={gameState.playerTeamId}
+                        compact
+                      />
+                    </div>
                   </div>
-                </motion.div>
-                <h2 className="font-racing text-4xl md:text-6xl text-gradient-primary">
-                  Temporada 2026
-                </h2>
-                <p className="text-muted-foreground max-w-md mx-auto">
-                  Simula la temporada completa de F1 con dados. 
-                  24 carreras, 11 equipos, 22 pilotos.
-                </p>
-              </div>
-
-              {currentRace && !gameState.seasonComplete && (
-                <motion.div
-                  className="bg-gradient-card rounded-xl p-6 border border-border glow-primary"
-                  initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: 0.3 }}
-                >
-                  <div className="flex items-center gap-2 mb-4">
-                    <Sparkles className="w-5 h-5 text-primary" />
-                    <h3 className="font-racing text-lg">Próxima Carrera</h3>
-                  </div>
-                  
-                  <RaceCard race={currentRace} status="current" />
-
-                  <Button 
-                    onClick={startNextRace} 
-                    className="w-full mt-4 font-racing"
-                    size="lg"
-                  >
-                    <Play className="w-4 h-4 mr-2" />
-                    Iniciar Clasificación
-                  </Button>
-                </motion.div>
+                </>
               )}
-
-              {gameState.seasonComplete && (
-                <motion.div
-                  className="text-center space-y-6 py-8"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  <Trophy className="w-24 h-24 mx-auto text-yellow-400" />
-                  <h2 className="font-racing text-3xl text-gradient-primary">
-                    ¡Temporada Completa!
-                  </h2>
-                  <div className="space-y-2">
-                    <p className="text-muted-foreground">
-                      Campeón de Pilotos: <span className="text-primary font-bold">
-                        {gameState.driverStandings[0]?.driverName}
-                      </span>
-                    </p>
-                    <p className="text-muted-foreground">
-                      Campeón de Constructores: <span className="text-primary font-bold">
-                        {gameState.teamStandings[0]?.teamName}
-                      </span>
-                    </p>
-                  </div>
-                  <Button onClick={resetSeason} className="font-racing" size="lg">
-                    <RotateCcw className="w-4 h-4 mr-2" />
-                    Nueva Temporada
-                  </Button>
-                </motion.div>
-              )}
-
-              {/* Quick Stats */}
-              <div className="grid md:grid-cols-2 gap-4">
-                <motion.div
-                  className="bg-card rounded-lg p-4 border border-border"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.4 }}
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <Trophy className="w-5 h-5 text-yellow-400" />
-                    <h3 className="font-racing text-sm">Top 5 Pilotos</h3>
-                  </div>
-                  <DriverChampionshipTable 
-                    standings={gameState.driverStandings.slice(0, 5)} 
-                    raceResults={gameState.raceResults}
-                  />
-                </motion.div>
-
-                <motion.div
-                  className="bg-card rounded-lg p-4 border border-border"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.5 }}
-                >
-                  <div className="flex items-center gap-2 mb-3">
-                    <Users className="w-5 h-5 text-primary" />
-                    <h3 className="font-racing text-sm">Top 5 Constructores</h3>
-                  </div>
-                  <TeamChampionshipTable 
-                    standings={gameState.teamStandings.slice(0, 5)} 
-                    raceResults={gameState.raceResults}
-                  />
-                </motion.div>
-              </div>
             </motion.div>
           )}
 
-          {/* CALENDAR SCREEN */}
           {screen === "calendar" && (
-            <motion.div
-              key="calendar"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-4"
-            >
+            <motion.div key="calendar" {...fade} className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="font-racing text-2xl text-gradient-primary">
-                  Calendario 2026
-                </h2>
+                <h2 className="font-racing text-2xl text-gradient-primary">Calendario 2026</h2>
                 <span className="text-sm text-muted-foreground">
-                  {gameState.raceResults.length} / {races.length} carreras
+                  {gameState.results.length} / {races.length}
                 </span>
               </div>
-
-              <div className="grid gap-3">
-                {races.map((race, index) => {
-                  const result = gameState.raceResults.find(r => r.raceId === race.id);
-                  const isCurrent = index === gameState.currentRaceIndex;
-                  const status = result ? "completed" : isCurrent ? "current" : "upcoming";
-                  const winner = result?.positions.find(p => p.position === 1)?.driverName;
-
+              <div className="grid md:grid-cols-2 gap-3">
+                {races.map((race, i) => {
+                  const result = gameState.results.find((r) => r.raceId === race.id);
+                  const isCurrent = i === gameState.currentRaceIndex;
+                  const winnerId = result?.rows[0]?.driverId;
+                  const winner = winnerId ? entryMap.get(winnerId)?.driver.name : undefined;
                   return (
                     <RaceCard
                       key={race.id}
                       race={race}
-                      status={status}
+                      status={result ? "completed" : isCurrent ? "current" : "upcoming"}
                       winner={winner}
-                      onClick={isCurrent ? startNextRace : undefined}
+                      onClick={isCurrent && playerTeam ? goToWeekend : undefined}
                     />
                   );
                 })}
@@ -330,97 +221,102 @@ export default function F1Game() {
             </motion.div>
           )}
 
-          {/* QUALIFYING SCREEN */}
-          {screen === "qualifying" && currentRace && (
-            <motion.div
-              key="qualifying"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <QualifyingPhase 
-                race={currentRace} 
-                onComplete={handleQualifyingComplete}
-                teamsData={gameState.teamsData}
-              />
+          {screen === "weekend" && (
+            <motion.div key="weekend" {...fade}>
+              {!weekend || !weekendRace ? (
+                <div className="text-center text-muted-foreground py-12">No hay un fin de semana en curso.</div>
+              ) : weekend.race ? (
+                <RaceView
+                  race={weekendRace}
+                  state={weekend.race}
+                  playerTeamId={gameState.playerTeamId}
+                  onUpdate={game.updateRace}
+                  onFinish={() => {
+                    game.finishRace();
+                    setScreen("standings");
+                  }}
+                />
+              ) : (
+                <QualifyingView
+                  race={weekendRace}
+                  quali={weekend.quali}
+                  revealed={weekend.qualiRevealed}
+                  entryMap={entryMap}
+                  playerTeamId={gameState.playerTeamId}
+                  onReveal={game.revealSession}
+                  onStartRace={game.startRace}
+                />
+              )}
             </motion.div>
           )}
 
-          {/* RACE SCREEN */}
-          {screen === "race" && currentRace && (
-            <motion.div
-              key="race"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-            >
-              <RacePhase
-                race={currentRace}
-                grid={qualifyingGrid}
-                onComplete={handleRaceComplete}
-                raceConfig={gameState.raceConfig}
-              />
-            </motion.div>
-          )}
-
-          {/* STANDINGS SCREEN */}
           {screen === "standings" && (
-            <motion.div
-              key="standings"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-6"
-            >
-              <div className="flex items-center justify-between">
-                <h2 className="font-racing text-2xl text-gradient-primary">
-                  Campeonato
-                </h2>
-                {currentRace && !gameState.seasonComplete && (
-                  <Button onClick={startNextRace} className="font-racing" size="sm">
-                    <ChevronRight className="w-4 h-4 mr-1" />
-                    Siguiente Carrera
+            <motion.div key="standings" {...fade} className="space-y-5">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-racing text-2xl text-gradient-primary">Campeonato</h2>
+                {currentRace && !seasonComplete && playerTeam && (
+                  <Button onClick={goToWeekend} className="font-racing" size="sm">
+                    Siguiente: {currentRace.flag} {currentRace.country}
+                    <ChevronRight className="w-4 h-4 ml-1" />
                   </Button>
                 )}
               </div>
-
-              <Tabs defaultValue="drivers" className="w-full">
+              <Tabs defaultValue="drivers">
                 <TabsList className="w-full grid grid-cols-2">
-                  <TabsTrigger value="drivers" className="font-racing">
-                    <Trophy className="w-4 h-4 mr-2" />
-                    Pilotos
-                  </TabsTrigger>
-                  <TabsTrigger value="teams" className="font-racing">
-                    <Users className="w-4 h-4 mr-2" />
-                    Constructores
-                  </TabsTrigger>
+                  <TabsTrigger value="drivers" className="font-racing">Pilotos</TabsTrigger>
+                  <TabsTrigger value="teams" className="font-racing">Constructores</TabsTrigger>
                 </TabsList>
-                
                 <TabsContent value="drivers" className="mt-4">
-                  <DriverChampionshipTable 
-                    standings={gameState.driverStandings}
-                    raceResults={gameState.raceResults}
-                  />
+                  <DriverChampionshipTable standings={standings.drivers} results={gameState.results} playerTeamId={gameState.playerTeamId} />
                 </TabsContent>
-                
                 <TabsContent value="teams" className="mt-4">
-                  <TeamChampionshipTable 
-                    standings={gameState.teamStandings}
-                    raceResults={gameState.raceResults}
-                  />
+                  <TeamChampionshipTable standings={standings.teams} results={gameState.results} playerTeamId={gameState.playerTeamId} />
                 </TabsContent>
               </Tabs>
-
-              {gameState.seasonComplete && (
-                <Button onClick={resetSeason} className="w-full font-racing" variant="outline">
-                  <RotateCcw className="w-4 h-4 mr-2" />
-                  Reiniciar Temporada
-                </Button>
-              )}
             </motion.div>
           )}
         </AnimatePresence>
       </main>
+    </div>
+  );
+}
+
+function TeamOverview({
+  teamName, hex, drivers, teamPos, teamPoints, racesDone, totalRaces,
+}: {
+  teamName: string;
+  hex: string;
+  drivers: { driverId: string; driverName: string; nationality: string; points: number; wins: number; podiums: number; pos: number }[];
+  teamPos: number;
+  teamPoints: number;
+  racesDone: number;
+  totalRaces: number;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="h-1.5" style={{ backgroundColor: hex }} />
+      <div className="p-5 grid md:grid-cols-[1fr_auto] gap-4 items-center">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu escudería</p>
+          <h2 className="font-racing text-2xl">{teamName}</h2>
+          <p className="text-sm text-muted-foreground">
+            P{teamPos} en constructores · {teamPoints} pts · {racesDone} de {totalRaces} carreras disputadas
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-3">
+          {drivers.map((d) => (
+            <div key={d.driverId} className="rounded-lg border border-border bg-background/50 px-4 py-2 min-w-36">
+              <div className="text-sm">
+                {d.nationality} <span className="font-semibold">{d.driverName}</span>
+              </div>
+              <div className="text-xs text-muted-foreground">
+                P{d.pos} · {d.points} pts{d.wins ? ` · ${d.wins} V` : ""}
+                {d.podiums ? ` · ${d.podiums} pod.` : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
