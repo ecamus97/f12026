@@ -6,7 +6,7 @@ Juego de gestión de F1 (temporada 2026): eliges una escudería y diriges la est
 
 1. **Elige tu equipo** al iniciar la temporada.
 2. **Clasificación**: Q1 (elimina 6), Q2 (elimina 6) y Q3 (top 10) con tiempos simulados.
-3. **Carrera vuelta a vuelta** (1x / 4x / 16x, de a una vuelta o directo al final). Desde el *muro de boxes* controlas:
+3. **Carrera vuelta a vuelta** con el circuito animado arriba (1x ≈ 6 s por vuelta, 2x, 4x, 16x, de a una vuelta o directo al final). Desde el *muro de boxes* controlas:
    - modo del piloto: **Atacar** (más rápido, gasta más neumático y arriesga errores), **Normal**, **Cuidar**;
    - **parada en boxes** con el compuesto que elijas (blando / medio / duro). Es obligatorio usar dos compuestos.
    - La carrera se pausa sola cuando sale el safety car (parar en boxes cuesta ~45% menos).
@@ -32,5 +32,7 @@ npm run dev        # servidor local
 npm test           # tests del motor
 npm run calibrate  # reporte estadístico (ganadores, abandonos, adelantamientos por circuito...)
 ```
+
+Los trazados de los circuitos vienen de [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (licencia MIT).
 
 Stack: Vite + React + TypeScript + Tailwind + shadcn/ui. Proyecto sincronizado con Lovable vía GitHub.

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Pause, Play, StepForward, FastForward, Flag, Wrench, ChevronUp, ChevronDown, Minus, Siren, Star, X,
@@ -11,6 +11,7 @@ import {
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
+import { TrackMap, type LapAnimation } from "./TrackMap";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -21,10 +22,12 @@ interface Props {
   onFinish: () => void;
 }
 
+// Time on screen per lap
 const SPEEDS = [
-  { label: "1x", ms: 1400 },
-  { label: "4x", ms: 380 },
-  { label: "16x", ms: 90 },
+  { label: "1x", ms: 6000 },
+  { label: "2x", ms: 3000 },
+  { label: "4x", ms: 1500 },
+  { label: "16x", ms: 350 },
 ];
 
 export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Props) {
@@ -35,20 +38,47 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
 
   const isMine = (id: string) => state.cars.find((c) => c.id === id)?.entry.team.id === playerTeamId;
 
-  // Playback loop
+  // Playback: each lap is simulated up-front and then animated on the track map;
+  // the timing tower and race control update when the lap is completed.
+  const [anim, setAnim] = useState<LapAnimation | null>(null);
+
+  const startLap = useCallback(() => {
+    if (state.finished) return;
+    const next = simulateLap(state);
+    const from = Object.fromEntries(state.cars.filter((c) => c.status === "running").map((c) => [c.id, c.total]));
+    setAnim({ from, to: next, start: performance.now(), duration: SPEEDS[speed].ms });
+  }, [state, speed]);
+
+  // finish the animated lap
   useEffect(() => {
-    if (!playing || state.finished) return;
+    if (!anim) return;
+    const remaining = Math.max(0, anim.duration - (performance.now() - anim.start));
     const id = window.setTimeout(() => {
-      const next = simulateLap(state);
-      onUpdate(next);
+      const next = anim.to;
       const fresh = next.events.slice(state.events.length);
       const pause = fresh.some(
         (e) => e.type === "sc" || (e.type === "dnf" && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
       );
       if (pause || next.finished) setPlaying(false);
-    }, SPEEDS[speed].ms);
+      setAnim(null);
+      onUpdate(next);
+    }, remaining);
     return () => window.clearTimeout(id);
-  }, [playing, speed, state, onUpdate, playerTeamId]);
+  }, [anim, state.events.length, onUpdate, playerTeamId]);
+
+  // keep going while playing
+  useEffect(() => {
+    if (playing && !anim && !state.finished) startLap();
+  }, [playing, anim, state.finished, startLap]);
+
+  /** Manager changes apply to the committed state and to the lap being animated. */
+  const apply = useCallback(
+    (fn: (s: RaceState) => RaceState) => {
+      onUpdate(fn(state));
+      setAnim((a) => (a ? { ...a, to: fn(a.to) } : a));
+    },
+    [onUpdate, state],
+  );
 
   const leader = state.cars[0];
   const myCars = state.cars.filter((c) => c.entry.team.id === playerTeamId);
@@ -119,14 +149,16 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
               </button>
             ))}
           </div>
-          <Button variant="outline" size="icon" onClick={() => onUpdate(simulateLap(state))} disabled={playing} title="Una vuelta">
+          <Button variant="outline" size="icon" onClick={startLap} disabled={playing || !!anim} title="Una vuelta">
             <StepForward className="w-4 h-4" />
           </Button>
           <Button
             variant="outline"
             onClick={() => {
               setPlaying(false);
-              onUpdate(simulateToEnd(state));
+              const base = anim ? anim.to : state;
+              setAnim(null);
+              onUpdate(simulateToEnd(base));
             }}
             className="ml-auto text-xs"
             title="Simular hasta la bandera a cuadros"
@@ -135,6 +167,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           </Button>
         </div>
       </div>
+
+      <TrackMap raceId={race.id} state={state} anim={anim} playerTeamId={playerTeamId} />
 
       <div className="grid lg:grid-cols-[1fr_340px] lg:grid-rows-[auto_1fr] gap-4 items-start">
         {myCars.length > 0 && (
@@ -146,7 +180,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
                 car={car}
                 pos={state.cars.indexOf(car) + 1}
                 state={state}
-                onUpdate={onUpdate}
+                onApply={apply}
               />
             ))}
           </div>
@@ -256,12 +290,12 @@ function TowerRow({ car, pos, gap, mine, fastest, lap }: { car: CarState; pos: n
 }
 
 function PitWallCard({
-  car, pos, state, onUpdate,
+  car, pos, state, onApply,
 }: {
   car: CarState;
   pos: number;
   state: RaceState;
-  onUpdate: (s: RaceState) => void;
+  onApply: (fn: (s: RaceState) => RaceState) => void;
 }) {
   const dnf = car.status === "dnf";
   const preRace = state.lap === 0;
@@ -296,7 +330,7 @@ function PitWallCard({
             {compounds.map((c) => (
               <button
                 key={c}
-                onClick={() => onUpdate(setStartTyre(state, car.id, c))}
+                onClick={() => onApply((s) => setStartTyre(s, car.id, c))}
                 className={cn(
                   "flex items-center justify-center gap-1.5 rounded-md border py-1.5 text-[11px]",
                   car.compound === c ? "border-primary bg-primary/15" : "border-border hover:bg-muted",
@@ -326,11 +360,11 @@ function PitWallCard({
           <div className="flex items-center justify-between text-[11px]">
             <span className="text-muted-foreground">Próxima parada planificada</span>
             {next ? (
-              <button className="text-muted-foreground hover:text-destructive" onClick={() => onUpdate(editNextStop(state, car.id, { remove: true }))}>
+              <button className="text-muted-foreground hover:text-destructive" onClick={() => onApply((s) => editNextStop(s, car.id, { remove: true }))}>
                 quitar
               </button>
             ) : (
-              <button className="text-primary hover:underline" onClick={() => onUpdate(editNextStop(state, car.id, { add: true }))}>
+              <button className="text-primary hover:underline" onClick={() => onApply((s) => editNextStop(s, car.id, { add: true }))}>
                 + agregar parada
               </button>
             )}
@@ -338,11 +372,11 @@ function PitWallCard({
           {next ? (
             <div className="flex items-center gap-2">
               <div className="flex items-center rounded-md border border-border">
-                <button className="px-2 py-1 hover:bg-muted" onClick={() => onUpdate(editNextStop(state, car.id, { lap: next.lap - 1 }))}>
+                <button className="px-2 py-1 hover:bg-muted" onClick={() => onApply((s) => editNextStop(s, car.id, { lap: next.lap - 1 }))}>
                   −
                 </button>
                 <span className="px-1 text-xs font-mono tabular-nums w-14 text-center">V{next.lap}</span>
-                <button className="px-2 py-1 hover:bg-muted" onClick={() => onUpdate(editNextStop(state, car.id, { lap: next.lap + 1 }))}>
+                <button className="px-2 py-1 hover:bg-muted" onClick={() => onApply((s) => editNextStop(s, car.id, { lap: next.lap + 1 }))}>
                   +
                 </button>
               </div>
@@ -350,7 +384,7 @@ function PitWallCard({
               {compounds.map((c) => (
                 <button
                   key={c}
-                  onClick={() => onUpdate(editNextStop(state, car.id, { compound: c }))}
+                  onClick={() => onApply((s) => editNextStop(s, car.id, { compound: c }))}
                   className={cn("rounded-full p-0.5", next.compound === c ? "ring-2 ring-primary" : "opacity-50 hover:opacity-100")}
                   title={COMPOUNDS[c].name}
                 >
@@ -371,7 +405,7 @@ function PitWallCard({
             {(Object.keys(MODES) as DriverMode[]).map((m) => (
               <button
                 key={m}
-                onClick={() => onUpdate(setMode(state, car.id, m))}
+                onClick={() => onApply((s) => setMode(s, car.id, m))}
                 className={cn(
                   "rounded-md border py-1.5 text-[11px] font-racing",
                   car.mode === m ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted",
@@ -385,8 +419,8 @@ function PitWallCard({
           {car.pitRequest ? (
             <div className="flex items-center gap-2 rounded-md bg-orange-500/15 border border-orange-500/40 px-2 py-1.5 text-xs">
               <Wrench className="w-3.5 h-3.5 text-orange-400" />
-              <span className="flex-1">Box al final de esta vuelta → {COMPOUNDS[car.pitRequest].name}</span>
-              <button onClick={() => onUpdate(requestPit(state, car.id, null))} title="Cancelar">
+              <span className="flex-1">Box en la próxima pasada → {COMPOUNDS[car.pitRequest].name}</span>
+              <button onClick={() => onApply((s) => requestPit(s, car.id, null))} title="Cancelar">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -394,7 +428,7 @@ function PitWallCard({
             <div className={cn("flex items-center gap-1 rounded-md px-1", sc && "bg-yellow-400/10 py-1")}>
               <span className="text-[11px] text-muted-foreground mr-1">{sc ? "Box ahora (barato con SC):" : "Box ahora:"}</span>
               {compounds.map((c) => (
-                <button key={c} onClick={() => onUpdate(requestPit(state, car.id, c))} className="hover:scale-110 transition-transform" title={`Parar y poner ${COMPOUNDS[c].name}`}>
+                <button key={c} onClick={() => onApply((s) => requestPit(s, car.id, c))} className="hover:scale-110 transition-transform" title={`Parar y poner ${COMPOUNDS[c].name}`}>
                   <TyreBadge compound={c} />
                 </button>
               ))}
