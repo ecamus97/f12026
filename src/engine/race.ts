@@ -152,6 +152,7 @@ export function simulateLap(prev: RaceState): RaceState {
 
     // --- Lap time ---
     let time: number;
+    let mistakeLoss = 0;
     if (scLap) {
       time = track.baseLap * 1.4 + rng.next() * 0.3;
     } else {
@@ -176,11 +177,33 @@ export function simulateLap(prev: RaceState): RaceState {
       if (rng.chance((100 - e.driver.consistency) * 0.00025 * config.incidents * risk)) {
         const loss = 1 + rng.next() * 3;
         time += loss;
+        mistakeLoss = loss;
         events.push({ lap, type: "mistake", text: `${name(car)} se pasa de largo y pierde ${loss.toFixed(1)}s`, drivers: [car.id] });
       }
     }
     car.lastLap = time;
     car.total += time;
+
+    // --- Sector times (3 per lap) ---
+    let sectors: number[];
+    if (scLap) sectors = [time / 3, time / 3, time / 3];
+    else {
+      const n = [rng.gauss(), rng.gauss(), rng.gauss()].map((x) => x * 0.06);
+      const mean = (n[0] + n[1] + n[2]) / 3;
+      sectors = n.map((x) => (time - mistakeLoss) / 3 + x - mean);
+      if (mistakeLoss) sectors[rng.int(0, 2)] += mistakeLoss;
+    }
+    car.lastSectors = sectors;
+    if (!scLap && lap > 1) {
+      const best = car.bestSectors ?? [0, 0, 0];
+      state.bestSectors ??= [null, null, null];
+      sectors.forEach((t, k) => {
+        if (!best[k] || t < best[k]) best[k] = t;
+        const overall = state.bestSectors![k];
+        if (!overall || t < overall.time) state.bestSectors![k] = { time: t, driverId: car.id };
+      });
+      car.bestSectors = best;
+    }
     if (!scLap && lap > 1) {
       if (car.bestLap === 0 || time < car.bestLap) car.bestLap = time;
       if (!state.fastest || time < state.fastest.time) {
@@ -193,7 +216,11 @@ export function simulateLap(prev: RaceState): RaceState {
     // --- Pit stop at end of lap ---
     if (lap < state.totalLaps) {
       const call = car.pitRequest ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
-      if (call) doPitStop(car, call, state, rng, events, lap);
+      if (call) {
+        const before = car.total;
+        doPitStop(car, call, state, rng, events, lap);
+        car.lastSectors![2] += car.total - before; // in-lap: pit lane time shows in sector 3
+      }
     }
   });
 

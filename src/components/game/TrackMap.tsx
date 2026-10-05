@@ -7,6 +7,30 @@ export interface LapAnimation {
   to: RaceState; // state at the end of the lap
   start: number; // performance.now() when the animation began
   duration: number; // ms
+  pausedElapsed?: number | null; // set while paused mid-lap (ms already played)
+}
+
+/** 0..1 progress of the animated lap. */
+export const animProgress = (anim: LapAnimation, now: number) =>
+  Math.min(1, (anim.pausedElapsed ?? now - anim.start) / anim.duration);
+
+/**
+ * How much of its current lap each running car has covered (0..1, can be <0 while
+ * still finishing the previous lap). Shared by the map and the live sector times.
+ */
+export function lapProgress(target: RaceState, anim: LapAnimation | null, now: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  const running = target.cars.filter((c) => c.status === "running");
+  const leaderTo = target.cars[0]?.total ?? 0;
+  const leaderFrom = anim ? Math.min(...Object.values(anim.from)) : leaderTo - (target.cars[0]?.lastLap ?? 1);
+  const p = anim ? animProgress(anim, now) : 1;
+  const clock = leaderFrom + (leaderTo - leaderFrom) * p;
+  for (const c of running) {
+    const to = c.total;
+    const from = anim?.from[c.id] ?? to - (c.lastLap || 1);
+    out[c.id] = carFraction(from, to, clock);
+  }
+  return out;
 }
 
 interface Props {
@@ -65,7 +89,7 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
   const raf = useRef<number>();
 
   useEffect(() => {
-    if (!anim) return;
+    if (!anim || anim.pausedElapsed != null) return;
     const tick = () => {
       setNow(performance.now());
       raf.current = requestAnimationFrame(tick);
@@ -85,24 +109,16 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
 
   // Positions
   const target = anim ? anim.to : state;
-  const running = target.cars.filter((c) => c.status === "running" || (anim && anim.from[c.id] !== undefined && c.dnfLap === target.lap));
   let markers: { car: CarState; frac: number; pos: number }[] = [];
 
   if (target.lap === 0 && !anim) {
     // on the grid, just behind the line
     markers = target.cars.map((c, i) => ({ car: c, frac: -0.004 - i * 0.0035, pos: i + 1 }));
   } else {
-    const leaderTo = target.cars[0]?.total ?? 0;
-    const leaderFrom = anim ? Math.min(...Object.values(anim.from)) : leaderTo - (target.cars[0]?.lastLap ?? 1);
-    const p = anim ? Math.min(1, (now - anim.start) / anim.duration) : 1;
-    const clock = leaderFrom + (leaderTo - leaderFrom) * p;
-    markers = running.map((c) => {
-      const to = c.total;
-      const from = anim?.from[c.id] ?? to - (c.lastLap || 1);
-      let frac = carFraction(from, to, clock);
-      if (c.status === "dnf") frac = Math.min(frac, 0.5); // stops on track
-      return { car: c, frac, pos: target.cars.indexOf(c) + 1 };
-    });
+    const prog = lapProgress(target, anim, now);
+    markers = target.cars
+      .filter((c) => c.status === "running")
+      .map((c) => ({ car: c, frac: prog[c.id], pos: target.cars.indexOf(c) + 1 }));
   }
 
   // draw back markers first so the leader is on top
@@ -128,13 +144,27 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
           strokeWidth={6}
           strokeDasharray="6 6"
         />
+        {/* sector boundaries */}
+        {[1 / 3, 2 / 3].map((f, i) => {
+          const [x, y] = pointAt(geo, f);
+          return (
+            <g key={f} transform={`translate(${x},${y})`}>
+              <circle r={9} fill="#facc15" />
+              <text x={14} y={-12} fontSize={22} fontFamily="Orbitron, sans-serif" fill="#facc15">
+                S{i + 2}
+              </text>
+            </g>
+          );
+        })}
+        <text x={sx + 14} y={sy - 30} fontSize={22} fontFamily="Orbitron, sans-serif" fill="white">
+          S1
+        </text>
         {markers.map(({ car, frac, pos }) => {
           const [x, y] = pointAt(geo, frac);
           const mine = car.entry.team.id === playerTeamId;
           const showLabel = allLabels || mine || pos <= 3;
-          const dnf = car.status === "dnf";
           return (
-            <g key={car.id} transform={`translate(${x},${y})`} opacity={dnf ? 0.35 : 1}>
+            <g key={car.id} transform={`translate(${x},${y})`}>
               <circle r={mine ? 22 : 17} fill={car.entry.team.hex} stroke={mine ? "white" : "#0b0d12"} strokeWidth={mine ? 6 : 4} />
               {showLabel && (
                 <g transform="translate(24,-22)">

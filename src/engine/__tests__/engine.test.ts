@@ -125,3 +125,19 @@ describe("strategy planner", () => {
     expect(end.cars.find((c) => c.id === id)!.stops).toBeGreaterThanOrEqual(car.status === "dnf" ? 0 : 0);
   });
 });
+
+describe("sectors", () => {
+  it("three sectors add up to the lap (plus pit lane time on in-laps)", () => {
+    let s = createRace(race, entriesByGrid(runQualifying(race, allEntries(), 8).grid), 8);
+    for (let i = 0; i < 30; i++) {
+      const prev = s;
+      s = simulateLap(s);
+      for (const c of s.cars.filter((x) => x.status === "running")) {
+        const sum = c.lastSectors!.reduce((a, b) => a + b, 0);
+        if (!c.pittedThisLap) expect(sum).toBeCloseTo(c.lastLap, 6);
+        else expect(sum).toBeGreaterThan(c.lastLap + 15);
+      }
+      if (prev.lap > 1) expect(s.bestSectors?.every((b) => b && b.time > 0)).toBe(true);
+    }
+  });
+});

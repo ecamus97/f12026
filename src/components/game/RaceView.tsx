@@ -11,7 +11,7 @@ import {
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
-import { TrackMap, type LapAnimation } from "./TrackMap";
+import { TrackMap, lapProgress, type LapAnimation } from "./TrackMap";
 import { StrategyPlanner } from "./StrategyPlanner";
 import { cn } from "@/lib/utils";
 
@@ -50,9 +50,26 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
     setAnim({ from, to: next, start: performance.now(), duration: SPEEDS[speed].ms });
   }, [state, speed]);
 
+  const pauseAnim = () =>
+    setAnim((a) => (a && a.pausedElapsed == null ? { ...a, pausedElapsed: performance.now() - a.start } : a));
+  const resumeAnim = () =>
+    setAnim((a) => (a && a.pausedElapsed != null ? { ...a, start: performance.now() - a.pausedElapsed, pausedElapsed: null } : a));
+  const pausedMidLap = !!anim && anim.pausedElapsed != null;
+
+  // clock for live sector times while a lap is animating
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    if (!anim || anim.pausedElapsed != null) return;
+    const id = window.setInterval(() => setNow(performance.now()), 120);
+    return () => window.clearInterval(id);
+  }, [anim]);
+  const progress = anim ? lapProgress(anim.to, anim, anim.pausedElapsed != null ? anim.start + anim.pausedElapsed : now) : null;
+  const liveCars = anim ? new Map(anim.to.cars.map((c) => [c.id, c])) : null;
+  const bestSectors = (anim?.to ?? state).bestSectors ?? [];
+
   // finish the animated lap
   useEffect(() => {
-    if (!anim) return;
+    if (!anim || anim.pausedElapsed != null) return;
     const remaining = Math.max(0, anim.duration - (performance.now() - anim.start));
     const id = window.setTimeout(() => {
       const next = anim.to;
@@ -96,7 +113,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
   }
 
   const sc = state.safetyCar.active;
-  const progress = (state.lap / state.totalLaps) * 100;
+  const raceProgress = (state.lap / state.totalLaps) * 100;
 
   return (
     <div className="space-y-4">
@@ -118,7 +135,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           </div>
         </div>
         <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-          <div className={cn("h-full transition-all", sc ? "bg-yellow-400" : "bg-primary")} style={{ width: `${progress}%` }} />
+          <div className={cn("h-full transition-all", sc ? "bg-yellow-400" : "bg-primary")} style={{ width: `${raceProgress}%` }} />
         </div>
         <AnimatePresence>
           {sc && (
@@ -138,7 +155,13 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           <Button
             onClick={() => {
               if (state.lap === 0 && !state.strategyConfirmed) apply(confirmStrategy);
-              setPlaying((p) => !p);
+              if (playing) {
+                setPlaying(false);
+                pauseAnim(); // freeze right where the cars are
+              } else {
+                setPlaying(true);
+                resumeAnim();
+              }
             }}
             className="font-racing min-w-28"
           >
@@ -156,7 +179,13 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
               </button>
             ))}
           </div>
-          <Button variant="outline" size="icon" onClick={startLap} disabled={playing || !!anim} title="Una vuelta">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => (pausedMidLap ? resumeAnim() : startLap())}
+            disabled={playing || (!!anim && !pausedMidLap)}
+            title={pausedMidLap ? "Terminar esta vuelta" : "Una vuelta"}
+          >
             <StepForward className="w-4 h-4" />
           </Button>
           <Button
@@ -204,6 +233,9 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
             <button onClick={() => setShowInterval((v) => !v)} className="w-20 text-right underline decoration-dotted">
               {showInterval ? "Intervalo" : "Gap"}
             </button>
+            <span className="w-[54px] text-right hidden md:block">S1</span>
+            <span className="w-[54px] text-right hidden md:block">S2</span>
+            <span className="w-[54px] text-right hidden md:block">S3</span>
             <span className="w-20 text-right hidden sm:block">Última</span>
             <span className="w-14 text-center">Neum.</span>
             <span className="w-6 text-center">P</span>
@@ -224,6 +256,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
                 mine={car.entry.team.id === playerTeamId}
                 fastest={state.fastest?.driverId === car.id}
                 lap={state.lap}
+                sectors={sectorCells(car, liveCars?.get(car.id), progress?.[car.id], bestSectors)}
               />
             ))}
           </div>
@@ -257,7 +290,47 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
   );
 }
 
-function TowerRow({ car, pos, gap, mine, fastest, lap }: { car: CarState; pos: number; gap: string; mine: boolean; fastest: boolean; lap: number }) {
+type SectorCell = { text: string; tone: "purple" | "green" | "yellow" | "old" | "empty" };
+
+/** Sector cells for a car: live sectors of the lap being driven, or the last completed lap. */
+function sectorCells(
+  car: CarState,
+  live: CarState | undefined,
+  frac: number | undefined,
+  best: ({ time: number; driverId: string } | null)[],
+): SectorCell[] {
+  const tone = (c: CarState, k: number, t: number): SectorCell["tone"] => {
+    if (best[k] && best[k]!.driverId === c.id && Math.abs(best[k]!.time - t) < 1e-6) return "purple";
+    if (c.bestSectors?.[k] && Math.abs(c.bestSectors[k] - t) < 1e-6) return "green";
+    return "yellow";
+  };
+  const show = (c: CarState, k: number, t: number, old = false): SectorCell => ({
+    text: t > 60 ? formatLap(t).slice(2) : t.toFixed(3),
+    tone: old ? "old" : c.pittedThisLap && k === 2 ? "yellow" : tone(c, k, t),
+  });
+  if (car.status === "dnf") return [0, 1, 2].map(() => ({ text: "", tone: "empty" }));
+  if (live && frac !== undefined && live.lastSectors && live.status === "running") {
+    const done = frac >= 1 ? 3 : frac >= 2 / 3 ? 2 : frac >= 1 / 3 ? 1 : 0;
+    if (done === 0) {
+      // still on the previous lap: show it dimmed
+      return car.lastSectors ? car.lastSectors.map((t, k) => show(car, k, t, true)) : [0, 1, 2].map(() => ({ text: "", tone: "empty" }));
+    }
+    return live.lastSectors.map((t, k) => (k < done ? show(live, k, t) : { text: "", tone: "empty" as const }));
+  }
+  return car.lastSectors ? car.lastSectors.map((t, k) => show(car, k, t)) : [0, 1, 2].map(() => ({ text: "", tone: "empty" }));
+}
+
+const SECTOR_TONE: Record<SectorCell["tone"], string> = {
+  purple: "text-purple-400 font-semibold",
+  green: "text-green-400",
+  yellow: "text-yellow-300",
+  old: "text-muted-foreground/50",
+  empty: "",
+};
+
+function TowerRow({
+  car, pos, gap, mine, fastest, lap, sectors,
+}: { car: CarState; pos: number; gap: string; mine: boolean; fastest: boolean; lap: number; sectors: SectorCell[] }) {
   const dnf = car.status === "dnf";
   const change = car.grid - pos;
   return (
@@ -289,6 +362,11 @@ function TowerRow({ car, pos, gap, mine, fastest, lap }: { car: CarState; pos: n
         {dnf && <span className="text-[10px] text-destructive truncate">{car.dnfReason}</span>}
       </span>
       <span className="w-20 text-right font-mono text-xs tabular-nums">{gap}</span>
+      {sectors.map((c, k) => (
+        <span key={k} className={cn("w-[54px] text-right font-mono text-[11px] tabular-nums hidden md:block", SECTOR_TONE[c.tone])}>
+          {c.text}
+        </span>
+      ))}
       <span className="w-20 text-right font-mono text-[11px] text-muted-foreground hidden sm:block tabular-nums">
         {car.lastLap && !dnf ? formatLap(car.lastLap) : ""}
       </span>

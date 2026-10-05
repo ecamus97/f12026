@@ -32,6 +32,8 @@ export interface CarState {
   total: number; // cumulative race time (s)
   lastLap: number;
   bestLap: number;
+  lastSectors?: number[]; // S1, S2, S3 of the last lap
+  bestSectors?: number[]; // personal best per sector (0 = none)
   compound: Compound;
   tyreAge: number;
   usedCompounds: Compound[];
@@ -69,6 +71,7 @@ export interface RaceState {
   fastest: { driverId: string; time: number; lap: number } | null;
   finished: boolean;
   strategyConfirmed?: boolean; // player has reviewed the pre-race plan
+  bestSectors?: ({ time: number; driverId: string } | null)[]; // overall best per sector
 }
 
 export interface ClassifiedRow {
