@@ -67,6 +67,48 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
   const liveCars = anim ? new Map(anim.to.cars.map((c) => [c.id, c])) : null;
   const bestSectors = (anim?.to ?? state).bestSectors ?? [];
 
+  // Timing tower order: live during an animated lap (positions change the moment a car passes)
+  const towerRows: { car: CarState; pos: number; gap: string }[] = (() => {
+    if (!anim || !progress || !liveCars) {
+      const leader = state.cars[0];
+      return state.cars.map((car, i) => ({
+        car,
+        pos: i + 1,
+        gap:
+          car.status === "dnf"
+            ? "DNF"
+            : showInterval && i > 0
+              ? `+${(car.total - state.cars[i - 1].total).toFixed(3)}`
+              : gapToLeader(state, car, leader),
+      }));
+    }
+    const lapTime = (id: string) => Math.max(1, (liveCars.get(id)?.total ?? 0) - (anim.from[id] ?? 0));
+    const isRunning = (c: CarState) => liveCars.get(c.id)?.status === "running";
+    const running = state.cars.filter(isRunning).sort((a, b) => progress[b.id] - progress[a.id]);
+    const out = state.cars.filter((c) => !isRunning(c)).map((c) => liveCars.get(c.id) ?? c);
+    const leaderId = running[0]?.id;
+    const fmtGap = (behind: number, id: string) => {
+      const t = Math.max(0, behind * lapTime(id));
+      const laps = Math.floor(behind);
+      return laps >= 1 ? `+${laps} ${laps === 1 ? "vuelta" : "vueltas"}` : `+${t.toFixed(3)}`;
+    };
+    return [
+      ...running.map((car, i) => ({
+        car,
+        pos: i + 1,
+        gap:
+          i === 0
+            ? showInterval
+              ? ""
+              : "Líder"
+            : showInterval
+              ? fmtGap(progress[running[i - 1].id] - progress[car.id], car.id)
+              : fmtGap(progress[leaderId] - progress[car.id], car.id),
+      })),
+      ...out.map((car, i) => ({ car, pos: running.length + i + 1, gap: "DNF" })),
+    ];
+  })();
+
   // finish the animated lap
   useEffect(() => {
     if (!anim || anim.pausedElapsed != null) return;
@@ -101,12 +143,33 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
   const leader = state.cars[0];
   const myCars = state.cars.filter((c) => c.entry.team.id === playerTeamId);
 
+  // events of the lap being animated appear when they happen on track
+  const liveEvents = (() => {
+    if (!anim || !progress) return [];
+    const fresh = anim.to.events.slice(state.events.length);
+    const lapP = Math.min(1, (anim.pausedElapsed ?? now - anim.start) / anim.duration);
+    return fresh.filter((e) => {
+      const [a, b] = e.drivers;
+      switch (e.type) {
+        case "overtake":
+          return a in progress && b in progress ? progress[a] > progress[b] : lapP > 0.5;
+        case "pit":
+        case "fastest":
+          return (progress[a] ?? 0) >= 0.97;
+        case "finish":
+          return lapP >= 1;
+        default:
+          return lapP >= 0.5;
+      }
+    });
+  })();
+
   const feed = useMemo(() => {
-    const list = state.events.filter((e) => e.type !== "fastest" || e.lap > 5);
+    const list = [...state.events, ...liveEvents].filter((e) => e.type !== "fastest" || e.lap > 5);
     const filtered = feedFilter === "mine" ? list.filter((e) => e.drivers.some(isMine) || e.type === "sc" || e.type === "sc_end") : list;
     return filtered.slice(-80).reverse();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.events, feedFilter, playerTeamId]);
+  }, [state.events, liveEvents.length, feedFilter, playerTeamId]);
 
   if (state.finished) {
     return <RaceResults race={race} state={state} playerTeamId={playerTeamId} onConfirm={onFinish} />;
@@ -241,18 +304,12 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
             <span className="w-6 text-center">P</span>
           </div>
           <div>
-            {state.cars.map((car, i) => (
+            {towerRows.map(({ car, pos, gap }) => (
               <TowerRow
                 key={car.id}
                 car={car}
-                pos={i + 1}
-                gap={
-                  car.status === "dnf"
-                    ? "DNF"
-                    : showInterval && i > 0
-                      ? `+${(car.total - state.cars[i - 1].total).toFixed(3)}`
-                      : gapToLeader(state, car, leader)
-                }
+                pos={pos}
+                gap={gap}
                 mine={car.entry.team.id === playerTeamId}
                 fastest={state.fastest?.driverId === car.id}
                 lap={state.lap}
