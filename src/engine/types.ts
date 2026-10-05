@@ -68,6 +68,7 @@ export interface RaceState {
   safetyCar: { active: boolean; lapsLeft: number; restartLap: boolean };
   fastest: { driverId: string; time: number; lap: number } | null;
   finished: boolean;
+  strategyConfirmed?: boolean; // player has reviewed the pre-race plan
 }
 
 export interface ClassifiedRow {

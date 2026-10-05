@@ -2,7 +2,9 @@
 import type { Track } from "@/data/f1Data";
 import type { Rng } from "./rng";
 import type { CarState, Compound, Stint } from "./types";
-import { tyreLife } from "./model";
+import { COMPOUNDS, raceLapTime, tyreLife } from "./model";
+import type { Entry } from "./types";
+import { DEFAULT_SIM_CONFIG } from "./types";
 
 interface Template {
   stints: Compound[];
@@ -83,4 +85,95 @@ export function advancePlan(car: CarState, fitted: Compound, lap: number, totalL
   // Unplanned stop: run the new tyre to the end, or keep the following stint if there is one
   if (next) return [{ compound: fitted, untilLap: Math.max(lap + 5, next.untilLap) }, ...rest];
   return [{ compound: fitted, untilLap: totalLaps }];
+}
+
+// ---------------------------------------------------------------------------
+// Strategy planner: deterministic race-time estimate and recommendations
+// ---------------------------------------------------------------------------
+
+const PIT_STATIONARY = 2.5;
+
+/** Expected race time (s) of a plan with no traffic, noise or incidents. */
+export function estimatePlanTime(entry: Entry, track: Track, plan: Stint[]): number {
+  let total = 0;
+  let lap = 0;
+  plan.forEach((stint, i) => {
+    let age = 0;
+    while (lap < stint.untilLap) {
+      lap++;
+      age++;
+      total += raceLapTime({
+        entry, track, compound: stint.compound, tyreAge: age, mode: "normal",
+        lap, totalLaps: track.laps, cfg: DEFAULT_SIM_CONFIG, noise: 0,
+      });
+    }
+    if (i < plan.length - 1) total += track.pitLoss + PIT_STATIONARY + (100 - entry.team.pitCrew) * 0.025;
+  });
+  return total;
+}
+
+export interface PlanOption {
+  plan: Stint[];
+  time: number;
+  label: string;
+}
+
+export const planLabel = (plan: Stint[]) =>
+  `${plan.map((s) => s.compound).join("→")} · ${plan.length - 1} parada${plan.length === 2 ? "" : "s"}`;
+
+/** Best plan for each tyre sequence (1 and 2 stops), sorted by expected time. */
+export function recommendPlans(entry: Entry, track: Track, max = 4): PlanOption[] {
+  const C = Object.keys(COMPOUNDS) as Compound[];
+  const laps = track.laps;
+  const options: PlanOption[] = [];
+  const minStint = 5;
+
+  // one stop
+  for (const a of C) for (const b of C) {
+    if (a === b) continue;
+    let best: PlanOption | null = null;
+    for (let s = minStint; s <= laps - minStint; s++) {
+      const plan = [{ compound: a, untilLap: s }, { compound: b, untilLap: laps }];
+      const time = estimatePlanTime(entry, track, plan);
+      if (!best || time < best.time) best = { plan, time, label: planLabel(plan) };
+    }
+    if (best) options.push(best);
+  }
+  // two stops (coarse grid, then refine)
+  for (const a of C) for (const b of C) for (const c of C) {
+    if (a === b && b === c) continue;
+    let best: PlanOption | null = null;
+    for (let s1 = minStint; s1 <= laps - 2 * minStint; s1 += 2) {
+      for (let s2 = s1 + minStint; s2 <= laps - minStint; s2 += 2) {
+        const plan = [{ compound: a, untilLap: s1 }, { compound: b, untilLap: s2 }, { compound: c, untilLap: laps }];
+        const time = estimatePlanTime(entry, track, plan);
+        if (!best || time < best.time) best = { plan, time, label: planLabel(plan) };
+      }
+    }
+    if (best) options.push(best);
+  }
+  options.sort((x, y) => x.time - y.time);
+  // keep variety: at most one entry per stop count + compound set
+  const seen = new Set<string>();
+  const out: PlanOption[] = [];
+  for (const o of options) {
+    // same set of compounds and stops = same strategy family (order barely changes the time)
+    const key = `${o.plan.length}-${o.plan.map((p) => p.compound).sort().join("")}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(o);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/** Validate/normalise a plan: increasing stop laps, last stint to the flag, ≥5 laps each. */
+export function normalisePlan(plan: Stint[], laps: number, fromLap = 0): Stint[] {
+  const out = plan.map((s) => ({ ...s }));
+  for (let i = 0; i < out.length; i++) {
+    const min = (i === 0 ? fromLap : out[i - 1].untilLap) + 1;
+    const max = laps - (out.length - 1 - i);
+    out[i].untilLap = i === out.length - 1 ? laps : Math.max(min, Math.min(max, Math.round(out[i].untilLap)));
+  }
+  return out;
 }

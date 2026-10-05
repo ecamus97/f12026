@@ -6,12 +6,13 @@ import {
 import { Button } from "@/components/ui/button";
 import type { Race } from "@/data/f1Data";
 import {
-  COMPOUNDS, MODES, editNextStop, formatLap, gapToLeader, requestPit, setMode, setStartTyre, simulateLap, simulateToEnd, tyreLife,
+  COMPOUNDS, MODES, confirmStrategy, editNextStop, formatLap, gapToLeader, requestPit, setMode, simulateLap, simulateToEnd, tyreLife,
   type CarState, type Compound, type DriverMode, type RaceEvent, type RaceState,
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
 import { TrackMap, type LapAnimation } from "./TrackMap";
+import { StrategyPlanner } from "./StrategyPlanner";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -134,9 +135,15 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
 
         {/* Controls */}
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => setPlaying((p) => !p)} className="font-racing min-w-28">
+          <Button
+            onClick={() => {
+              if (state.lap === 0 && !state.strategyConfirmed) apply(confirmStrategy);
+              setPlaying((p) => !p);
+            }}
+            className="font-racing min-w-28"
+          >
             {playing ? <Pause className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />}
-            {playing ? "Pausa" : state.lap === 0 ? "Largada" : "Seguir"}
+            {playing ? "Pausa" : state.lap === 0 ? (myCars.length && !state.strategyConfirmed ? "Confirmar y largar" : "Largada") : "Seguir"}
           </Button>
           <div className="flex rounded-md border border-border overflow-hidden">
             {SPEEDS.map((s, i) => (
@@ -168,10 +175,12 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
         </div>
       </div>
 
+      {state.lap === 0 && !anim && myCars.length > 0 && <StrategyPlanner state={state} cars={myCars} onApply={apply} />}
+
       <TrackMap raceId={race.id} state={state} anim={anim} playerTeamId={playerTeamId} />
 
       <div className="grid lg:grid-cols-[1fr_340px] lg:grid-rows-[auto_1fr] gap-4 items-start">
-        {myCars.length > 0 && (
+        {myCars.length > 0 && (state.lap > 0 || anim) && (
           <div className="rounded-xl border border-border bg-card p-3 space-y-3 lg:col-start-2">
             <div className="font-racing text-xs text-muted-foreground uppercase tracking-wider">Muro de boxes</div>
             {myCars.map((car) => (
@@ -322,26 +331,6 @@ function PitWallCard({
         </div>
         {!dnf && <TyreBadge compound={car.compound} />}
       </div>
-
-      {!dnf && preRace && (
-        <div className="space-y-1">
-          <div className="text-[11px] text-muted-foreground">Neumático de salida</div>
-          <div className="grid grid-cols-3 gap-1">
-            {compounds.map((c) => (
-              <button
-                key={c}
-                onClick={() => onApply((s) => setStartTyre(s, car.id, c))}
-                className={cn(
-                  "flex items-center justify-center gap-1.5 rounded-md border py-1.5 text-[11px]",
-                  car.compound === c ? "border-primary bg-primary/15" : "border-border hover:bg-muted",
-                )}
-              >
-                <TyreBadge compound={c} /> {COMPOUNDS[c].name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {!dnf && !preRace && (
         <div className="space-y-1">

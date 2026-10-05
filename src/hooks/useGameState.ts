@@ -12,6 +12,13 @@ import {
   type RaceState,
   type SimConfig,
   type StoredRaceResult,
+  applyDevToTeams,
+  initManagement,
+  processRaceWeekend,
+  startProject as startProjectFn,
+  upgradeFacility as upgradeFacilityFn,
+  type FacilityKey,
+  type ManagementState,
 } from "@/engine";
 
 const STORAGE_KEY = "f1-manager-2026-v2";
@@ -31,6 +38,8 @@ export interface GameState {
   simConfig: SimConfig;
   teamsData: Team[];
   weekend: Weekend | null;
+  management: ManagementState | null; // budget, R&D, facilities (needs a chosen team)
+  baseTeams: Team[] | null; // ratings at the start of the season (for "new season")
 }
 
 const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = DEFAULT_SIM_CONFIG): GameState => ({
@@ -41,6 +50,8 @@ const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = D
   simConfig,
   teamsData,
   weekend: null,
+  management: null,
+  baseTeams: null,
 });
 
 function loadState(): GameState {
@@ -49,7 +60,13 @@ function loadState(): GameState {
     if (!raw) return initialState();
     const parsed = JSON.parse(raw) as GameState;
     if (parsed?.version !== 2 || !Array.isArray(parsed.teamsData)) return initialState();
-    return { ...initialState(), ...parsed };
+    const state = { ...initialState(), ...parsed };
+    // saves from before team management existed
+    if (state.playerTeamId && !state.management) {
+      state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
+      state.baseTeams = state.teamsData;
+    }
+    return state;
   } catch {
     return initialState();
   }
@@ -86,7 +103,18 @@ export function useGameState() {
   const seasonComplete = gameState.currentRaceIndex >= races2026.length;
 
   const chooseTeam = useCallback((teamId: string) => {
-    setGameState((s) => ({ ...s, playerTeamId: teamId }));
+    setGameState((s) => {
+      const management = initManagement(s.teamsData, teamId, randomSeed());
+      return { ...s, playerTeamId: teamId, management, baseTeams: s.teamsData, teamsData: applyDevToTeams(s.teamsData, management) };
+    });
+  }, []);
+
+  const startProject = useCallback((templateId: string) => {
+    setGameState((s) => (s.management ? { ...s, management: startProjectFn(s.management, templateId, s.currentRaceIndex) } : s));
+  }, []);
+
+  const upgradeFacility = useCallback((key: FacilityKey) => {
+    setGameState((s) => (s.management ? { ...s, management: upgradeFacilityFn(s.management, key, s.currentRaceIndex) } : s));
   }, []);
 
   const startWeekend = useCallback(() => {
@@ -132,17 +160,20 @@ export function useGameState() {
         pole: w.quali.grid[0],
         fastestLap: w.race.fastest ? { driverId: w.race.fastest.driverId, time: w.race.fastest.time } : null,
       };
+      const management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, w.raceIndex + 1) : null;
       return {
         ...s,
         results: [...s.results.filter((r) => r.raceId !== result.raceId), result],
         currentRaceIndex: w.raceIndex + 1,
         weekend: null,
+        management,
+        teamsData: management ? applyDevToTeams(s.teamsData, management) : s.teamsData,
       };
     });
   }, []);
 
   const resetSeason = useCallback(() => {
-    setGameState((s) => initialState(s.teamsData, s.simConfig));
+    setGameState((s) => initialState(s.baseTeams ?? s.teamsData, s.simConfig));
   }, []);
 
   const updateSimConfig = useCallback((simConfig: SimConfig) => {
@@ -150,7 +181,26 @@ export function useGameState() {
   }, []);
 
   const updateTeamsData = useCallback((teamsData: Team[]) => {
-    setGameState((s) => ({ ...s, teamsData }));
+    setGameState((s) => {
+      if (!s.management) return { ...s, teamsData };
+      // manual edits in Config override the development ratings of the edited teams
+      const dev = { ...s.management.dev };
+      for (const t of teamsData) {
+        const old = s.teamsData.find((o) => o.id === t.id);
+        const d = dev[t.id];
+        if (!old || !d) continue;
+        const dp = t.pace - old.pace;
+        dev[t.id] = {
+          aero: d.aero + dp,
+          powerUnit: d.powerUnit + dp,
+          chassis: d.chassis + dp,
+          reliability: t.reliability,
+          pitCrew: t.pitCrew,
+        };
+      }
+      const management = { ...s.management, dev };
+      return { ...s, management, teamsData: applyDevToTeams(teamsData, management) };
+    });
   }, []);
 
   return {
@@ -170,5 +220,7 @@ export function useGameState() {
     resetSeason,
     updateSimConfig,
     updateTeamsData,
+    startProject,
+    upgradeFacility,
   };
 }

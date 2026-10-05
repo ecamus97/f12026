@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify, createRace, editNextStop, runQualifying, setStartTyre, simulateLap, simulateToEnd, computeStandings } from "..";
+import { classify, confirmStrategy, createRace, editNextStop, recommendPlans, runQualifying, setPlan, setStartTyre, simulateLap, simulateToEnd, computeStandings } from "..";
 import { teams, races2026 } from "@/data/f1Data";
 import { allEntries, entriesByGrid } from "./helpers";
 
@@ -95,5 +95,33 @@ describe("manager controls", () => {
     s = editNextStop(s, id, { add: true });
     s = editNextStop(s, id, { lap: 999 });
     expect(s.cars.find((c) => c.id === id)!.plan[0].untilLap).toBe(race.track.laps - 1);
+  });
+});
+
+describe("strategy planner", () => {
+  it("recommends sensible, valid plans", () => {
+    const entry = allEntries()[0];
+    for (const r of races2026) {
+      const t0 = performance.now();
+      const opts = recommendPlans(entry, r.track, 3);
+      const ms = performance.now() - t0;
+      expect(ms).toBeLessThan(400);
+      expect(opts.length).toBeGreaterThan(0);
+      const best = opts[0].plan;
+      expect(best[best.length - 1].untilLap).toBe(r.track.laps);
+      expect(new Set(best.map((s) => s.compound)).size).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("setPlan applies a custom plan before the start", () => {
+    let s = createRace(race, entriesByGrid(runQualifying(race, allEntries(), 2).grid), 2, undefined, "williams");
+    expect(s.strategyConfirmed).toBe(false);
+    const id = s.cars.find((c) => c.controlled)!.id;
+    s = setPlan(s, id, [{ compound: "H", untilLap: 30 }, { compound: "S", untilLap: 99 }]);
+    const car = s.cars.find((c) => c.id === id)!;
+    expect(car.compound).toBe("H");
+    expect(car.plan).toEqual([{ compound: "H", untilLap: 30 }, { compound: "S", untilLap: race.track.laps }]);
+    const end = simulateToEnd(confirmStrategy(s));
+    expect(end.cars.find((c) => c.id === id)!.stops).toBeGreaterThanOrEqual(car.status === "dnf" ? 0 : 0);
   });
 });

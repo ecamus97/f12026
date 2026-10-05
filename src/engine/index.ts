@@ -4,4 +4,5 @@ export * from "./model";
 export * from "./race";
 export * from "./qualifying";
 export * from "./championship";
-export { buildPlan } from "./strategy";
+export { buildPlan, estimatePlanTime, normalisePlan, planLabel, recommendPlans, type PlanOption } from "./strategy";
+export * from "./management";

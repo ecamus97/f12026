@@ -15,9 +15,10 @@ import { QualifyingView } from "@/components/game/QualifyingView";
 import { RaceView } from "@/components/game/RaceView";
 import { TeamStripe } from "@/components/game/common";
 import heroImage from "@/assets/f1-hero.jpg";
-import { Trophy, Users, Calendar, Play, RotateCcw, ChevronRight, Flag, Home } from "lucide-react";
+import { Trophy, Users, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2 } from "lucide-react";
+import { TeamHQ, InboxList, money } from "@/components/game/TeamHQ";
 
-type Screen = "home" | "calendar" | "weekend" | "standings";
+type Screen = "home" | "calendar" | "weekend" | "standings" | "team";
 
 const fade = {
   initial: { opacity: 0, y: 16 },
@@ -63,6 +64,7 @@ export default function F1Game() {
           <nav className="flex items-center gap-1">
             {navButton("home", Home, "Inicio")}
             {weekend && navButton("weekend", Flag, weekend.race ? "Carrera" : "Clasificación")}
+            {playerTeam && gameState.management && navButton("team", Building2, "Equipo")}
             {navButton("calendar", Calendar, "Calendario")}
             {navButton("standings", Trophy, "Campeonato")}
             <ConfigDialog
@@ -129,6 +131,26 @@ export default function F1Game() {
                     racesDone={gameState.results.length}
                     totalRaces={races.length}
                   />
+
+                  {gameState.management?.player && (
+                    <div className="grid md:grid-cols-[260px_1fr] gap-4">
+                      <button
+                        onClick={() => setScreen("team")}
+                        className="rounded-xl border border-border bg-card p-4 text-left hover:border-primary/60 transition-colors space-y-1"
+                      >
+                        <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-muted-foreground">
+                          <Building2 className="w-4 h-4" /> Sede del equipo
+                        </div>
+                        <div className="font-racing text-xl">{money(gameState.management.player.budget)}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {gameState.management.player.projects.length} proyecto(s) en desarrollo
+                          {gameState.management.player.facilityWork ? " · 1 obra en curso" : ""}
+                        </div>
+                        <div className="text-xs text-primary pt-1">Gestionar presupuesto y desarrollo →</div>
+                      </button>
+                      <InboxList management={gameState.management} limit={4} />
+                    </div>
+                  )}
 
                   {currentRace && !seasonComplete && (
                     <div className="rounded-xl border border-border bg-gradient-card p-5 space-y-4 glow-primary">
@@ -247,6 +269,17 @@ export default function F1Game() {
                   onStartRace={game.startRace}
                 />
               )}
+            </motion.div>
+          )}
+
+          {screen === "team" && playerTeam && gameState.management?.player && (
+            <motion.div key="team" {...fade}>
+              <TeamHQ
+                team={playerTeam}
+                management={gameState.management}
+                onStartProject={game.startProject}
+                onUpgradeFacility={game.upgradeFacility}
+              />
             </motion.div>
           )}
 

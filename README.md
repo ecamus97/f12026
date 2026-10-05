@@ -10,7 +10,8 @@ Juego de gestión de F1 (temporada 2026): eliges una escudería y diriges la est
    - modo del piloto: **Atacar** (más rápido, gasta más neumático y arriesga errores), **Normal**, **Cuidar**;
    - **parada en boxes** con el compuesto que elijas (blando / medio / duro). Es obligatorio usar dos compuestos.
    - La carrera se pausa sola cuando sale el safety car (parar en boxes cuesta ~45% menos).
-4. Puntos 2026 (25-18-15-12-10-8-6-4-2-1, sin punto por vuelta rápida). El progreso se autoguarda en el navegador.
+4. **Sede del equipo**: presupuesto, proyectos de I+D (aerodinámica, motor, chasis, fiabilidad, pit crew), mejoras de instalaciones y finanzas por carrera. Los rivales también desarrollan según su presupuesto.
+5. Puntos 2026 (25-18-15-12-10-8-6-4-2-1, sin punto por vuelta rápida). El progreso se autoguarda en el navegador.
 
 ## Motor de simulación (`src/engine`)
 
@@ -20,6 +21,7 @@ Funciones puras y deterministas (PRNG con semilla), separadas de la UI:
 - `race.ts` – simulación por vuelta: tiempos, adelantamientos, paradas, abandonos, errores, safety car y clasificación.
 - `strategy.ts` – estrategia de la IA (planes 1-2 paradas según desgaste del circuito, paradas oportunistas con SC).
 - `qualifying.ts` – formato Q1/Q2/Q3 de 22 autos.
+- `management.ts` – economía y desarrollo: presupuesto, ingresos/gastos por carrera, proyectos, instalaciones, desarrollo de la IA.
 - `championship.ts` – standings calculados siempre desde los resultados (con desempate por countback).
 
 Los ratings de autos/pilotos y los datos de cada circuito están en `src/data/f1Data.ts` (también editables desde **Config** en el juego). Son valores de juego, no datos oficiales.

@@ -10,3 +10,6 @@ export const entriesByGrid = (grid: string[]): Entry[] => {
 };
 
 export { races2026 };
+
+export const entriesFromTeamsForTest = (teams: import("@/data/f1Data").Team[]): Entry[] =>
+  teams.flatMap((t) => t.drivers.map((driver) => ({ driver, team: teamInfo(t) })));

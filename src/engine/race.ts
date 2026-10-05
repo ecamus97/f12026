@@ -2,10 +2,10 @@
 import type { Race } from "@/data/f1Data";
 import { pointsSystem } from "@/data/f1Data";
 import { createRng, type Rng } from "./rng";
-import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, RaceEvent, RaceState, SimConfig } from "./types";
+import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, RaceEvent, RaceState, SimConfig, Stint } from "./types";
 import { DEFAULT_SIM_CONFIG } from "./types";
 import { COMPOUNDS, DIRTY_AIR_WINDOW, MIN_GAP, MODES, overtakeChance, raceLapTime } from "./model";
-import { advancePlan, aiPitDecision, buildPlan } from "./strategy";
+import { advancePlan, aiPitDecision, buildPlan, normalisePlan, recommendPlans } from "./strategy";
 
 const clone = <T,>(x: T): T => structuredClone(x);
 
@@ -19,7 +19,9 @@ export function createRace(
   const rng = createRng(seed);
   const track = race.track;
   const cars: CarState[] = grid.map((entry, i) => {
-    const plan = buildPlan(track, entry.driver.tyreMgmt, rng);
+    const controlled = entry.team.id === playerTeamId;
+    // player cars start from the engineer's recommendation (editable before the start)
+    const plan = controlled ? recommendPlans(entry, track, 1)[0].plan : buildPlan(track, entry.driver.tyreMgmt, rng);
     return {
       id: entry.driver.id,
       entry,
@@ -35,7 +37,7 @@ export function createRace(
       stops: 0,
       mode: "normal",
       pitRequest: null,
-      controlled: entry.team.id === playerTeamId,
+      controlled,
       status: "running",
       pittedThisLap: false,
     };
@@ -52,7 +54,24 @@ export function createRace(
     safetyCar: { active: false, lapsLeft: 0, restartLap: false },
     fastest: null,
     finished: false,
+    strategyConfirmed: !playerTeamId,
   };
+}
+
+/** Replace a car's whole tyre plan (pre-race planner). */
+export function setPlan(state: RaceState, driverId: string, plan: Stint[]): RaceState {
+  if (state.lap > 0 || plan.length === 0) return state;
+  const clean = normalisePlan(plan, state.totalLaps);
+  return {
+    ...state,
+    cars: state.cars.map((c) =>
+      c.id === driverId ? { ...c, plan: clean, compound: clean[0].compound, usedCompounds: [clean[0].compound] } : c,
+    ),
+  };
+}
+
+export function confirmStrategy(state: RaceState): RaceState {
+  return { ...state, strategyConfirmed: true };
 }
 
 const name = (c: CarState) => c.entry.driver.shortName;
