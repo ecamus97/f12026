@@ -86,7 +86,9 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
     stationary += extra;
     slow = ` (parada lenta, ${stationary.toFixed(1)}s)`;
   }
-  car.total += track.pitLoss * scFactor + stationary;
+  const pitTime = track.pitLoss * scFactor + stationary;
+  car.total += pitTime;
+  car.lastPitTime = pitTime;
   car.plan = advancePlan(car, compound, lap, state.totalLaps);
   car.compound = compound;
   car.tyreAge = 0;
@@ -127,6 +129,7 @@ export function simulateLap(prev: RaceState): RaceState {
 
   running.forEach((car, idx) => {
     car.pittedThisLap = false;
+    car.lastPitTime = 0;
     car.tyreAge += 1;
     const e = car.entry;
 
@@ -293,17 +296,19 @@ export function simulateLap(prev: RaceState): RaceState {
   order.forEach((car, i) => {
     const from = startTotal.get(car.id)!;
     const to = car.total;
+    const pit = car.lastPitTime ?? 0; // the stop happens at the end of the lap, all of it in S3
     const raw = car.lastSectors ?? [1, 1, 1];
     const sum = raw[0] + raw[1] + raw[2] || 1;
-    let c1 = from + ((to - from) * raw[0]) / sum;
-    let c2 = from + ((to - from) * (raw[0] + raw[1])) / sum;
+    const onTrack = to - from - pit;
+    let c1 = from + (onTrack * raw[0]) / sum;
+    let c2 = from + (onTrack * (raw[0] + raw[1])) / sum;
     const prev = order[i - 1];
     if (prev && startRank.get(car.id)! > startRank.get(prev.id)!) {
       const [p1, p2] = cross.get(prev.id)!;
       c1 = Math.max(c1, p1 + 0.1);
       c2 = Math.max(c2, p2 + 0.1);
     }
-    c2 = Math.min(Math.max(c2, c1 + 0.1), to - 0.05);
+    c2 = Math.min(Math.max(c2, c1 + 0.1), to - pit - 0.05);
     c1 = Math.min(c1, c2 - 0.05);
     cross.set(car.id, [c1, c2]);
     car.lastSectors = [c1 - from, c2 - c1, to - c2];

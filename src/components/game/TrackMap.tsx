@@ -18,17 +18,47 @@ export const animProgress = (anim: LapAnimation, now: number) =>
  * How much of its current lap each running car has covered (0..1, can be <0 while
  * still finishing the previous lap). Shared by the map and the live sector times.
  */
-export function lapProgress(target: RaceState, anim: LapAnimation | null, now: number): Record<string, number> {
+export function lapProgress(
+  target: RaceState,
+  anim: LapAnimation | null,
+  now: number,
+  prev?: RaceState | null,
+): Record<string, number> {
   const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(lapProgressDetailed(target, anim, now, prev))) out[id] = v.frac;
+  return out;
+}
+
+/**
+ * Same as lapProgress plus whether each car is in the pit lane. Cars still finishing the
+ * previous lap (behind the leader) follow that lap's sectors and pit stop (`prev` state).
+ */
+export function lapProgressDetailed(
+  target: RaceState,
+  anim: LapAnimation | null,
+  now: number,
+  prev?: RaceState | null,
+): Record<string, { frac: number; inPit: boolean }> {
+  const out: Record<string, { frac: number; inPit: boolean }> = {};
   const running = target.cars.filter((c) => c.status === "running");
   const leaderTo = target.cars[0]?.total ?? 0;
   const leaderFrom = anim ? Math.min(...Object.values(anim.from)) : leaderTo - (target.cars[0]?.lastLap ?? 1);
   const p = anim ? animProgress(anim, now) : 1;
   const clock = leaderFrom + (leaderTo - leaderFrom) * p;
+  const prevCars = prev ? new Map(prev.cars.map((c) => [c.id, c])) : null;
   for (const c of running) {
     const to = c.total;
     const from = anim?.from[c.id] ?? to - (c.lastLap || 1);
-    out[c.id] = sectorFraction(from, to, c.lastSectors, clock);
+    const before = prevCars?.get(c.id);
+    if (clock < from && before && before.lastLap) {
+      // still on the previous lap: use its sectors and its pit stop
+      const pFrom = from - before.lastLap;
+      const f = sectorFraction(pFrom, from, before.lastSectors, clock, before.lastPitTime ?? 0) - 1;
+      out[c.id] = { frac: f, inPit: inPitLane(f + 1, before.lastPitTime) };
+    } else {
+      const f = sectorFraction(from, to, c.lastSectors, clock, c.lastPitTime ?? 0);
+      out[c.id] = { frac: f, inPit: inPitLane(f, c.lastPitTime) };
+    }
   }
   return out;
 }
@@ -79,7 +109,10 @@ function pointAt(g: Geometry, frac: number): [number, number] {
  * Lap fraction at race clock `t` following the car's own sector times: it reaches
  * each sector line (1/3, 2/3 of the lap) exactly when its sector time says so.
  */
-function sectorFraction(from: number, to: number, sectors: number[] | undefined, t: number) {
+export const PIT_ENTRY = 0.965; // lap fraction where the pit lane starts
+export const PIT_BOX = 0.985; // where the car stops
+
+function sectorFraction(from: number, to: number, sectors: number[] | undefined, t: number, pit = 0) {
   if (!sectors || sectors.length !== 3) return carFraction(from, to, t);
   const [s1, s2, s3] = sectors.map((x) => Math.max(0.05, x));
   const c1 = from + s1;
@@ -87,7 +120,34 @@ function sectorFraction(from: number, to: number, sectors: number[] | undefined,
   if (t <= from) return (t - from) / (3 * s1); // still finishing the previous lap
   if (t <= c1) return (t - from) / (3 * s1);
   if (t <= c2) return 1 / 3 + (t - c1) / (3 * s2);
-  return 2 / 3 + (t - c2) / (3 * s3);
+  if (pit <= 0) return 2 / 3 + (t - c2) / (3 * s3);
+  // pit lap: race to the pit entry, then drive in, stop at the box, drive out
+  const pitStart = to - pit;
+  if (t <= pitStart) return 2 / 3 + ((t - c2) / Math.max(0.05, pitStart - c2)) * (PIT_ENTRY - 2 / 3);
+  const u = Math.min(1, (t - pitStart) / pit);
+  if (u < 0.2) return PIT_ENTRY + (PIT_BOX - PIT_ENTRY) * (u / 0.2);
+  if (u < 0.8) return PIT_BOX; // stationary in the box
+  return PIT_BOX + (1 - PIT_BOX) * ((u - 0.8) / 0.2);
+}
+
+/** Is the car in the pit lane at this lap fraction? */
+export const inPitLane = (frac: number, pitTime: number | undefined) => !!pitTime && frac >= PIT_ENTRY && frac < 1;
+
+/** Point shifted sideways (towards the inside of the circuit) — used for the pit lane. */
+function pitLanePoint(g: Geometry, frac: number, centre: [number, number], d = 38): [number, number] {
+  const [x, y] = pointAt(g, frac);
+  const [x2, y2] = pointAt(g, frac + 0.002);
+  let nx = -(y2 - y);
+  let ny = x2 - x;
+  const len = Math.hypot(nx, ny) || 1;
+  nx /= len;
+  ny /= len;
+  // point the normal to the inside (towards the centre of the layout)
+  if ((centre[0] - x) * nx + (centre[1] - y) * ny < 0) {
+    nx = -nx;
+    ny = -ny;
+  }
+  return [x + nx * d, y + ny * d];
 }
 
 /** Fraction of the lap each car has covered at race clock `t`. */
@@ -124,17 +184,22 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
 
   // Positions
   const target = anim ? anim.to : state;
-  let markers: { car: CarState; frac: number; pos: number }[] = [];
+  let markers: { car: CarState; frac: number; pos: number; inPit?: boolean }[] = [];
 
   if (target.lap === 0 && !anim) {
     // on the grid, just behind the line
     markers = target.cars.map((c, i) => ({ car: c, frac: -0.004 - i * 0.0035, pos: i + 1 }));
   } else {
-    const prog = lapProgress(target, anim, now);
+    const prog = lapProgressDetailed(target, anim, now, anim ? state : null);
     markers = target.cars
       .filter((c) => c.status === "running")
-      .map((c) => ({ car: c, frac: prog[c.id], pos: target.cars.indexOf(c) + 1 }));
+      .map((c) => ({ car: c, frac: prog[c.id].frac, pos: target.cars.indexOf(c) + 1, inPit: prog[c.id].inPit }));
   }
+
+  const centre: [number, number] = [shape.width / 2, shape.height / 2];
+  const laneSamples = Array.from({ length: 14 }, (_, i) => PIT_ENTRY - 0.01 + ((1.012 - PIT_ENTRY) * i) / 13);
+  const laneD = "M" + laneSamples.map((f) => pitLanePoint(geo, f, centre).join(",")).join("L");
+  const box = pitLanePoint(geo, PIT_BOX, centre);
 
   // draw back markers first so the leader is on top
   markers.sort((a, b) => b.pos - a.pos);
@@ -159,6 +224,11 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
           strokeWidth={6}
           strokeDasharray="6 6"
         />
+        {/* pit lane */}
+        <path d={laneD} fill="none" stroke="#3b4252" strokeWidth={12} strokeLinecap="round" strokeLinejoin="round" />
+        <text x={box[0] + 16} y={box[1] + 30} fontSize={20} fontFamily="Orbitron, sans-serif" fill="#94a3b8">
+          BOXES
+        </text>
         {/* sector boundaries */}
         {[1 / 3, 2 / 3].map((f, i) => {
           const [x, y] = pointAt(geo, f);
@@ -174,8 +244,9 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
         <text x={sx + 14} y={sy - 30} fontSize={22} fontFamily="Orbitron, sans-serif" fill="white">
           S1
         </text>
-        {markers.map(({ car, frac, pos }) => {
-          const [x, y] = pointAt(geo, frac);
+        {markers.map(({ car, frac, pos, inPit }) => {
+          const inLane = !!inPit;
+          const [x, y] = inLane ? pitLanePoint(geo, frac, centre) : pointAt(geo, frac);
           const mine = car.entry.team.id === playerTeamId;
           const showLabel = allLabels || mine || pos <= 3;
           return (

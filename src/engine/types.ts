@@ -46,6 +46,7 @@ export interface CarState {
   dnfReason?: string;
   dnfLap?: number;
   pittedThisLap: boolean;
+  lastPitTime?: number; // seconds spent in the pit lane at the end of the last lap (0 = no stop)
 }
 
 export type RaceEventType =

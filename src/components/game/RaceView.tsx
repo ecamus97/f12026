@@ -11,7 +11,7 @@ import {
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
-import { TrackMap, lapProgress, type LapAnimation } from "./TrackMap";
+import { TrackMap, lapProgressDetailed, type LapAnimation } from "./TrackMap";
 import { StrategyPlanner } from "./StrategyPlanner";
 import { cn } from "@/lib/utils";
 
@@ -63,7 +63,10 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
     const id = window.setInterval(() => setNow(performance.now()), 120);
     return () => window.clearInterval(id);
   }, [anim]);
-  const progress = anim ? lapProgress(anim.to, anim, anim.pausedElapsed != null ? anim.start + anim.pausedElapsed : now) : null;
+  const detailed = anim
+    ? lapProgressDetailed(anim.to, anim, anim.pausedElapsed != null ? anim.start + anim.pausedElapsed : now, state)
+    : null;
+  const progress = detailed ? Object.fromEntries(Object.entries(detailed).map(([id, v]) => [id, v.frac])) : null;
   const liveCars = anim ? new Map(anim.to.cars.map((c) => [c.id, c])) : null;
   const bestSectors = (anim?.to ?? state).bestSectors ?? [];
 
@@ -154,8 +157,9 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
         case "overtake":
           return a in progress && b in progress ? progress[a] > progress[b] : lapP > 0.5;
         case "pit":
+          return !!detailed?.[a]?.inPit || (progress[a] ?? 0) >= 1;
         case "fastest":
-          return (progress[a] ?? 0) >= 0.97;
+          return (progress[a] ?? 0) >= 1;
         case "finish":
           return lapP >= 1;
         default:
@@ -314,6 +318,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
                 fastest={state.fastest?.driverId === car.id}
                 lap={state.lap}
                 sectors={sectorCells(car, liveCars?.get(car.id), progress?.[car.id], bestSectors)}
+                inPit={!!detailed?.[car.id]?.inPit}
               />
             ))}
           </div>
@@ -386,8 +391,8 @@ const SECTOR_TONE: Record<SectorCell["tone"], string> = {
 };
 
 function TowerRow({
-  car, pos, gap, mine, fastest, lap, sectors,
-}: { car: CarState; pos: number; gap: string; mine: boolean; fastest: boolean; lap: number; sectors: SectorCell[] }) {
+  car, pos, gap, mine, fastest, lap, sectors, inPit,
+}: { car: CarState; pos: number; gap: string; mine: boolean; fastest: boolean; lap: number; sectors: SectorCell[]; inPit: boolean }) {
   const dnf = car.status === "dnf";
   const change = car.grid - pos;
   return (
@@ -415,7 +420,11 @@ function TowerRow({
         <span className="font-racing text-xs">{car.entry.driver.shortName}</span>
         {mine && <Star className="w-3 h-3 text-primary fill-primary" />}
         {fastest && lap > 1 && <span className="text-[9px] px-1 rounded bg-purple-600 text-white">VR</span>}
-        {car.pittedThisLap && <span className="text-[9px] px-1 rounded bg-orange-500 text-black font-bold">PIT</span>}
+        {inPit ? (
+          <span className="text-[9px] px-1 rounded bg-orange-500 text-black font-bold animate-pulse">EN BOXES</span>
+        ) : (
+          car.pittedThisLap && <span className="text-[9px] px-1 rounded bg-orange-500/60 text-black font-bold">PIT</span>
+        )}
         {dnf && <span className="text-[10px] text-destructive truncate">{car.dnfReason}</span>}
       </span>
       <span className="w-20 text-right font-mono text-xs tabular-nums">{gap}</span>
