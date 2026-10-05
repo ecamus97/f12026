@@ -1,7 +1,8 @@
 // Team management: budget, R&D projects, facilities and AI development.
 // Pure functions over a serialisable ManagementState.
-import type { Team } from "@/data/f1Data";
+import { races2026, type Team } from "@/data/f1Data";
 import { createRng, type Rng } from "./rng";
+import { generateOffers, SLOT_INFO, sponsorPayout, tvRights, type RaceOutcome, type SponsorDeal, type SponsorSlot } from "./sponsors";
 import type { ClassifiedRow } from "./types";
 
 export type DevArea = "aero" | "powerUnit" | "chassis" | "reliability" | "pitCrew";
@@ -71,10 +72,27 @@ export interface FacilityWork {
   racesLeft: number;
 }
 
+export type LedgerCategory =
+  | "initial" | "tv" | "sponsor" | "prize" | "logistics" | "staff" | "parts" | "repairs" | "rnd" | "facilities";
+
+export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "income" | "expense" }> = {
+  initial: { label: "Presupuesto inicial", kind: "income" },
+  tv: { label: "Derechos comerciales y TV", kind: "income" },
+  sponsor: { label: "Patrocinadores", kind: "income" },
+  prize: { label: "Premios por puntos", kind: "income" },
+  logistics: { label: "Logística y viajes", kind: "expense" },
+  staff: { label: "Personal de carrera", kind: "expense" },
+  parts: { label: "Componentes y neumáticos", kind: "expense" },
+  repairs: { label: "Reparaciones", kind: "expense" },
+  rnd: { label: "Investigación y desarrollo", kind: "expense" },
+  facilities: { label: "Instalaciones", kind: "expense" },
+};
+
 export interface LedgerEntry {
   race: number; // round number (1-24), 0 = pre-season
   concept: string;
   amount: number; // + income, - expense (M USD)
+  category?: LedgerCategory;
 }
 
 export interface InboxMessage {
@@ -90,6 +108,13 @@ export interface PlayerEconomy {
   facilityWork: FacilityWork | null;
   projects: ActiveProject[];
   ledger: LedgerEntry[];
+  sponsors: SponsorDeal[]; // signed contracts
+  offers: SponsorDeal[]; // available on the market
+}
+
+export interface DevSnapshot {
+  round: number;
+  dev: Record<string, CarDev>;
 }
 
 export interface ManagementState {
@@ -100,22 +125,27 @@ export interface ManagementState {
   inbox: InboxMessage[];
   rngState: number;
   nextUid: number;
+  history: DevSnapshot[]; // development of every team, after each round
 }
 
 // --- Economy constants -------------------------------------------------------
-export const RACE_OPERATIONS = 3.2; // M USD per race weekend
 export const CRASH_REPAIR = 1.5; // M USD per accident
 export const PRIZE_PER_POINT = 0.12; // M USD
+export const STAFF_COST = 1.2;
+export const PARTS_COST = 0.7;
+const EUROPE = new Set(["Monaco", "Spain", "Austria", "Great Britain", "Belgium", "Hungary", "Netherlands", "Italy", "Azerbaijan"]);
+/** Logistics depend on where the race is: European rounds are cheaper than fly-aways. */
+export const logisticsCost = (round: number) => (EUROPE.has(races2026[round - 1]?.country ?? "") ? 0.8 : 1.4);
+export const raceRunningCost = (round: number) => logisticsCost(round) + STAFF_COST + PARTS_COST;
 export const facilityUpgradeCost = (level: number) => 6 + level * 5; // to go from level -> level+1
 export const FACILITY_BUILD_RACES = 3;
 
 /** Starting development budget (M USD) by car rating: big teams have more money. */
 export const startBudget = (pace: number) => Math.round(30 + (pace - 78) * 1.8);
-/** Sponsor income per race (M USD). */
-export const sponsorIncome = (teamPace: number) => +(2.8 + (teamPace - 78) * 0.13).toFixed(2);
 const startFacility = (pace: number) => (pace >= 92 ? 4 : pace >= 85 ? 3 : 2);
 
 export function initManagement(teams: Team[], playerTeamId: string | null, seed: number): ManagementState {
+  const rng = createRng(seed);
   const dev: Record<string, CarDev> = {};
   const aiBudget: Record<string, number> = {};
   for (const t of teams) {
@@ -124,6 +154,14 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
   }
   const pt = teams.find((t) => t.id === playerTeamId);
   const lvl = pt ? startFacility(pt.pace) : 2;
+  const carRank = pt ? 1 + teams.filter((t) => t.pace > pt.pace).length : 11;
+  const used = new Set<string>();
+  const offers = pt
+    ? [
+        ...generateOffers(rng, { slot: "principal", count: 3, pace: pt.pace, carRank, racesLeftInSeason: races2026.length, usedNames: used, uidStart: 1 }),
+        ...generateOffers(rng, { slot: "secundario", count: 4, pace: pt.pace, carRank, racesLeftInSeason: races2026.length, usedNames: used, uidStart: 10 }),
+      ]
+    : [];
   return {
     version: 1,
     dev,
@@ -135,14 +173,20 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
           facilities: { windTunnel: lvl, dyno: lvl, factory: lvl, reliabilityLab: lvl, pitTraining: lvl },
           facilityWork: null,
           projects: [],
-          ledger: [{ race: 0, concept: "Presupuesto de desarrollo inicial", amount: startBudget(pt.pace) }],
+          ledger: [{ race: 0, concept: "Presupuesto de desarrollo inicial", amount: startBudget(pt.pace), category: "initial" }],
+          sponsors: [],
+          offers,
         }
       : null,
     inbox: pt
-      ? [{ race: 0, tone: "info", text: `Bienvenido a ${pt.name}. Tienes US$ ${startBudget(pt.pace)} M para desarrollar el auto esta temporada.` }]
+      ? [
+          { race: 0, tone: "info", text: `Bienvenido a ${pt.name}. Tienes US$ ${startBudget(pt.pace)} M para desarrollar el auto esta temporada.` },
+          { race: 0, tone: "info", text: "Hay ofertas de patrocinio esperando: revísalas en Equipo → Finanzas." },
+        ]
       : [],
-    rngState: seed,
-    nextUid: 1,
+    rngState: rng.state(),
+    nextUid: 100,
+    history: [{ round: 0, dev: structuredClone(dev) }],
   };
 }
 
@@ -202,7 +246,7 @@ export function startProject(m: ManagementState, templateId: string, round: numb
       ...p,
       budget: +(p.budget - t.cost).toFixed(2),
       projects: [...p.projects, { uid: `p${m.nextUid}`, templateId: t.id, area: t.area, name: t.name, racesLeft: races, totalRaces: races }],
-      ledger: [...p.ledger, { race: round, concept: `I+D: ${t.name}`, amount: -t.cost }],
+      ledger: [...p.ledger, { race: round, concept: `I+D: ${t.name}`, amount: -t.cost, category: "rnd" }],
     },
   };
 }
@@ -227,9 +271,57 @@ export function upgradeFacility(m: ManagementState, key: FacilityKey, round: num
       ...p,
       budget: +(p.budget - cost).toFixed(2),
       facilityWork: { key, racesLeft: FACILITY_BUILD_RACES },
-      ledger: [...p.ledger, { race: round, concept: `Obra: ${FACILITY_INFO[key].label} nivel ${p.facilities[key] + 1}`, amount: -cost }],
+      ledger: [...p.ledger, { race: round, concept: `Obra: ${FACILITY_INFO[key].label} nivel ${p.facilities[key] + 1}`, amount: -cost, category: "facilities" }],
     },
   };
+}
+
+// --- Sponsors ---------------------------------------------------------------
+export function carRankOf(m: ManagementState, teamId: string) {
+  const ids = Object.keys(m.dev);
+  return 1 + ids.filter((id) => carPace(m.dev[id]) > carPace(m.dev[teamId])).length;
+}
+
+export function canSignSponsor(m: ManagementState, offerId: string): string | null {
+  const p = m.player;
+  const o = p?.offers.find((x) => x.id === offerId);
+  if (!p || !o) return "Oferta no disponible";
+  if (p.sponsors.filter((s) => s.slot === o.slot).length >= SLOT_INFO[o.slot].count) return "Espacio ocupado";
+  if (o.minRank !== null && carRankOf(m, p.teamId) > o.minRank) return `Requiere auto top ${o.minRank}`;
+  return null;
+}
+
+export function signSponsor(m: ManagementState, offerId: string, round: number): ManagementState {
+  if (canSignSponsor(m, offerId)) return m;
+  const p = m.player!;
+  const o = p.offers.find((x) => x.id === offerId)!;
+  const ledger = o.signing > 0 ? [{ race: round, concept: `${o.name}: prima por firma`, amount: o.signing, category: "sponsor" as const }] : [];
+  return {
+    ...m,
+    player: {
+      ...p,
+      budget: +(p.budget + o.signing).toFixed(2),
+      sponsors: [...p.sponsors, { ...o, earned: o.signing }],
+      offers: p.offers.filter((x) => x.id !== offerId),
+      ledger: [...p.ledger, ...ledger],
+    },
+    inbox: [...m.inbox, { race: round, tone: "good" as const, text: `Firmaste con ${o.name} por ${o.duration} carreras.` }].slice(-60),
+  };
+}
+
+function refreshSlotOffers(m: ManagementState, p: PlayerEconomy, slot: SponsorSlot, round: number, rng: Rng, teams: Team[]): PlayerEconomy {
+  const team = teams.find((t) => t.id === p.teamId)!;
+  const used = new Set([...p.sponsors.map((s) => s.name), ...p.offers.map((s) => s.name)]);
+  const fresh = generateOffers(rng, {
+    slot,
+    count: slot === "principal" ? 3 : 4,
+    pace: team.pace,
+    carRank: carRankOf(m, p.teamId),
+    racesLeftInSeason: Math.max(1, races2026.length - round),
+    usedNames: used,
+    uidStart: m.nextUid + round * 20 + (slot === "principal" ? 0 : 10),
+  });
+  return { ...p, offers: [...p.offers.filter((o) => o.slot !== slot), ...fresh] };
 }
 
 function applyGain(d: CarDev, area: DevArea, gain: number): CarDev {
@@ -268,6 +360,7 @@ export function processRaceWeekend(
   teams: Team[],
   rows: ClassifiedRow[],
   round: number,
+  pole?: string,
 ): ManagementState {
   const rng = createRng(m.rngState);
   const inbox: InboxMessage[] = [];
@@ -275,19 +368,41 @@ export function processRaceWeekend(
   let player = m.player;
 
   if (player) {
-    const team = teams.find((t) => t.id === player!.teamId)!;
     const myRows = rows.filter((r) => r.teamId === player!.teamId);
     const points = myRows.reduce((a, r) => a + r.points, 0);
-    const crashes = myRows.filter((r) => r.status === "dnf" && (r.dnfReason ?? "").toLowerCase().includes("accidente")).length;
+    const dnfs = myRows.filter((r) => r.status === "dnf");
+    const crashes = dnfs.filter((r) => (r.dnfReason ?? "").toLowerCase().includes("accidente")).length;
+    const outcome: RaceOutcome = {
+      points,
+      podiums: myRows.filter((r) => r.status === "finished" && r.position <= 3).length,
+      wins: myRows.filter((r) => r.status === "finished" && r.position === 1).length,
+      pole: !!pole && myRows.some((r) => r.driverId === pole),
+      dnfs: dnfs.length,
+    };
     const ledger: LedgerEntry[] = [];
-    const sponsor = sponsorIncome(team.pace);
-    ledger.push({ race: round, concept: "Patrocinadores", amount: sponsor });
-    if (points > 0) ledger.push({ race: round, concept: `Premio por puntos (${points} pts)`, amount: +(points * PRIZE_PER_POINT).toFixed(2) });
-    ledger.push({ race: round, concept: "Operación del fin de semana", amount: -RACE_OPERATIONS });
+    ledger.push({ race: round, concept: "Derechos comerciales y TV", amount: tvRights(carRankOf(m, player.teamId)), category: "tv" });
+    // sponsors pay and count down
+    const sponsors: SponsorDeal[] = [];
+    const expiredSlots = new Set<SponsorSlot>();
+    for (const sp of player.sponsors) {
+      const lines = sponsorPayout(sp, outcome);
+      lines.forEach((l) => ledger.push({ race: round, concept: l.concept, amount: l.amount, category: "sponsor" }));
+      const paid = lines.reduce((a, l) => a + l.amount, 0);
+      const left = sp.racesLeft - 1;
+      if (left <= 0) {
+        expiredSlots.add(sp.slot);
+        inbox.push({ race: round, tone: "info", text: `Terminó el contrato con ${sp.name} (pagó US$ ${(sp.earned + paid).toFixed(1)} M en total). Hay nuevas ofertas.` });
+      } else sponsors.push({ ...sp, racesLeft: left, earned: +(sp.earned + paid).toFixed(2) });
+    }
+    if (points > 0) ledger.push({ race: round, concept: `Premio por puntos (${points} pts)`, amount: +(points * PRIZE_PER_POINT).toFixed(2), category: "prize" });
+    ledger.push({ race: round, concept: "Logística y viajes", amount: -logisticsCost(round), category: "logistics" });
+    ledger.push({ race: round, concept: "Personal de carrera", amount: -STAFF_COST, category: "staff" });
+    ledger.push({ race: round, concept: "Componentes y neumáticos", amount: -PARTS_COST, category: "parts" });
     if (crashes > 0) {
-      ledger.push({ race: round, concept: `Reparación por accidente${crashes > 1 ? "s" : ""}`, amount: -CRASH_REPAIR * crashes });
+      ledger.push({ race: round, concept: `Reparación por accidente${crashes > 1 ? "s" : ""}`, amount: -CRASH_REPAIR * crashes, category: "repairs" });
       inbox.push({ race: round, tone: "bad", text: `Reparar el auto accidentado cuesta US$ ${(CRASH_REPAIR * crashes).toFixed(1)} M.` });
     }
+    player = { ...player, sponsors };
     const delta = ledger.reduce((a, l) => a + l.amount, 0);
 
     // projects
@@ -330,6 +445,12 @@ export function processRaceWeekend(
     const budget = +(player.budget + delta).toFixed(2);
     if (budget < 0) inbox.push({ race: round, tone: "bad", text: "Estás en números rojos: no podrás iniciar proyectos hasta recuperar presupuesto." });
     player = { ...player, budget, projects: remaining, facilities, facilityWork, ledger: [...player.ledger, ...ledger] };
+
+    // sponsorship market: new offers when a contract ends, and a full refresh every 6 rounds
+    const refresh = round % 6 === 0 ? (["principal", "secundario"] as SponsorSlot[]) : [...expiredSlots];
+    const mNow = { ...m, dev };
+    for (const slot of refresh) player = refreshSlotOffers(mNow, player, slot, round, rng, teams);
+    if (round % 6 === 0 && round < races2026.length) inbox.push({ race: round, tone: "info", text: "Nuevas ofertas de patrocinio disponibles." });
   }
 
   return {
@@ -338,7 +459,15 @@ export function processRaceWeekend(
     player,
     inbox: [...m.inbox, ...inbox].slice(-60),
     rngState: rng.state(),
+    history: [...(m.history ?? []), { round, dev: structuredClone(dev) }],
   };
+}
+
+/** Rough per-race balance with the current contracts (no bonuses or prizes). */
+export function baseRaceBalance(m: ManagementState, round: number) {
+  const p = m.player!;
+  const income = tvRights(carRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0);
+  return { income, costs: raceRunningCost(Math.max(1, round)) };
 }
 
 /** Field ranking (1 = best) of a team in each area. */

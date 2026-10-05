@@ -55,7 +55,7 @@ export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, 
   const [tab, setTab] = useState<string>(done ? "grid" : `${revealed}`);
   const [step, setStep] = useState(-1); // -1 = session not started
   const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
+  const [speed, setSpeed] = useState(0);
 
   useEffect(() => {
     setTab(done ? "grid" : `${revealed}`);
@@ -76,12 +76,7 @@ export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, 
     return () => window.clearTimeout(t);
   }, [playing, step, sequence.length, speed]);
 
-  // Session over: close it (eliminations become official)
-  useEffect(() => {
-    if (step < 0 || step < sequence.length - 1) return;
-    const t = window.setTimeout(() => onReveal(false), 1500);
-    return () => window.clearTimeout(t);
-  }, [step, sequence.length, onReveal]);
+  const sessionOver = step >= 0 && step >= sequence.length - 1;
 
   const pole = entryMap.get(quali.grid[0]);
   const viewingLive = !done && tab === `${liveIndex}`;
@@ -116,6 +111,7 @@ export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, 
           rows={liveSession.rows}
           sequence={sequence}
           step={step}
+          over={sessionOver}
           entryMap={entryMap}
           playerTeamId={playerTeamId}
         />
@@ -188,9 +184,14 @@ export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, 
               <FastForward className="w-4 h-4" />
             </Button>
           </>
+        ) : sessionOver ? (
+          <Button onClick={() => onReveal(false)} className="flex-1 font-racing" size="lg">
+            <SkipForward className="w-4 h-4 mr-2" />
+            {liveIndex < 2 ? `Siguiente: ${SESSION_INFO[liveIndex + 1].name}` : "Ver parrilla de salida"}
+          </Button>
         ) : (
           <>
-            <Button onClick={() => setPlaying((p) => !p)} className="font-racing min-w-28" disabled={step >= sequence.length - 1}>
+            <Button onClick={() => setPlaying((p) => !p)} className="font-racing min-w-28">
               {playing ? <Pause className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />}
               {playing ? "Pausa" : "Seguir"}
             </Button>
@@ -205,7 +206,15 @@ export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, 
                 </button>
               ))}
             </div>
-            <Button variant="outline" onClick={() => onReveal(false)} className="ml-auto text-xs" title="Terminar la sesión">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setPlaying(false);
+                setStep(sequence.length - 1);
+              }}
+              className="ml-auto text-xs"
+              title="Mostrar todos los tiempos de la sesión"
+            >
               <SkipForward className="w-4 h-4 mr-1" /> Terminar {SESSION_INFO[liveIndex].name}
             </Button>
           </>
@@ -220,6 +229,7 @@ function LiveSession({
   rows,
   sequence,
   step,
+  over,
   entryMap,
   playerTeamId,
 }: {
@@ -227,6 +237,7 @@ function LiveSession({
   rows: Row[];
   sequence: Step[];
   step: number;
+  over: boolean;
   entryMap: Map<string, Entry>;
   playerTeamId: string | null;
 }) {
@@ -278,7 +289,8 @@ function LiveSession({
         </div>
         <div className="text-right">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            {step < 0 ? "Esperando" : step < sequence.length / 2 ? "Primer intento" : "Segundo intento"} · {Math.max(0, step + 1)}/{sequence.length}
+            {over ? "🏁 Sesión terminada" : step < 0 ? "Esperando" : step < sequence.length / 2 ? "Primer intento" : "Segundo intento"} ·{" "}
+            {Math.max(0, step + 1)}/{sequence.length}
           </div>
           {ticker && <div className={cn("text-sm font-medium", ticker.tone)}>{ticker.text}</div>}
         </div>
@@ -313,11 +325,14 @@ function LiveSession({
               <span className="font-mono text-xs w-16 text-right text-muted-foreground">
                 {i === 0 || !b.t ? "" : `+${(b.t - leaderT).toFixed(3)}`}
               </span>
+              {info.out > 0 && (
+                <span className="text-[10px] uppercase text-destructive w-10 text-right">{over && inDrop ? "Fuera" : ""}</span>
+              )}
             </motion.div>
           );
         })}
       </div>
-      {info.out > 0 && <p className="text-[11px] text-muted-foreground">La zona roja queda eliminada al terminar la sesión.</p>}
+      {info.out > 0 && !over && <p className="text-[11px] text-muted-foreground">La zona roja queda eliminada al terminar la sesión.</p>}
     </div>
   );
 }

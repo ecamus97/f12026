@@ -10,7 +10,7 @@ Juego de gestión de F1 (temporada 2026): eliges una escudería y diriges la est
    - modo del piloto: **Atacar** (más rápido, gasta más neumático y arriesga errores), **Normal**, **Cuidar**;
    - **parada en boxes** con el compuesto que elijas (blando / medio / duro). Es obligatorio usar dos compuestos.
    - La carrera se pausa sola cuando sale el safety car (parar en boxes cuesta ~45% menos).
-4. **Sede del equipo**: presupuesto, proyectos de I+D (aerodinámica, motor, chasis, fiabilidad, pit crew), mejoras de instalaciones y finanzas por carrera. Los rivales también desarrollan según su presupuesto.
+4. **Sede del equipo**: gráfico de evolución de todas las escuderías (general o por componente), patrocinadores a elegir (estable, por rendimiento, prima de firma, premium), presupuesto, proyectos de I+D (aerodinámica, motor, chasis, fiabilidad, pit crew), mejoras de instalaciones y finanzas por carrera. Los rivales también desarrollan según su presupuesto.
 5. Puntos 2026 (25-18-15-12-10-8-6-4-2-1, sin punto por vuelta rápida). El progreso se autoguarda en el navegador.
 
 ## Motor de simulación (`src/engine`)

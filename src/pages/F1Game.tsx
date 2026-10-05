@@ -146,6 +146,11 @@ export default function F1Game() {
                           {gameState.management.player.projects.length} proyecto(s) en desarrollo
                           {gameState.management.player.facilityWork ? " · 1 obra en curso" : ""}
                         </div>
+                        {gameState.management.player.sponsors.length < 3 && (
+                          <div className="text-xs text-yellow-300">
+                            ⚠ {3 - gameState.management.player.sponsors.length} espacio(s) de patrocinio libre(s)
+                          </div>
+                        )}
                         <div className="text-xs text-primary pt-1">Gestionar presupuesto y desarrollo →</div>
                       </button>
                       <InboxList management={gameState.management} limit={4} />
@@ -276,9 +281,12 @@ export default function F1Game() {
             <motion.div key="team" {...fade}>
               <TeamHQ
                 team={playerTeam}
+                teams={gameState.teamsData}
+                round={gameState.currentRaceIndex}
                 management={gameState.management}
                 onStartProject={game.startProject}
                 onUpgradeFacility={game.upgradeFacility}
+                onSignSponsor={game.signSponsor}
               />
             </motion.div>
           )}

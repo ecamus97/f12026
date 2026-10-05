@@ -17,6 +17,7 @@ import {
   processRaceWeekend,
   startProject as startProjectFn,
   upgradeFacility as upgradeFacilityFn,
+  signSponsor as signSponsorFn,
   type FacilityKey,
   type ManagementState,
 } from "@/engine";
@@ -66,6 +67,16 @@ function loadState(): GameState {
       state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
       state.baseTeams = state.teamsData;
     }
+    // saves from before sponsors / development history existed
+    if (state.management) {
+      const m = state.management;
+      if (!m.history) m.history = [{ round: state.currentRaceIndex, dev: m.dev }];
+      if (m.player && !m.player.sponsors) {
+        const fresh = initManagement(state.teamsData, state.playerTeamId, randomSeed());
+        m.player.sponsors = [];
+        m.player.offers = fresh.player?.offers ?? [];
+      }
+    }
     return state;
   } catch {
     return initialState();
@@ -111,6 +122,10 @@ export function useGameState() {
 
   const startProject = useCallback((templateId: string) => {
     setGameState((s) => (s.management ? { ...s, management: startProjectFn(s.management, templateId, s.currentRaceIndex) } : s));
+  }, []);
+
+  const signSponsor = useCallback((offerId: string) => {
+    setGameState((s) => (s.management ? { ...s, management: signSponsorFn(s.management, offerId, s.currentRaceIndex) } : s));
   }, []);
 
   const upgradeFacility = useCallback((key: FacilityKey) => {
@@ -160,7 +175,7 @@ export function useGameState() {
         pole: w.quali.grid[0],
         fastestLap: w.race.fastest ? { driverId: w.race.fastest.driverId, time: w.race.fastest.time } : null,
       };
-      const management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, w.raceIndex + 1) : null;
+      const management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, w.raceIndex + 1, result.pole) : null;
       return {
         ...s,
         results: [...s.results.filter((r) => r.raceId !== result.raceId), result],
@@ -222,5 +237,6 @@ export function useGameState() {
     updateTeamsData,
     startProject,
     upgradeFacility,
+    signSponsor,
   };
 }

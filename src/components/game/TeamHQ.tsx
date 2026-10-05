@@ -4,26 +4,31 @@ import { Building2, FlaskConical, Wallet, Inbox, Hammer, TrendingUp, TrendingDow
 import { Button } from "@/components/ui/button";
 import type { Team } from "@/data/f1Data";
 import {
-  AREA_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, RACE_OPERATIONS,
-  areaRanks, canStartProject, canUpgradeFacility, carPace, expectedGain, facilityUpgradeCost, maxProjects,
-  projectRaces, sponsorIncome, FACILITY_BUILD_RACES,
-  type DevArea, type FacilityKey, type ManagementState,
+  AREA_INFO, CATEGORY_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, SLOT_INFO, STYLE_INFO,
+  areaRanks, baseRaceBalance, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
+  expectedPerRace, facilityUpgradeCost, maxProjects, projectRaces, FACILITY_BUILD_RACES,
+  type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot,
 } from "@/engine";
+import { PerformanceChart, type Metric } from "./PerformanceChart";
 import { TeamStripe } from "./common";
 import { cn } from "@/lib/utils";
 
 interface Props {
   team: Team;
+  teams: Team[];
+  round: number; // races already completed
   management: ManagementState;
   onStartProject: (id: string) => void;
   onUpgradeFacility: (key: FacilityKey) => void;
+  onSignSponsor: (offerId: string) => void;
 }
 
 export const money = (m: number) => `US$ ${m.toFixed(1)} M`;
 
 const AREAS: DevArea[] = ["aero", "powerUnit", "chassis", "reliability", "pitCrew"];
 
-export function TeamHQ({ team, management, onStartProject, onUpgradeFacility }: Props) {
+export function TeamHQ({ team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor }: Props) {
+  const [metric, setMetric] = useState<Metric>("pace");
   const p = management.player!;
   const myDev = management.dev[team.id];
   const ranks = areaRanks(management, team.id);
@@ -41,7 +46,12 @@ export function TeamHQ({ team, management, onStartProject, onUpgradeFacility }: 
     };
   }, [management.dev]);
 
-  const perRace = sponsorIncome(team.pace) - RACE_OPERATIONS;
+  const bal = baseRaceBalance(management, round + 1);
+  const perRace = bal.income - bal.costs;
+  const missingSponsors = (Object.keys(SLOT_INFO) as SponsorSlot[]).reduce(
+    (a, slot) => a + SLOT_INFO[slot].count - p.sponsors.filter((s) => s.slot === slot).length,
+    0,
+  );
 
   return (
     <div className="space-y-5">
@@ -61,9 +71,11 @@ export function TeamHQ({ team, management, onStartProject, onUpgradeFacility }: 
           <Stat icon={Wallet} label="Presupuesto disponible" value={money(p.budget)} tone={p.budget < 0 ? "bad" : undefined} />
           <Stat
             icon={perRace >= 0 ? TrendingUp : TrendingDown}
-            label="Balance por carrera (sin premios)"
+            label="Balance base por carrera"
             value={`${perRace >= 0 ? "+" : ""}${perRace.toFixed(1)} M`}
-            hint={`Patrocinio ${sponsorIncome(team.pace).toFixed(1)} M − operación ${RACE_OPERATIONS} M. Cada punto suma US$ 0.12 M.`}
+            hint={`Ingresos fijos ${bal.income.toFixed(1)} M − costos ${bal.costs.toFixed(1)} M. Sin contar bonos ni premios.${
+              missingSponsors ? ` Tienes ${missingSponsors} espacio(s) de patrocinio libre(s).` : ""
+            }`}
           />
         </div>
       </div>
@@ -75,6 +87,8 @@ export function TeamHQ({ team, management, onStartProject, onUpgradeFacility }: 
           {AREAS.map((a) => (
             <RatingCard
               key={a}
+              selected={metric === a}
+              onClick={() => setMetric(metric === a ? "pace" : a)}
               label={AREA_INFO[a].label}
               value={myDev[a]}
               best={fieldBest[a]}
@@ -85,9 +99,11 @@ export function TeamHQ({ team, management, onStartProject, onUpgradeFacility }: 
           ))}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          El ritmo del auto = 40% aerodinámica + 30% motor + 30% chasis. Los rivales también desarrollan cada carrera según su presupuesto.
+          El ritmo del auto = 40% aerodinámica + 30% motor + 30% chasis. Toca un componente para ver cómo se compara con las demás escuderías.
         </p>
       </div>
+
+      <PerformanceChart management={management} teams={teams} playerTeamId={team.id} metric={metric} onMetric={setMetric} />
 
       {/* Tabs */}
       <div className="flex gap-1 rounded-lg bg-muted/40 p-1">
@@ -232,7 +248,7 @@ export function TeamHQ({ team, management, onStartProject, onUpgradeFacility }: 
         </div>
       )}
 
-      {tab === "finance" && <Finance management={management} />}
+      {tab === "finance" && <Finance management={management} onSignSponsor={onSignSponsor} />}
 
       <InboxList management={management} />
     </div>
@@ -254,12 +270,19 @@ function Stat({
 }
 
 function RatingCard({
-  label, value, best, rank, color, desc,
-}: { label: string; value: number; best: number; rank: number; color: string; desc: string }) {
+  label, value, best, rank, color, desc, selected, onClick,
+}: { label: string; value: number; best: number; rank: number; color: string; desc: string; selected: boolean; onClick: () => void }) {
   const pct = Math.max(4, Math.min(100, ((value - 70) / 30) * 100));
   const bestPct = Math.max(4, Math.min(100, ((best - 70) / 30) * 100));
   return (
-    <div className="rounded-lg border border-border bg-background/40 p-3 space-y-1.5" title={desc}>
+    <button
+      onClick={onClick}
+      className={cn(
+        "rounded-lg border bg-background/40 p-3 space-y-1.5 text-left transition-colors",
+        selected ? "border-primary ring-1 ring-primary" : "border-border hover:border-primary/50",
+      )}
+      title={desc}
+    >
       <div className="flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{label}</span>
         <span className="font-racing">P{rank}</span>
@@ -269,40 +292,191 @@ function RatingCard({
         <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
         <div className="absolute -top-1 w-0.5 h-3.5 bg-foreground/60" style={{ left: `${bestPct}%` }} title={`Mejor del grid: ${best.toFixed(1)}`} />
       </div>
+    </button>
+  );
+}
+
+function Finance({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
+  const p = management.player!;
+  const ledger = p.ledger;
+  const [showAll, setShowAll] = useState(false);
+
+  // season totals by category
+  const totals = new Map<LedgerCategory | "other", number>();
+  for (const l of ledger) totals.set(l.category ?? "other", (totals.get(l.category ?? "other") ?? 0) + l.amount);
+  const incomeCats = (Object.keys(CATEGORY_INFO) as LedgerCategory[]).filter((c) => CATEGORY_INFO[c].kind === "income" && totals.has(c));
+  const expenseCats = (Object.keys(CATEGORY_INFO) as LedgerCategory[]).filter((c) => CATEGORY_INFO[c].kind === "expense" && totals.has(c));
+  const income = incomeCats.reduce((a, c) => a + (totals.get(c) ?? 0), 0);
+  const spend = expenseCats.reduce((a, c) => a + (totals.get(c) ?? 0), 0);
+
+  const byRace = new Map<number, typeof ledger>();
+  for (const l of ledger) byRace.set(l.race, [...(byRace.get(l.race) ?? []), l]);
+  const rounds = [...byRace.entries()].reverse();
+
+  return (
+    <div className="space-y-4">
+      <Sponsors management={management} onSignSponsor={onSignSponsor} />
+
+      <div className="grid md:grid-cols-2 gap-3">
+        <Breakdown title="Ingresos de la temporada" total={income} cats={incomeCats} totals={totals} positive />
+        <Breakdown title="Gastos de la temporada" total={spend} cats={expenseCats} totals={totals} />
+      </div>
+
+      <div className="rounded-xl border border-border overflow-hidden">
+        <div className="px-3 py-2 text-xs font-racing border-b border-border">Movimientos por ronda</div>
+        {(showAll ? rounds : rounds.slice(0, 4)).map(([race, items]) => {
+          const net = items.reduce((a, l) => a + l.amount, 0);
+          return (
+            <div key={race} className="border-b border-border/40 last:border-0">
+              <div className="flex justify-between px-3 py-1.5 bg-muted/30 text-[11px] uppercase tracking-wider text-muted-foreground">
+                <span>{race === 0 ? "Pretemporada" : `Ronda ${race}`}</span>
+                <span className={net >= 0 ? "text-green-400" : "text-red-400"}>
+                  {net >= 0 ? "+" : ""}
+                  {net.toFixed(2)} M
+                </span>
+              </div>
+              {items.map((l, i) => (
+                <div key={i} className="flex justify-between px-3 py-1 text-sm">
+                  <span>{l.concept}</span>
+                  <span className={cn("font-mono text-xs", l.amount >= 0 ? "text-green-400" : "text-red-400")}>
+                    {l.amount >= 0 ? "+" : ""}
+                    {l.amount.toFixed(2)} M
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        {rounds.length > 4 && (
+          <button onClick={() => setShowAll((v) => !v)} className="w-full py-2 text-xs text-primary hover:underline">
+            {showAll ? "Ver menos" : `Ver todas las rondas (${rounds.length})`}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
 
-function Finance({ management }: { management: ManagementState }) {
-  const ledger = management.player!.ledger;
-  const byRace = new Map<number, typeof ledger>();
-  for (const l of ledger) byRace.set(l.race, [...(byRace.get(l.race) ?? []), l]);
-  const income = ledger.filter((l) => l.amount > 0 && l.race > 0).reduce((a, l) => a + l.amount, 0);
-  const spend = ledger.filter((l) => l.amount < 0).reduce((a, l) => a + l.amount, 0);
+function Breakdown({
+  title, total, cats, totals, positive,
+}: { title: string; total: number; cats: LedgerCategory[]; totals: Map<string, number>; positive?: boolean }) {
+  const max = Math.max(...cats.map((c) => Math.abs(totals.get(c) ?? 0)), 0.01);
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <Stat icon={TrendingUp} label="Ingresos de la temporada" value={`+${income.toFixed(1)} M`} />
-        <Stat icon={TrendingDown} label="Gastos de la temporada" value={`${spend.toFixed(1)} M`} />
+    <div className="rounded-xl border border-border bg-card p-3 space-y-2">
+      <div className="flex justify-between items-baseline">
+        <span className="text-xs text-muted-foreground">{title}</span>
+        <span className={cn("font-racing", positive ? "text-green-400" : "text-red-400")}>
+          {total >= 0 ? "+" : ""}
+          {total.toFixed(1)} M
+        </span>
       </div>
-      <div className="rounded-xl border border-border overflow-hidden">
-        {[...byRace.entries()].reverse().map(([race, items]) => (
-          <div key={race} className="border-b border-border/40 last:border-0">
-            <div className="px-3 py-1.5 bg-muted/30 text-[11px] uppercase tracking-wider text-muted-foreground">
-              {race === 0 ? "Pretemporada" : `Ronda ${race}`}
+      {cats.map((c) => {
+        const v = totals.get(c) ?? 0;
+        return (
+          <div key={c} className="space-y-0.5">
+            <div className="flex justify-between text-xs">
+              <span>{CATEGORY_INFO[c].label}</span>
+              <span className="font-mono">{v.toFixed(1)} M</span>
             </div>
-            {items.map((l, i) => (
-              <div key={i} className="flex justify-between px-3 py-1 text-sm">
-                <span>{l.concept}</span>
-                <span className={cn("font-mono text-xs", l.amount >= 0 ? "text-green-400" : "text-red-400")}>
-                  {l.amount >= 0 ? "+" : ""}
-                  {l.amount.toFixed(2)} M
-                </span>
-              </div>
-            ))}
+            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+              <div
+                className={cn("h-full rounded-full", positive ? "bg-green-500/80" : "bg-red-500/70")}
+                style={{ width: `${(Math.abs(v) / max) * 100}%` }}
+              />
+            </div>
           </div>
-        ))}
+        );
+      })}
+    </div>
+  );
+}
+
+const TYPICAL = { points: 6, podiums: 0, wins: 0, pole: false, dnfs: 0.2 };
+
+function Sponsors({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
+  const p = management.player!;
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+      <div>
+        <h3 className="font-racing text-sm">Patrocinadores</h3>
+        <p className="text-[11px] text-muted-foreground">
+          1 principal y 2 secundarios. Cada contrato tiene un estilo distinto: pago fijo, bonos por resultado, prima de firma o
+          exigencias de rendimiento. Llegan ofertas nuevas cada 6 carreras o cuando termina un contrato.
+        </p>
       </div>
+
+      {(Object.keys(SLOT_INFO) as SponsorSlot[]).map((slot) => {
+        const signed = p.sponsors.filter((s) => s.slot === slot);
+        const offers = p.offers.filter((o) => o.slot === slot);
+        const free = SLOT_INFO[slot].count - signed.length;
+        return (
+          <div key={slot} className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wider text-muted-foreground">{SLOT_INFO[slot].label}</span>
+              <span className="text-[11px] text-muted-foreground">
+                {signed.length}/{SLOT_INFO[slot].count} ocupados
+              </span>
+            </div>
+            {signed.map((s) => (
+              <SponsorCard key={s.id} s={s} signed />
+            ))}
+            {free > 0 && (
+              <div className="grid md:grid-cols-2 gap-2">
+                {offers.map((o) => {
+                  const blocked = canSignSponsor(management, o.id);
+                  return <SponsorCard key={o.id} s={o} blocked={blocked} onSign={() => onSignSponsor(o.id)} />;
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function SponsorCard({ s, signed, blocked, onSign }: { s: SponsorDeal; signed?: boolean; blocked?: string | null; onSign?: () => void }) {
+  const bonuses = [
+    s.perPoint > 0 && `${s.perPoint.toFixed(2)} M por punto`,
+    s.perPodium > 0 && `${s.perPodium.toFixed(2)} M por podio`,
+    s.perWin > 0 && `${s.perWin.toFixed(2)} M por victoria`,
+    s.perPole > 0 && `${s.perPole.toFixed(2)} M por pole`,
+  ].filter(Boolean);
+  return (
+    <div className={cn("rounded-lg border p-3 space-y-2", signed ? "border-primary/50 bg-primary/5" : "border-border bg-background/40")}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-medium">{s.name}</div>
+          <div className="text-[11px] text-muted-foreground" title={STYLE_INFO[s.style].desc}>
+            {STYLE_INFO[s.style].label} · {STYLE_INFO[s.style].desc}
+          </div>
+        </div>
+        <div className="text-right shrink-0">
+          <div className="font-racing text-sm">{s.base.toFixed(2)} M</div>
+          <div className="text-[10px] text-muted-foreground">por carrera</div>
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-1.5 text-[11px]">
+        {s.signing > 0 && <span className="rounded bg-green-500/15 text-green-300 px-1.5 py-0.5">Prima firma +{s.signing.toFixed(1)} M</span>}
+        {bonuses.map((b) => (
+          <span key={String(b)} className="rounded bg-sky-500/15 text-sky-300 px-1.5 py-0.5">
+            {b}
+          </span>
+        ))}
+        {s.perDnf < 0 && <span className="rounded bg-red-500/15 text-red-300 px-1.5 py-0.5">Multa {s.perDnf.toFixed(2)} M por abandono</span>}
+        {s.minRank !== null && <span className="rounded bg-yellow-500/15 text-yellow-300 px-1.5 py-0.5">Requiere auto top {s.minRank}</span>}
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>
+          {signed ? `Quedan ${s.racesLeft} carrera${s.racesLeft === 1 ? "" : "s"} · cobrado ${s.earned.toFixed(1)} M` : `Contrato de ${s.duration} carreras`}
+        </span>
+        {!signed && <span>≈ {expectedPerRace(s, TYPICAL).toFixed(2)} M/carrera (estimado)</span>}
+      </div>
+      {!signed && (
+        <Button size="sm" className="w-full text-xs" variant={blocked ? "outline" : "default"} disabled={!!blocked} onClick={onSign}>
+          {blocked ?? "Firmar contrato"}
+        </Button>
+      )}
     </div>
   );
 }

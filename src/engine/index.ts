@@ -6,3 +6,4 @@ export * from "./qualifying";
 export * from "./championship";
 export { buildPlan, estimatePlanTime, normalisePlan, planLabel, recommendPlans, type PlanOption } from "./strategy";
 export * from "./management";
+export * from "./sponsors";

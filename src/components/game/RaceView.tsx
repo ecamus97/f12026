@@ -25,10 +25,10 @@ interface Props {
 
 // Time on screen per lap
 const SPEEDS = [
-  { label: "1x", ms: 6000 },
-  { label: "2x", ms: 3000 },
-  { label: "4x", ms: 1500 },
-  { label: "16x", ms: 350 },
+  { label: "1x", ms: 12000 },
+  { label: "2x", ms: 6000 },
+  { label: "4x", ms: 3000 },
+  { label: "16x", ms: 750 },
 ];
 
 export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Props) {
