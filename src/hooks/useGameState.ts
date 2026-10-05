@@ -70,7 +70,15 @@ function loadState(): GameState {
     // saves from before sponsors / development history existed
     if (state.management) {
       const m = state.management;
-      if (!m.history) m.history = [{ round: state.currentRaceIndex, dev: m.dev }];
+      // one snapshot per completed round; rounds played before the chart existed use the oldest known values
+      const hist = [...(m.history ?? [{ round: state.currentRaceIndex, dev: m.dev }])].sort((x, y) => x.round - y.round);
+      const filled = [];
+      for (let r = 0; r <= state.currentRaceIndex; r++) {
+        const exact = hist.find((h) => h.round === r);
+        const fallback = hist.find((h) => h.round >= r) ?? hist[hist.length - 1];
+        filled.push(exact ?? { round: r, dev: fallback.dev });
+      }
+      m.history = filled;
       if (m.player && !m.player.sponsors) {
         const fresh = initManagement(state.teamsData, state.playerTeamId, randomSeed());
         m.player.sponsors = [];

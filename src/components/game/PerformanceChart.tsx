@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { Team } from "@/data/f1Data";
+import { races2026, type Team } from "@/data/f1Data";
 import { AREA_INFO, carPace, type CarDev, type DevArea, type ManagementState } from "@/engine";
 import { cn } from "@/lib/utils";
 
@@ -29,15 +29,17 @@ export function PerformanceChart({ management, teams, playerTeamId, metric, onMe
   const [focus, setFocus] = useState<string | null>(null);
   const history = management.history ?? [];
 
-  const data = useMemo(
-    () =>
-      history.map((h) => {
-        const row: Record<string, number | string> = { label: h.round === 0 ? "Inicio" : `R${h.round}` };
-        for (const t of teams) if (h.dev[t.id]) row[t.id] = +value(h.dev[t.id], metric).toFixed(2);
-        return row;
-      }),
-    [history, teams, metric],
-  );
+  // the whole season is always on the x-axis; future rounds stay empty
+  const data = useMemo(() => {
+    const byRound = new Map(history.map((h) => [h.round, h]));
+    return Array.from({ length: races2026.length + 1 }, (_, r) => {
+      const row: Record<string, number | string> = { label: r === 0 ? "Inicio" : `R${r}` };
+      const h = byRound.get(r);
+      if (h) for (const t of teams) if (h.dev[t.id]) row[t.id] = +value(h.dev[t.id], metric).toFixed(2);
+      return row;
+    });
+  }, [history, teams, metric]);
+  const fewPoints = history.length < 4;
 
   const latest = history[history.length - 1];
   const ordered = useMemo(
@@ -71,18 +73,20 @@ export function PerformanceChart({ management, teams, playerTeamId, metric, onMe
         </div>
       </div>
 
-      {history.length < 2 ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">
-          El gráfico se completa a medida que avanzan las carreras. Por ahora solo hay datos de inicio de temporada.
-        </p>
-      ) : (
+      {history.length === 0 ? null : (
         <div className="h-[280px]">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
               <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="0" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} />
+              <XAxis
+                dataKey="label"
+                interval={2}
+                tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+                tickLine={false}
+                axisLine={false}
+              />
               <YAxis
-                domain={["dataMin - 1", "dataMax + 1"]}
+                domain={[(min: number) => Math.floor(min - 1), (max: number) => Math.ceil(max + 1)]}
                 tickFormatter={(v: number) => v.toFixed(0)}
                 tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
                 tickLine={false}
@@ -118,7 +122,7 @@ export function PerformanceChart({ management, teams, playerTeamId, metric, onMe
                     stroke={t.hex}
                     strokeWidth={hi ? 3 : 1.5}
                     strokeOpacity={hi ? 1 : 0.45}
-                    dot={false}
+                    dot={fewPoints ? { r: hi ? 4 : 2.5, strokeWidth: 0, fill: t.hex } : false}
                     activeDot={{ r: hi ? 5 : 3, strokeWidth: 2, stroke: "hsl(var(--card))" }}
                     isAnimationActive={false}
                   />
