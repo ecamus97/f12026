@@ -160,7 +160,14 @@ function SessionTable({
             <TeamStripe color={e.team.hex} />
             <span className="font-racing text-xs w-10">{e.driver.shortName}</span>
             <span className="text-xs text-muted-foreground flex-1 truncate">{e.driver.name}</span>
-            {r.runs.some((x) => x === 0) && <span className="text-[10px] text-orange-400">error</span>}
+            {r.runs.some((x) => x === 0) && (
+              <span
+                className="text-[10px] text-orange-400"
+                title={r.best ? "Cometió un error en uno de sus dos intentos; vale el tiempo del otro." : "Cometió errores en ambos intentos."}
+              >
+                {r.best ? "1 intento fallido" : "sin vuelta válida"}
+              </span>
+            )}
             <span className="font-mono text-xs w-20 text-right">{r.best ? formatLap(r.best) : "Sin tiempo"}</span>
             <span className="font-mono text-xs w-16 text-right text-muted-foreground">
               {i === 0 || !r.best ? "" : `+${(r.best - best).toFixed(3)}`}
