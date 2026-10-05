@@ -1,8 +1,7 @@
 name: Deploy to GitHub Pages
 
+# Manual only: the site is published from the gh-pages branch (npm run deploy:pages).
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:

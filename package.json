@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
+    "deploy:pages": "bash scripts/deploy-pages.sh",
     "calibrate": "CALIBRATE=1 vitest run src/engine/__tests__/calibrate.test.ts"
   },
   "dependencies": {

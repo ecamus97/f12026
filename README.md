@@ -33,6 +33,15 @@ npm test           # tests del motor
 npm run calibrate  # reporte estadístico (ganadores, abandonos, adelantamientos por circuito...)
 ```
 
+## Publicar en GitHub Pages
+
+```sh
+npm run deploy:pages      # compila y deja el sitio en la rama local gh-pages
+git push origin gh-pages  # publica en https://ecamus97.github.io/f12026/
+```
+
+(Settings → Pages → Source: *Deploy from a branch* → `gh-pages` / `root`.)
+
 Los trazados de los circuitos vienen de [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (licencia MIT).
 
 Stack: Vite + React + TypeScript + Tailwind + shadcn/ui. Proyecto sincronizado con Lovable vía GitHub.
