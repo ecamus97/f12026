@@ -2,10 +2,10 @@ import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Building2, FlaskConical, Wallet, Inbox, Hammer, TrendingUp, TrendingDown, Clock, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { Team } from "@/data/f1Data";
+import { races2026, type Team } from "@/data/f1Data";
 import {
   AREA_INFO, CATEGORY_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, SLOT_INFO, STYLE_INFO,
-  areaRanks, baseRaceBalance, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
+  areaRanks, baseRaceBalance, isInvestment, ledgerCategory, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
   expectedPerRace, facilityUpgradeCost, maxProjects, projectRaces, FACILITY_BUILD_RACES,
   type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot,
 } from "@/engine";
@@ -296,60 +296,135 @@ function RatingCard({
   );
 }
 
+type Group = "income" | "running" | "invest";
+
+const groupOf = (cat: LedgerCategory): Group | null =>
+  cat === "initial" ? null : isInvestment(cat) ? "invest" : CATEGORY_INFO[cat].kind === "income" ? "income" : "running";
+
+const GROUP_LABEL: Record<Group, string> = {
+  income: "Ingresos",
+  running: "Gastos de carrera",
+  invest: "Inversiones (I+D e instalaciones)",
+};
+
+const fmt = (x: number, sign = true) => `${sign && x > 0 ? "+" : ""}${x.toFixed(1)} M`;
+
 function Finance({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
   const p = management.player!;
-  const ledger = p.ledger;
+  const ledger = p.ledger.map((l) => ({ ...l, cat: ledgerCategory(l) }));
+  const [open, setOpen] = useState<number | null>(null);
   const [showAll, setShowAll] = useState(false);
 
-  // season totals by category
-  const totals = new Map<LedgerCategory | "other", number>();
-  for (const l of ledger) totals.set(l.category ?? "other", (totals.get(l.category ?? "other") ?? 0) + l.amount);
-  const incomeCats = (Object.keys(CATEGORY_INFO) as LedgerCategory[]).filter((c) => CATEGORY_INFO[c].kind === "income" && totals.has(c));
-  const expenseCats = (Object.keys(CATEGORY_INFO) as LedgerCategory[]).filter((c) => CATEGORY_INFO[c].kind === "expense" && totals.has(c));
-  const income = incomeCats.reduce((a, c) => a + (totals.get(c) ?? 0), 0);
-  const spend = expenseCats.reduce((a, c) => a + (totals.get(c) ?? 0), 0);
+  const initial = ledger.filter((l) => l.cat === "initial").reduce((a, l) => a + l.amount, 0);
+  const byGroup = (g: Group) => ledger.filter((l) => groupOf(l.cat) === g);
+  const sum = (ls: { amount: number }[]) => ls.reduce((a, l) => a + l.amount, 0);
+  const catTotals = (g: Group) => {
+    const m = new Map<LedgerCategory, number>();
+    for (const l of byGroup(g)) m.set(l.cat, (m.get(l.cat) ?? 0) + l.amount);
+    return [...m.entries()].sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+  };
 
-  const byRace = new Map<number, typeof ledger>();
-  for (const l of ledger) byRace.set(l.race, [...(byRace.get(l.race) ?? []), l]);
-  const rounds = [...byRace.entries()].reverse();
+  // per-round table with running balance
+  const rounds = [...new Set(ledger.map((l) => l.race))].sort((a, b) => a - b);
+  let balance = 0;
+  const rows = rounds.map((r) => {
+    const items = ledger.filter((l) => l.race === r);
+    const inc = sum(items.filter((l) => groupOf(l.cat) === "income"));
+    const run = sum(items.filter((l) => groupOf(l.cat) === "running"));
+    const inv = sum(items.filter((l) => groupOf(l.cat) === "invest"));
+    const init = sum(items.filter((l) => l.cat === "initial"));
+    balance += init + inc + run + inv;
+    return { r, items, inc, run, inv, net: inc + run + inv, balance };
+  });
+  const shown = showAll ? [...rows].reverse() : [...rows].reverse().slice(0, 6);
 
   return (
     <div className="space-y-4">
-      <Sponsors management={management} onSignSponsor={onSignSponsor} />
-
-      <div className="grid md:grid-cols-2 gap-3">
-        <Breakdown title="Ingresos de la temporada" total={income} cats={incomeCats} totals={totals} positive />
-        <Breakdown title="Gastos de la temporada" total={spend} cats={expenseCats} totals={totals} />
-      </div>
-
-      <div className="rounded-xl border border-border overflow-hidden">
-        <div className="px-3 py-2 text-xs font-racing border-b border-border">Movimientos por ronda</div>
-        {(showAll ? rounds : rounds.slice(0, 4)).map(([race, items]) => {
-          const net = items.reduce((a, l) => a + l.amount, 0);
-          return (
-            <div key={race} className="border-b border-border/40 last:border-0">
-              <div className="flex justify-between px-3 py-1.5 bg-muted/30 text-[11px] uppercase tracking-wider text-muted-foreground">
-                <span>{race === 0 ? "Pretemporada" : `Ronda ${race}`}</span>
-                <span className={net >= 0 ? "text-green-400" : "text-red-400"}>
-                  {net >= 0 ? "+" : ""}
-                  {net.toFixed(2)} M
-                </span>
-              </div>
-              {items.map((l, i) => (
-                <div key={i} className="flex justify-between px-3 py-1 text-sm">
-                  <span>{l.concept}</span>
-                  <span className={cn("font-mono text-xs", l.amount >= 0 ? "text-green-400" : "text-red-400")}>
-                    {l.amount >= 0 ? "+" : ""}
-                    {l.amount.toFixed(2)} M
-                  </span>
+      {/* Statement: how the available budget is reached */}
+      <div className="rounded-xl border border-border bg-card p-4 space-y-2">
+        <h3 className="font-racing text-sm">Estado de cuenta de la temporada</h3>
+        <StatementLine label="Presupuesto inicial" value={initial} strong={false} sign={false} />
+        {(["income", "running", "invest"] as Group[]).map((g) => (
+          <details key={g} className="group">
+            <summary className="list-none cursor-pointer">
+              <StatementLine label={`${g === "income" ? "+" : "−"} ${GROUP_LABEL[g]}`} value={sum(byGroup(g))} expandable />
+            </summary>
+            <div className="ml-4 mt-1 mb-2 space-y-0.5">
+              {catTotals(g).length === 0 && <div className="text-xs text-muted-foreground">Sin movimientos todavía</div>}
+              {catTotals(g).map(([cat, v]) => (
+                <div key={cat} className="flex justify-between text-xs text-muted-foreground">
+                  <span>{CATEGORY_INFO[cat].label}</span>
+                  <span className="font-mono">{fmt(v)}</span>
                 </div>
               ))}
             </div>
-          );
-        })}
-        {rounds.length > 4 && (
-          <button onClick={() => setShowAll((v) => !v)} className="w-full py-2 text-xs text-primary hover:underline">
-            {showAll ? "Ver menos" : `Ver todas las rondas (${rounds.length})`}
+          </details>
+        ))}
+        <div className="border-t border-border pt-2 flex justify-between items-baseline">
+          <span className="font-medium">= Presupuesto disponible</span>
+          <span className={cn("font-racing text-lg", p.budget < 0 ? "text-destructive" : "text-foreground")}>
+            US$ {p.budget.toFixed(1)} M
+          </span>
+        </div>
+      </div>
+
+      <Sponsors management={management} onSignSponsor={onSignSponsor} />
+
+      {/* Round by round */}
+      <div className="rounded-xl border border-border overflow-hidden">
+        <div className="px-3 py-2 text-xs font-racing border-b border-border">Resumen por ronda</div>
+        <div className="grid grid-cols-[1fr_repeat(5,minmax(0,80px))] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground bg-muted/30">
+          <span>Ronda</span>
+          <span className="text-right">Ingresos</span>
+          <span className="text-right">Carrera</span>
+          <span className="text-right">Inversión</span>
+          <span className="text-right">Neto</span>
+          <span className="text-right">Saldo</span>
+        </div>
+        {shown.map((row) => (
+          <div key={row.r} className="border-t border-border/40">
+            <button
+              onClick={() => setOpen(open === row.r ? null : row.r)}
+              className="w-full grid grid-cols-[1fr_repeat(5,minmax(0,80px))] gap-2 px-3 py-2 text-sm hover:bg-muted/20 text-left"
+            >
+              <span>
+                {open === row.r ? "▾" : "▸"} {row.r === 0 ? "Pretemporada" : `Ronda ${row.r} · ${races2026[row.r - 1]?.flag ?? ""}`}
+              </span>
+              <span className="text-right font-mono text-xs text-green-400">{row.inc ? fmt(row.inc) : "—"}</span>
+              <span className="text-right font-mono text-xs text-red-400">{row.run ? fmt(row.run) : "—"}</span>
+              <span className="text-right font-mono text-xs text-red-400">{row.inv ? fmt(row.inv) : "—"}</span>
+              <span className={cn("text-right font-mono text-xs", row.net >= 0 ? "text-green-400" : "text-red-400")}>{fmt(row.net)}</span>
+              <span className="text-right font-mono text-xs">{row.balance.toFixed(1)}</span>
+            </button>
+            {open === row.r && (
+              <div className="px-6 pb-3 space-y-2">
+                {(["income", "running", "invest"] as Group[]).map((g) => {
+                  const items = row.items.filter((l) => groupOf(l.cat) === g).sort((a, b) => b.amount - a.amount);
+                  if (!items.length) return null;
+                  return (
+                    <div key={g}>
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{GROUP_LABEL[g]}</div>
+                      {items.map((l, i) => (
+                        <div key={i} className="flex justify-between text-xs py-0.5">
+                          <span>{l.concept}</span>
+                          <span className={cn("font-mono", l.amount >= 0 ? "text-green-400" : "text-red-400")}>{fmt(l.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+                {row.r > 0 && row.inv !== 0 && (
+                  <p className="text-[10px] text-muted-foreground">
+                    Las inversiones de esta fila se hicieron después de la ronda {row.r}, antes de la siguiente carrera.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+        {rows.length > 6 && (
+          <button onClick={() => setShowAll((v) => !v)} className="w-full py-2 text-xs text-primary hover:underline border-t border-border/40">
+            {showAll ? "Ver menos" : `Ver todas las rondas (${rows.length})`}
           </button>
         )}
       </div>
@@ -357,36 +432,17 @@ function Finance({ management, onSignSponsor }: { management: ManagementState; o
   );
 }
 
-function Breakdown({
-  title, total, cats, totals, positive,
-}: { title: string; total: number; cats: LedgerCategory[]; totals: Map<string, number>; positive?: boolean }) {
-  const max = Math.max(...cats.map((c) => Math.abs(totals.get(c) ?? 0)), 0.01);
+function StatementLine({
+  label, value, strong, sign = true, expandable,
+}: { label: string; value: number; strong?: boolean; sign?: boolean; expandable?: boolean }) {
   return (
-    <div className="rounded-xl border border-border bg-card p-3 space-y-2">
-      <div className="flex justify-between items-baseline">
-        <span className="text-xs text-muted-foreground">{title}</span>
-        <span className={cn("font-racing", positive ? "text-green-400" : "text-red-400")}>
-          {total >= 0 ? "+" : ""}
-          {total.toFixed(1)} M
-        </span>
-      </div>
-      {cats.map((c) => {
-        const v = totals.get(c) ?? 0;
-        return (
-          <div key={c} className="space-y-0.5">
-            <div className="flex justify-between text-xs">
-              <span>{CATEGORY_INFO[c].label}</span>
-              <span className="font-mono">{v.toFixed(1)} M</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-              <div
-                className={cn("h-full rounded-full", positive ? "bg-green-500/80" : "bg-red-500/70")}
-                style={{ width: `${(Math.abs(v) / max) * 100}%` }}
-              />
-            </div>
-          </div>
-        );
-      })}
+    <div className="flex justify-between items-baseline text-sm">
+      <span className={cn(strong && "font-medium")}>
+        {label} {expandable && <span className="text-[10px] text-muted-foreground group-open:hidden">(ver detalle)</span>}
+      </span>
+      <span className={cn("font-mono", !sign ? "" : value >= 0 ? "text-green-400" : "text-red-400")}>
+        {sign ? fmt(value) : `${value.toFixed(1)} M`}
+      </span>
     </div>
   );
 }

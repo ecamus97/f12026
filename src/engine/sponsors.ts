@@ -59,8 +59,10 @@ export function generateOffers(
   const styles: SponsorStyle[] = ["estable", "rendimiento", "firma", "premium"];
   const out: SponsorDeal[] = [];
   let uid = opts.uidStart;
+  // every batch shows a variety of styles (shuffled, then cycled)
+  const order = [...styles].sort(() => rng.next() - 0.5);
   for (let i = 0; i < count; i++) {
-    const style = styles[(i + rng.int(0, 3)) % styles.length];
+    const style = order[i % order.length];
     const pool = NAMES.filter((n) => !usedNames.has(n));
     const name = pool.length ? rng.pick(pool) : `Socio ${uid}`;
     usedNames.add(name);

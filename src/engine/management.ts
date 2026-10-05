@@ -73,7 +73,7 @@ export interface FacilityWork {
 }
 
 export type LedgerCategory =
-  | "initial" | "tv" | "sponsor" | "prize" | "logistics" | "staff" | "parts" | "repairs" | "rnd" | "facilities";
+  | "initial" | "tv" | "sponsor" | "prize" | "logistics" | "staff" | "parts" | "operations" | "repairs" | "rnd" | "facilities";
 
 export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "income" | "expense" }> = {
   initial: { label: "Presupuesto inicial", kind: "income" },
@@ -83,10 +83,28 @@ export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "incom
   logistics: { label: "Logística y viajes", kind: "expense" },
   staff: { label: "Personal de carrera", kind: "expense" },
   parts: { label: "Componentes y neumáticos", kind: "expense" },
+  operations: { label: "Operación del fin de semana", kind: "expense" },
   repairs: { label: "Reparaciones", kind: "expense" },
   rnd: { label: "Investigación y desarrollo", kind: "expense" },
   facilities: { label: "Instalaciones", kind: "expense" },
 };
+
+/** Category of a ledger line (older saves stored lines without one). */
+export function ledgerCategory(l: LedgerEntry): LedgerCategory {
+  if (l.category) return l.category;
+  const c = l.concept.toLowerCase();
+  if (c.startsWith("presupuesto")) return "initial";
+  if (c.startsWith("i+d")) return "rnd";
+  if (c.startsWith("obra")) return "facilities";
+  if (c.startsWith("premio")) return "prize";
+  if (c.startsWith("reparación")) return "repairs";
+  if (c.startsWith("operación")) return "operations";
+  if (c.startsWith("derechos")) return "tv";
+  return l.amount >= 0 ? "sponsor" : "operations";
+}
+
+/** Investments are decisions taken between races; the rest happens on the race weekend. */
+export const isInvestment = (cat: LedgerCategory) => cat === "rnd" || cat === "facilities";
 
 export interface LedgerEntry {
   race: number; // round number (1-24), 0 = pre-season
