@@ -37,12 +37,11 @@ npm run calibrate  # reporte estadístico (ganadores, abandonos, adelantamientos
 
 ## Publicar en GitHub Pages
 
-```sh
-npm run deploy:pages      # compila y deja el sitio en la rama local gh-pages
-git push origin gh-pages  # publica en https://ecamus97.github.io/f12026/
-```
+Cada push a `main` compila, corre los tests y publica en https://ecamus97.github.io/f12026/ vía GitHub Actions
+(Settings → Pages → Source: *GitHub Actions*).
 
-(Settings → Pages → Source: *Deploy from a branch* → `gh-pages` / `root`.)
+Alternativa manual si Actions no está disponible: `npm run deploy:pages` y `git push origin gh-pages`
+(Source: *Deploy from a branch* → `gh-pages`).
 
 Los trazados de los circuitos vienen de [bacinger/f1-circuits](https://github.com/bacinger/f1-circuits) (licencia MIT).
 
