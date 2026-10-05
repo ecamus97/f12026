@@ -120,6 +120,8 @@ export function simulateLap(prev: RaceState): RaceState {
 
   // previous intervals for dirty air
   const prevTotals = running.map((c) => c.total);
+  const startTotal = new Map(running.map((c) => [c.id, c.total]));
+  const startRank = new Map(running.map((c, i) => [c.id, i]));
 
   let newSafetyCar = false;
 
@@ -193,34 +195,12 @@ export function simulateLap(prev: RaceState): RaceState {
       sectors = n.map((x) => (time - mistakeLoss) / 3 + x - mean);
       if (mistakeLoss) sectors[rng.int(0, 2)] += mistakeLoss;
     }
-    car.lastSectors = sectors;
-    if (!scLap && lap > 1) {
-      const best = car.bestSectors ?? [0, 0, 0];
-      state.bestSectors ??= [null, null, null];
-      sectors.forEach((t, k) => {
-        if (!best[k] || t < best[k]) best[k] = t;
-        const overall = state.bestSectors![k];
-        if (!overall || t < overall.time) state.bestSectors![k] = { time: t, driverId: car.id };
-      });
-      car.bestSectors = best;
-    }
-    if (!scLap && lap > 1) {
-      if (car.bestLap === 0 || time < car.bestLap) car.bestLap = time;
-      if (!state.fastest || time < state.fastest.time) {
-        const changedHands = state.fastest?.driverId !== car.id;
-        state.fastest = { driverId: car.id, time, lap };
-        if (lap > 3 && changedHands) events.push({ lap, type: "fastest", text: `Vuelta rápida de ${name(car)}: ${formatLap(time)}`, drivers: [car.id] });
-      }
-    }
+    car.lastSectors = sectors; // raw split; made consistent with the final order below
 
     // --- Pit stop at end of lap ---
     if (lap < state.totalLaps) {
       const call = car.pitRequest ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
-      if (call) {
-        const before = car.total;
-        doPitStop(car, call, state, rng, events, lap);
-        car.lastSectors![2] += car.total - before; // in-lap: pit lane time shows in sector 3
-      }
+      if (call) doPitStop(car, call, state, rng, events, lap);
     }
   });
 
@@ -303,6 +283,50 @@ export function simulateLap(prev: RaceState): RaceState {
       });
     }
   }
+
+  // --- Lap & sector times consistent with what happened on track ---
+  // Each car's real lap time is the time it actually spent (incl. being held up,
+  // battles and the pit lane). Sector crossing times keep a car that stayed behind
+  // the car in front behind it at every sector line, so the timing screen, the live
+  // order and the gaps always agree.
+  const cross = new Map<string, [number, number]>();
+  order.forEach((car, i) => {
+    const from = startTotal.get(car.id)!;
+    const to = car.total;
+    const raw = car.lastSectors ?? [1, 1, 1];
+    const sum = raw[0] + raw[1] + raw[2] || 1;
+    let c1 = from + ((to - from) * raw[0]) / sum;
+    let c2 = from + ((to - from) * (raw[0] + raw[1])) / sum;
+    const prev = order[i - 1];
+    if (prev && startRank.get(car.id)! > startRank.get(prev.id)!) {
+      const [p1, p2] = cross.get(prev.id)!;
+      c1 = Math.max(c1, p1 + 0.1);
+      c2 = Math.max(c2, p2 + 0.1);
+    }
+    c2 = Math.min(Math.max(c2, c1 + 0.1), to - 0.05);
+    c1 = Math.min(c1, c2 - 0.05);
+    cross.set(car.id, [c1, c2]);
+    car.lastSectors = [c1 - from, c2 - c1, to - c2];
+    car.lastLap = to - from;
+
+    // personal / overall bests only from clean laps (no SC, no pit lane, not the start)
+    if (scLap || lap === 1 || car.pittedThisLap) return;
+    const best = car.bestSectors ?? [0, 0, 0];
+    state.bestSectors ??= [null, null, null];
+    car.lastSectors.forEach((t, k) => {
+      if (!best[k] || t < best[k]) best[k] = t;
+      const overall = state.bestSectors![k];
+      if (!overall || t < overall.time) state.bestSectors![k] = { time: t, driverId: car.id };
+    });
+    car.bestSectors = best;
+    const time = car.lastLap;
+    if (car.bestLap === 0 || time < car.bestLap) car.bestLap = time;
+    if (!state.fastest || time < state.fastest.time) {
+      const changedHands = state.fastest?.driverId !== car.id;
+      state.fastest = { driverId: car.id, time, lap };
+      if (lap > 3 && changedHands) events.push({ lap, type: "fastest", text: `Vuelta rápida de ${name(car)}: ${formatLap(time)}`, drivers: [car.id] });
+    }
+  });
 
   const newlyRetired = running.filter((c) => c.status === "dnf");
   state.cars = [...order, ...newlyRetired, ...retired];

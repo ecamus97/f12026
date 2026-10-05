@@ -28,7 +28,7 @@ export function lapProgress(target: RaceState, anim: LapAnimation | null, now: n
   for (const c of running) {
     const to = c.total;
     const from = anim?.from[c.id] ?? to - (c.lastLap || 1);
-    out[c.id] = carFraction(from, to, clock);
+    out[c.id] = sectorFraction(from, to, c.lastSectors, clock);
   }
   return out;
 }
@@ -73,6 +73,21 @@ function pointAt(g: Geometry, frac: number): [number, number] {
   const a = g.points[lo];
   const b = g.points[hi];
   return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+}
+
+/**
+ * Lap fraction at race clock `t` following the car's own sector times: it reaches
+ * each sector line (1/3, 2/3 of the lap) exactly when its sector time says so.
+ */
+function sectorFraction(from: number, to: number, sectors: number[] | undefined, t: number) {
+  if (!sectors || sectors.length !== 3) return carFraction(from, to, t);
+  const [s1, s2, s3] = sectors.map((x) => Math.max(0.05, x));
+  const c1 = from + s1;
+  const c2 = c1 + s2;
+  if (t <= from) return (t - from) / (3 * s1); // still finishing the previous lap
+  if (t <= c1) return (t - from) / (3 * s1);
+  if (t <= c2) return 1 / 3 + (t - c1) / (3 * s2);
+  return 2 / 3 + (t - c2) / (3 * s3);
 }
 
 /** Fraction of the lap each car has covered at race clock `t`. */

@@ -127,17 +127,32 @@ describe("strategy planner", () => {
 });
 
 describe("sectors", () => {
-  it("three sectors add up to the lap (plus pit lane time on in-laps)", () => {
-    let s = createRace(race, entriesByGrid(runQualifying(race, allEntries(), 8).grid), 8);
-    for (let i = 0; i < 30; i++) {
-      const prev = s;
-      s = simulateLap(s);
-      for (const c of s.cars.filter((x) => x.status === "running")) {
-        const sum = c.lastSectors!.reduce((a, b) => a + b, 0);
-        if (!c.pittedThisLap) expect(sum).toBeCloseTo(c.lastLap, 6);
-        else expect(sum).toBeGreaterThan(c.lastLap + 15);
+  it("lap and sector times match the time actually spent and the order on track", () => {
+    for (const seed of [8, 9, 10, 11]) {
+      let s = createRace(race, entriesByGrid(runQualifying(race, allEntries(), seed).grid), seed);
+      for (let i = 0; i < 40; i++) {
+        const prev = s;
+        const before = new Map(prev.cars.map((c) => [c.id, c.total]));
+        const startRank = new Map(prev.cars.filter((c) => c.status === "running").map((c, k) => [c.id, k]));
+        s = simulateLap(s);
+        const running = s.cars.filter((x) => x.status === "running");
+        const crossing = new Map<string, number[]>();
+        for (const c of running) {
+          const sum = c.lastSectors!.reduce((a, b) => a + b, 0);
+          expect(sum).toBeCloseTo(c.lastLap, 6);
+          expect(c.lastLap).toBeCloseTo(c.total - before.get(c.id)!, 6);
+          const from = before.get(c.id)!;
+          crossing.set(c.id, [from + c.lastSectors![0], from + c.lastSectors![0] + c.lastSectors![1]]);
+        }
+        // a car that started behind and finished behind its predecessor was behind at every sector line
+        for (let k = 1; k < running.length; k++) {
+          const a = running[k - 1], b = running[k];
+          if (startRank.get(b.id)! > startRank.get(a.id)!) {
+            expect(crossing.get(b.id)![0]).toBeGreaterThan(crossing.get(a.id)![0]);
+            expect(crossing.get(b.id)![1]).toBeGreaterThan(crossing.get(a.id)![1]);
+          }
+        }
       }
-      if (prev.lap > 1) expect(s.bestSectors?.every((b) => b && b.time > 0)).toBe(true);
     }
   });
 });
