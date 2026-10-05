@@ -39,6 +39,7 @@ export interface CarState {
   stops: number;
   mode: DriverMode;
   pitRequest: Compound | null; // manual pit call (manager)
+  controlled?: boolean; // player car: only planned/manual stops, no AI improvisation
   status: "running" | "dnf";
   dnfReason?: string;
   dnfLap?: number;

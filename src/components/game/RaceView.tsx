@@ -6,7 +6,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { Race } from "@/data/f1Data";
 import {
-  COMPOUNDS, MODES, formatLap, gapToLeader, requestPit, setMode, simulateLap, simulateToEnd, tyreLife,
+  COMPOUNDS, MODES, editNextStop, formatLap, gapToLeader, requestPit, setMode, setStartTyre, simulateLap, simulateToEnd, tyreLife,
   type CarState, type Compound, type DriverMode, type RaceEvent, type RaceState,
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
@@ -146,8 +146,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
                 car={car}
                 pos={state.cars.indexOf(car) + 1}
                 state={state}
-                onMode={(m) => onUpdate(setMode(state, car.id, m))}
-                onPit={(c) => onUpdate(requestPit(state, car.id, c))}
+                onUpdate={onUpdate}
               />
             ))}
           </div>
@@ -257,23 +256,26 @@ function TowerRow({ car, pos, gap, mine, fastest, lap }: { car: CarState; pos: n
 }
 
 function PitWallCard({
-  car, pos, state, onMode, onPit,
+  car, pos, state, onUpdate,
 }: {
   car: CarState;
   pos: number;
   state: RaceState;
-  onMode: (m: DriverMode) => void;
-  onPit: (c: Compound | null) => void;
+  onUpdate: (s: RaceState) => void;
 }) {
   const dnf = car.status === "dnf";
+  const preRace = state.lap === 0;
   const life = tyreLife(car.compound, state.track, car.entry.driver.tyreMgmt);
   const wear = Math.min(1.3, car.tyreAge / life);
   const wearColor = wear < 0.6 ? "bg-green-500" : wear < 0.9 ? "bg-yellow-400" : "bg-red-500";
-  const nextStop = car.plan.length > 1 ? car.plan[0].untilLap : null;
-  const needsSecondCompound = car.usedCompounds.length < 2;
+  const next = car.plan.length > 1 ? { lap: car.plan[0].untilLap, compound: car.plan[1].compound } : null;
+  const compounds = Object.keys(COMPOUNDS) as Compound[];
+  const sc = state.safetyCar.active;
+  const plannedCompounds = new Set([...car.usedCompounds, ...car.plan.map((s) => s.compound)]);
+  const ruleRisk = plannedCompounds.size < 2;
 
   return (
-    <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-2">
+    <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-3">
       <div className="flex items-center gap-2">
         <TeamStripe color={car.entry.team.hex} className="h-8 w-1.5" />
         <div className="flex-1">
@@ -281,33 +283,95 @@ function PitWallCard({
             {dnf ? "—" : `P${pos}`} · {car.entry.driver.name}
           </div>
           <div className="text-[11px] text-muted-foreground">
-            {dnf
-              ? `Abandono: ${car.dnfReason}`
-              : nextStop
-                ? `Parada planificada: vuelta ${nextStop} → ${COMPOUNDS[car.plan[1].compound].name}`
-                : "Sin más paradas planificadas"}
+            {dnf ? `Abandono: ${car.dnfReason}` : preRace ? `Sale desde P${car.grid}` : `${car.stops} parada${car.stops === 1 ? "" : "s"}`}
           </div>
         </div>
         {!dnf && <TyreBadge compound={car.compound} />}
       </div>
 
-      {!dnf && (
-        <>
-          <div className="space-y-1">
-            <div className="flex justify-between text-[11px] text-muted-foreground">
-              <span>Desgaste neumático</span>
-              <span>{car.tyreAge} v · {Math.round(wear * 100)}%</span>
-            </div>
-            <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-              <div className={cn("h-full", wearColor)} style={{ width: `${Math.min(100, wear * 100)}%` }} />
-            </div>
+      {!dnf && preRace && (
+        <div className="space-y-1">
+          <div className="text-[11px] text-muted-foreground">Neumático de salida</div>
+          <div className="grid grid-cols-3 gap-1">
+            {compounds.map((c) => (
+              <button
+                key={c}
+                onClick={() => onUpdate(setStartTyre(state, car.id, c))}
+                className={cn(
+                  "flex items-center justify-center gap-1.5 rounded-md border py-1.5 text-[11px]",
+                  car.compound === c ? "border-primary bg-primary/15" : "border-border hover:bg-muted",
+                )}
+              >
+                <TyreBadge compound={c} /> {COMPOUNDS[c].name}
+              </button>
+            ))}
           </div>
+        </div>
+      )}
 
+      {!dnf && !preRace && (
+        <div className="space-y-1">
+          <div className="flex justify-between text-[11px] text-muted-foreground">
+            <span>Desgaste neumático</span>
+            <span>{car.tyreAge} v · {Math.round(wear * 100)}%</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+            <div className={cn("h-full", wearColor)} style={{ width: `${Math.min(100, wear * 100)}%` }} />
+          </div>
+        </div>
+      )}
+
+      {!dnf && (
+        <div className="rounded-md border border-border/60 p-2 space-y-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-muted-foreground">Próxima parada planificada</span>
+            {next ? (
+              <button className="text-muted-foreground hover:text-destructive" onClick={() => onUpdate(editNextStop(state, car.id, { remove: true }))}>
+                quitar
+              </button>
+            ) : (
+              <button className="text-primary hover:underline" onClick={() => onUpdate(editNextStop(state, car.id, { add: true }))}>
+                + agregar parada
+              </button>
+            )}
+          </div>
+          {next ? (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-md border border-border">
+                <button className="px-2 py-1 hover:bg-muted" onClick={() => onUpdate(editNextStop(state, car.id, { lap: next.lap - 1 }))}>
+                  −
+                </button>
+                <span className="px-1 text-xs font-mono tabular-nums w-14 text-center">V{next.lap}</span>
+                <button className="px-2 py-1 hover:bg-muted" onClick={() => onUpdate(editNextStop(state, car.id, { lap: next.lap + 1 }))}>
+                  +
+                </button>
+              </div>
+              <span className="text-[11px] text-muted-foreground">→</span>
+              {compounds.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => onUpdate(editNextStop(state, car.id, { compound: c }))}
+                  className={cn("rounded-full p-0.5", next.compound === c ? "ring-2 ring-primary" : "opacity-50 hover:opacity-100")}
+                  title={COMPOUNDS[c].name}
+                >
+                  <TyreBadge compound={c} />
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="text-[11px] text-muted-foreground">Sin más paradas: sigue con este neumático hasta el final.</div>
+          )}
+          {ruleRisk && <div className="text-[10px] text-orange-400">Ojo: debe usar al menos 2 compuestos o recibe 30s de penalización.</div>}
+        </div>
+      )}
+
+      {!dnf && !preRace && (
+        <>
           <div className="grid grid-cols-3 gap-1">
             {(Object.keys(MODES) as DriverMode[]).map((m) => (
               <button
                 key={m}
-                onClick={() => onMode(m)}
+                onClick={() => onUpdate(setMode(state, car.id, m))}
                 className={cn(
                   "rounded-md border py-1.5 text-[11px] font-racing",
                   car.mode === m ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted",
@@ -321,22 +385,19 @@ function PitWallCard({
           {car.pitRequest ? (
             <div className="flex items-center gap-2 rounded-md bg-orange-500/15 border border-orange-500/40 px-2 py-1.5 text-xs">
               <Wrench className="w-3.5 h-3.5 text-orange-400" />
-              <span className="flex-1">Box al final de la vuelta → {COMPOUNDS[car.pitRequest].name}</span>
-              <button onClick={() => onPit(null)} title="Cancelar">
+              <span className="flex-1">Box al final de esta vuelta → {COMPOUNDS[car.pitRequest].name}</span>
+              <button onClick={() => onUpdate(requestPit(state, car.id, null))} title="Cancelar">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-1">
-              <span className="text-[11px] text-muted-foreground mr-1">Box ahora:</span>
-              {(Object.keys(COMPOUNDS) as Compound[]).map((c) => (
-                <button key={c} onClick={() => onPit(c)} className="hover:scale-110 transition-transform" title={`Parar y poner ${COMPOUNDS[c].name}`}>
+            <div className={cn("flex items-center gap-1 rounded-md px-1", sc && "bg-yellow-400/10 py-1")}>
+              <span className="text-[11px] text-muted-foreground mr-1">{sc ? "Box ahora (barato con SC):" : "Box ahora:"}</span>
+              {compounds.map((c) => (
+                <button key={c} onClick={() => onUpdate(requestPit(state, car.id, c))} className="hover:scale-110 transition-transform" title={`Parar y poner ${COMPOUNDS[c].name}`}>
                   <TyreBadge compound={c} />
                 </button>
               ))}
-              {needsSecondCompound && (
-                <span className="text-[10px] text-muted-foreground ml-auto">debe usar 2 compuestos</span>
-              )}
             </div>
           )}
         </>

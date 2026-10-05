@@ -57,6 +57,8 @@ export function aiPitDecision(car: CarState, lap: number, totalLaps: number, tra
 
   // Planned stop
   if (next && lap >= current.untilLap) return next.compound;
+  // Player cars only follow their (editable) plan or manual calls
+  if (car.controlled) return null;
 
   // Cheap stop under safety car if a stop is coming anyway or tyres are worn
   if (scActive && lapsLeft > 6) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify, createRace, runQualifying, simulateLap, simulateToEnd, computeStandings } from "..";
+import { classify, createRace, editNextStop, runQualifying, setStartTyre, simulateLap, simulateToEnd, computeStandings } from "..";
 import { teams, races2026 } from "@/data/f1Data";
 import { allEntries, entriesByGrid } from "./helpers";
 
@@ -59,5 +59,41 @@ describe("race", () => {
     expect(s.drivers[0].driverId).toBe(rows[0].driverId);
     expect(s.drivers[0].points).toBe(25);
     expect(s.teams.reduce((a, t) => a + t.points, 0)).toBe(rows.reduce((a, r) => a + r.points, 0));
+  });
+});
+
+describe("manager controls", () => {
+  const grid = () => entriesByGrid(runQualifying(race, allEntries(), 11).grid);
+
+  it("player cars only stop when planned or requested", () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      let s = createRace(race, grid(), seed, undefined, "ferrari");
+      // remove every planned stop for Ferrari: they must never pit
+      s.cars.filter((c) => c.controlled).forEach((c) => {
+        s = editNextStop(s, c.id, { remove: true });
+        s = editNextStop(s, c.id, { remove: true });
+      });
+      const end = simulateToEnd(s);
+      end.cars.filter((c) => c.controlled).forEach((c) => expect(c.stops).toBe(0));
+    }
+  });
+
+  it("setStartTyre changes the starting compound and keeps two compounds in the plan", () => {
+    let s = createRace(race, grid(), 3, undefined, "mclaren");
+    const id = s.cars.find((c) => c.controlled)!.id;
+    s = setStartTyre(s, id, "H");
+    const car = s.cars.find((c) => c.id === id)!;
+    expect(car.compound).toBe("H");
+    expect(new Set(car.plan.map((p) => p.compound)).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("editNextStop moves the stop lap within bounds", () => {
+    let s = createRace(race, grid(), 4, undefined, "mclaren");
+    const id = s.cars.find((c) => c.controlled)!.id;
+    s = editNextStop(s, id, { remove: true });
+    s = editNextStop(s, id, { remove: true });
+    s = editNextStop(s, id, { add: true });
+    s = editNextStop(s, id, { lap: 999 });
+    expect(s.cars.find((c) => c.id === id)!.plan[0].untilLap).toBe(race.track.laps - 1);
   });
 });

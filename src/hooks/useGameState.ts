@@ -114,7 +114,7 @@ export function useGameState() {
       const race = races2026[w.raceIndex];
       const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
       const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
-      return { ...s, weekend: { ...w, race: createRace(race, grid, randomSeed(), s.simConfig) } };
+      return { ...s, weekend: { ...w, race: createRace(race, grid, randomSeed(), s.simConfig, s.playerTeamId) } };
     });
   }, []);
 

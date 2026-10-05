@@ -9,7 +9,13 @@ import { advancePlan, aiPitDecision, buildPlan } from "./strategy";
 
 const clone = <T,>(x: T): T => structuredClone(x);
 
-export function createRace(race: Race, grid: Entry[], seed: number, config: SimConfig = DEFAULT_SIM_CONFIG): RaceState {
+export function createRace(
+  race: Race,
+  grid: Entry[],
+  seed: number,
+  config: SimConfig = DEFAULT_SIM_CONFIG,
+  playerTeamId: string | null = null,
+): RaceState {
   const rng = createRng(seed);
   const track = race.track;
   const cars: CarState[] = grid.map((entry, i) => {
@@ -29,6 +35,7 @@ export function createRace(race: Race, grid: Entry[], seed: number, config: SimC
       stops: 0,
       mode: "normal",
       pitRequest: null,
+      controlled: entry.team.id === playerTeamId,
       status: "running",
       pittedThisLap: false,
     };
@@ -288,6 +295,57 @@ export function requestPit(state: RaceState, driverId: string, compound: Compoun
   return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, pitRequest: compound } : c)) };
 }
 
+const otherCompound = (c: Compound): Compound => (c === "H" ? "M" : "H");
+
+/** Before the start: choose the starting tyre (keeps the plan valid: two compounds). */
+export function setStartTyre(state: RaceState, driverId: string, compound: Compound): RaceState {
+  if (state.lap > 0) return state;
+  return {
+    ...state,
+    cars: state.cars.map((c) => {
+      if (c.id !== driverId) return c;
+      const plan = c.plan.map((s, i) => (i === 0 ? { ...s, compound } : s));
+      if (plan.length > 1 && plan.every((s) => s.compound === compound)) {
+        plan[1] = { ...plan[1], compound: otherCompound(compound) };
+      }
+      return { ...c, compound, usedCompounds: [compound], plan };
+    }),
+  };
+}
+
+/** Edit the next planned stop: lap, compound, add or remove it. */
+export function editNextStop(
+  state: RaceState,
+  driverId: string,
+  change: { lap?: number; compound?: Compound; remove?: boolean; add?: boolean },
+): RaceState {
+  return {
+    ...state,
+    cars: state.cars.map((c) => {
+      if (c.id !== driverId) return c;
+      let plan = c.plan.map((s) => ({ ...s }));
+      const minLap = state.lap + 1;
+      const maxLap = state.totalLaps - 1;
+      if (change.add && plan.length === 1) {
+        const lap = Math.min(maxLap, Math.max(minLap, Math.round((state.lap + state.totalLaps) / 2)));
+        plan = [{ compound: plan[0].compound, untilLap: lap }, { compound: otherCompound(c.compound), untilLap: state.totalLaps }];
+      }
+      if (change.remove && plan.length > 1) {
+        // keep running the current tyre until the following stop (or the flag)
+        plan = [{ compound: plan[0].compound, untilLap: plan[1].untilLap }, ...plan.slice(2)];
+      }
+      if (plan.length > 1) {
+        if (change.lap !== undefined) {
+          const upper = plan.length > 2 ? plan[1].untilLap - 1 : maxLap;
+          plan[0].untilLap = Math.max(minLap, Math.min(upper, change.lap));
+        }
+        if (change.compound) plan[1].compound = change.compound;
+      }
+      return { ...c, plan };
+    }),
+  };
+}
+
 export function formatLap(t: number) {
   if (!t || !isFinite(t)) return "—";
   const m = Math.floor(t / 60);
@@ -300,8 +358,12 @@ export function gapToLeader(state: RaceState, car: CarState, leader: CarState) {
   if (car.status === "dnf") return "DNF";
   if (car.id === leader.id) return "Líder";
   const gap = car.total - leader.total;
-  const avgLap = leader.total / Math.max(1, state.lap);
-  if (gap > avgLap) return `+${Math.floor(gap / avgLap)} V`;
+  if (state.lap === 0) return "—";
+  const avgLap = leader.total / state.lap;
+  if (gap > avgLap) {
+    const laps = Math.floor(gap / avgLap);
+    return `+${laps} ${laps === 1 ? "vuelta" : "vueltas"}`;
+  }
   return `+${gap.toFixed(3)}`;
 }
 
