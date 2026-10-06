@@ -1,5 +1,6 @@
 // Visual building blocks of the game UI (car silhouettes, circuit outlines, headings, tiles).
-import { useId, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
+import { teams as defaultTeams } from "@/data/f1Data";
 import { circuits } from "@/data/circuits";
 import { cn } from "@/lib/utils";
 
@@ -193,5 +194,67 @@ export function DriverNumber({ n, color, className }: { n: number; color: string
     >
       {n}
     </span>
+  );
+}
+
+// --- Team logos -------------------------------------------------------------------
+// Put your own image at public/logos/<team-id>.svg (or .png), e.g. public/logos/ferrari.png.
+// Without a file, the team gets a crest drawn in its colours.
+
+const logoCache = new Map<string, string | null>();
+const logoWaiters = new Map<string, ((v: string | null) => void)[]>();
+
+function probeLogo(id: string, cb: (v: string | null) => void) {
+  if (logoCache.has(id)) return cb(logoCache.get(id)!);
+  const waiting = logoWaiters.get(id);
+  if (waiting) return void waiting.push(cb);
+  logoWaiters.set(id, [cb]);
+  const base = import.meta.env.BASE_URL ?? "/";
+  const tryExt = (exts: string[]) => {
+    if (!exts.length) return done(null);
+    const url = `${base}logos/${id}.${exts[0]}`;
+    const img = new Image();
+    img.onload = () => done(url);
+    img.onerror = () => tryExt(exts.slice(1));
+    img.src = url;
+  };
+  const done = (v: string | null) => {
+    logoCache.set(id, v);
+    for (const w of logoWaiters.get(id) ?? []) w(v);
+    logoWaiters.delete(id);
+  };
+  tryExt(["svg", "png", "webp"]);
+}
+
+/** The team's logo (from public/logos) or, if there is none, a crest in its colours. */
+export function TeamLogo({ teamId, color, label, className }: { teamId: string; color?: string; label?: string; className?: string }) {
+  const [url, setUrl] = useState<string | null | undefined>(logoCache.get(teamId));
+  useEffect(() => {
+    let alive = true;
+    probeLogo(teamId, (v) => alive && setUrl(v));
+    return () => {
+      alive = false;
+    };
+  }, [teamId]);
+  const info = defaultTeams.find((t) => t.id === teamId);
+  const hex = color ?? info?.hex ?? "#888";
+  const text = (label ?? info?.shortName ?? teamId.slice(0, 3)).toUpperCase();
+  if (url) return <img src={url} alt={info?.name ?? teamId} className={cn("object-contain", className)} draggable={false} />;
+  const gid = `crest-${teamId.replace(/[^a-z0-9]/gi, "")}`;
+  return (
+    <svg viewBox="0 0 100 116" className={className} aria-label={info?.name ?? teamId}>
+      <defs>
+        <linearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor={hex} />
+          <stop offset="1" stopColor={hex} stopOpacity="0.55" />
+        </linearGradient>
+      </defs>
+      <path d="M50 4 L94 18 V58 C94 84 74 102 50 112 C26 102 6 84 6 58 V18 Z" fill="#0d0f14" stroke={hex} strokeWidth="4" />
+      <path d="M50 14 L84 25 V58 C84 78 69 92 50 100 C31 92 16 78 16 58 V25 Z" fill={`url(#${gid})`} opacity="0.9" />
+      <path d="M16 46 H84" stroke="#0d0f14" strokeWidth="3" opacity="0.35" />
+      <text x="50" y="72" textAnchor="middle" fontSize="26" fontWeight="800" fontStyle="italic" fill="#fff" style={{ letterSpacing: "1px" }}>
+        {text}
+      </text>
+    </svg>
   );
 }

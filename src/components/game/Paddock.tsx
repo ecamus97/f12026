@@ -9,7 +9,7 @@ import { AgendaCard } from "./AgendaCalendar";
 import type { Activity } from "@/engine";
 import { carRankOf, ageOf, teamStaff, signedFor, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
 import { STAFF_ROLES, STAFF_ROLE_INFO } from "@/data/peopleData";
-import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile } from "./visuals";
+import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile, TeamLogo } from "./visuals";
 import { InboxList, money } from "./TeamHQ";
 import { cn } from "@/lib/utils";
 
@@ -130,9 +130,14 @@ export function Paddock({
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="panel overflow-hidden relative">
           <div className="absolute inset-0" style={{ background: `radial-gradient(400px 200px at 70% 30%, ${team.hex}33, transparent 70%)` }} />
           <div className="relative p-5 space-y-3">
-            <p className="tv-label text-muted-foreground">Tu escudería</p>
-            <div className="font-display text-3xl" style={{ color: team.hex }}>
-              {team.name}
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="tv-label text-muted-foreground">Tu escudería</p>
+                <div className="font-display text-3xl" style={{ color: team.hex }}>
+                  {team.name}
+                </div>
+              </div>
+              <TeamLogo teamId={team.id} color={team.hex} label={team.shortName} className="h-14 w-14 shrink-0" />
             </div>
             <CarSilhouette color={team.hex} className="w-[78%] mx-auto block h-auto drop-shadow-[0_12px_20px_rgba(0,0,0,0.6)]" />
             <div className="grid grid-cols-3 gap-2 text-center">

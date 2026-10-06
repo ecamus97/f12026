@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import type { Team } from "@/data/f1Data";
 import { startBudget } from "@/engine";
-import { CarSilhouette, SectionTitle } from "./visuals";
+import { CarSilhouette, SectionTitle, TeamLogo } from "./visuals";
 
 const difficulty = (rank: number) => (rank <= 3 ? "Favorito" : rank <= 6 ? "Contendiente" : rank <= 9 ? "Desafío" : "Muy difícil");
 
@@ -21,7 +21,7 @@ export function TeamSelect({ teams, onChoose }: { teams: Team[]; onChoose: (team
             transition={{ delay: i * 0.035 }}
           >
             <div className="relative h-32 overflow-hidden" style={{ background: `linear-gradient(135deg, ${team.hex}55, transparent 70%)` }}>
-              <span className="absolute left-4 top-3 font-display text-6xl opacity-15" style={{ color: team.hex }}>
+              <span className="absolute left-20 top-3 font-display text-6xl opacity-15" style={{ color: team.hex }}>
                 {i + 1}
               </span>
               <CarSilhouette
@@ -29,6 +29,7 @@ export function TeamSelect({ teams, onChoose }: { teams: Team[]; onChoose: (team
                 className="absolute right-3 top-1/2 -translate-y-1/2 w-[64%] h-auto transition-transform duration-300 group-hover:translate-x-[-8px] group-hover:scale-105 drop-shadow-[0_12px_18px_rgba(0,0,0,0.7)]"
               />
               <span className="absolute left-4 bottom-3 tv-label rounded bg-black/50 px-2 py-1">{difficulty(i + 1)}</span>
+              <TeamLogo teamId={team.id} color={team.hex} label={team.shortName} className="absolute left-4 top-3 h-12 w-12" />
             </div>
             <div className="p-4 space-y-3">
               <div>

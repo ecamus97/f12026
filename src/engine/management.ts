@@ -833,3 +833,43 @@ export function completeOffSeason(m: ManagementState, seed: number): { m: Manage
     : m.inbox;
   return { m: { ...m, player, dev: { ...m.dev, [player.teamId]: myDev }, inbox }, done };
 }
+
+// --- Autopilot -------------------------------------------------------------------
+
+/**
+ * While simulating ahead the team runs itself, like the AI teams: it fills empty
+ * sponsor slots with the best offer and keeps the factory busy with the most
+ * efficient upgrades, always leaving a reserve for the next races.
+ */
+export function autopilot(m: ManagementState, round: number): { m: ManagementState; log: string[] } {
+  let x = m;
+  const log: string[] = [];
+  if (!x.player) return { m, log };
+  // sponsors: best value first
+  const value = (o: SponsorDeal) => o.base * o.duration + o.signing + (o.perPoint * 4 + o.perPodium * 0.3) * o.duration;
+  for (const o of [...x.player.offers].sort((a, b) => value(b) - value(a))) {
+    if (canSignSponsor(x, o.id)) continue;
+    x = signSponsor(x, o.id, round);
+    log.push(`firmó con ${o.name}`);
+  }
+  // upgrades: best expected gain per million, weakest areas first
+  const p = x.player!;
+  const reserve = Math.max(6, raceRunningCost(round + 1) * 3);
+  const dev = x.dev[p.teamId];
+  const weakest = Math.min(dev.aero, dev.powerUnit, dev.chassis);
+  const score = (t: ProjectTemplate) => {
+    const [lo, hi] = expectedGain(t, x);
+    return (((lo + hi) / 2) * successChance(t, x)) / t.cost * (1 + (dev[t.area] - weakest <= 1 ? 0.3 : 0));
+  };
+  for (let i = 0; i < 4; i++) {
+    const cur = x.player!;
+    const options = PROJECTS.filter((t) => !canStartProject(x, t.id) && cur.budget - t.cost >= reserve).sort((a, b) => score(b) - score(a));
+    if (!options.length) break;
+    x = startProject(x, options[0].id, round);
+    log.push(`lanzó ${options[0].name}`);
+  }
+  if (log.length) {
+    x = { ...x, inbox: [...x.inbox, { race: round, tone: "info" as const, text: `Gestión automática: ${log.join(", ")}.` }].slice(-60) };
+  }
+  return { m: x, log };
+}

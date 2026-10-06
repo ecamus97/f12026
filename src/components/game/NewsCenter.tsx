@@ -5,7 +5,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { Team } from "@/data/f1Data";
 import { NEWS_KIND_INFO, carPace, type ManagementState, type NewsChart, type NewsItem, type NewsKind, type RuleProposal } from "@/engine";
-import { CarSilhouette, CircuitOutline, SectionTitle } from "./visuals";
+import { CircuitOutline, SectionTitle, TeamLogo } from "./visuals";
 import { ProposalCard } from "./RulesView";
 import { cn } from "@/lib/utils";
 
@@ -41,7 +41,7 @@ const KIND_ICON: Record<NewsKind, string> = {
 /** Header art of a story: the team's car at speed, the circuit when it's about a race. */
 function Art({ n, className, big }: { n: NewsItem; className?: string; big?: boolean }) {
   const color = n.color ?? NEWS_KIND_INFO[n.kind].color;
-  const showCar = !!n.color && n.kind !== "rules";
+  const showCar = !!n.color && n.kind !== "rules" && n.teamIds.length > 0;
   return (
     <div className={cn("relative overflow-hidden", className)} style={{ background: `linear-gradient(120deg, ${color}66 0%, ${color}22 45%, #0b0d12 100%)` }}>
       {/* speed streaks */}
@@ -57,9 +57,9 @@ function Art({ n, className, big }: { n: NewsItem; className?: string; big?: boo
           initial={{ x: 80, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
-          className={cn("absolute top-1/2 -translate-y-1/2", big ? "right-6 w-[46%]" : "right-3 w-[52%]")}
+          className={cn("absolute top-1/2 -translate-y-1/2 flex justify-end", big ? "right-8 h-[70%] w-[40%]" : "right-4 h-[68%] w-[40%]")}
         >
-          <CarSilhouette color={color} className="w-full h-auto drop-shadow-[0_14px_18px_rgba(0,0,0,0.7)]" />
+          <TeamLogo teamId={n.teamIds[0]} color={color} className="w-full h-full max-h-full drop-shadow-[0_10px_18px_rgba(0,0,0,0.7)]" />
         </motion.div>
       ) : (
         <span className={cn("absolute right-6 top-1/2 -translate-y-1/2 drop-shadow-lg", big ? "text-7xl" : "text-5xl")}>{KIND_ICON[n.kind]}</span>

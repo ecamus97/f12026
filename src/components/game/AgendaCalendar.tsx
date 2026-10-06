@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { CalendarDays, ChevronRight, Flag } from "lucide-react";
+import { CalendarDays, ChevronRight, Flag, FastForward } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { Race } from "@/data/f1Data";
 import { ACTIVITY_KIND_INFO, describeEffect, isoDate, weekendDates, type Activity, type StoredRaceResult } from "@/engine";
@@ -135,8 +136,9 @@ export function AgendaCard({ activities, season, nextRound, onChoose }: { activi
 
 /** Real calendar: month grids with the race weekends and the agenda. */
 export function SeasonCalendar({
-  races, season, results, currentRaceIndex, activities, winnerOf, onRace, onChoose, sprints = [],
+  races, season, results, currentRaceIndex, activities, winnerOf, onRace, onChoose, sprints = [], onSimTo,
 }: {
+  onSimTo?: (raceIndex: number) => void;
   sprints?: number[];
   races: Race[];
   season: number;
@@ -148,6 +150,10 @@ export function SeasonCalendar({
   onChoose: (id: string, idx: number) => void;
 }) {
   const [open, setOpen] = useState<Activity | null>(null);
+  const [simDate, setSimDate] = useState<Date | null>(null);
+  // races that are over by a given day (their Sunday is on or before it)
+  const raceIndexAt = (day: Date) => races.filter((r) => weekendDates(r.date, season).end.getTime() <= day.getTime()).length;
+  const simTarget = simDate ? raceIndexAt(simDate) : 0;
   const days = useMemo(() => {
     const map = new Map<string, { race?: { r: Race; i: number; first: boolean; sunday: boolean }; acts: Activity[] }>();
     races.forEach((r, i) => {
@@ -175,6 +181,7 @@ export function SeasonCalendar({
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-600/60" /> Disputado</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-400" /> Actividad pendiente</span>
         <span className="flex items-center gap-1.5"><span className="text-[9px] font-bold rounded bg-sky-400 text-black px-1">S</span> Fin de semana sprint</span>
+        {onSimTo && <span className="flex items-center gap-1.5"><FastForward className="w-3 h-3" /> Toca un día futuro para simular hasta esa fecha</span>}
       </div>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
         {months.map((mo) => {
@@ -205,6 +212,7 @@ export function SeasonCalendar({
                       onClick={() => {
                         if (info?.acts.length) setOpen(info.acts[0]);
                         else if (next) onRace();
+                        else if (onSimTo && raceIndexAt(new Date(season, mo, d)) > currentRaceIndex) setSimDate(new Date(season, mo, d));
                       }}
                       title={[race ? `R${race.i + 1} ${race.r.name}${sprints.includes(race.r.id) ? " (sprint)" : ""}${done ? ` · ganó ${winnerOf(race.r.id) ?? ""}` : ""}` : "", ...(info?.acts.map((a) => `${a.icon} ${a.title}`) ?? [])].filter(Boolean).join("\n")}
                       className={cn(
@@ -212,6 +220,7 @@ export function SeasonCalendar({
                         race ? (next ? "bg-primary text-primary-foreground" : done ? "bg-emerald-600/40" : "bg-white/15") : "bg-white/[0.03]",
                         k === nextKey && "ring-2 ring-primary",
                         (info?.acts.length || next) && "cursor-pointer hover:brightness-125",
+                        onSimTo && !next && raceIndexAt(new Date(season, mo, d)) > currentRaceIndex && "cursor-pointer hover:ring-1 hover:ring-white/40",
                       )}
                     >
                       <span className={cn(race?.sunday && "font-bold")}>{d}</span>
@@ -262,6 +271,49 @@ export function SeasonCalendar({
         })}
       </div>
       <ActivityDialog a={open} onChoose={onChoose} onClose={() => setOpen(null)} />
+      <Dialog open={!!simDate} onOpenChange={(o) => !o && setSimDate(null)}>
+        <DialogContent className="max-w-lg bg-[hsl(222_22%_8%)] border-white/10">
+          {simDate && (
+            <div className="space-y-4">
+              <div className="tv-label text-primary flex items-center gap-1">
+                <FastForward className="w-3 h-3" /> Simular hasta una fecha
+              </div>
+              <DialogTitle className="font-display text-2xl">
+                Hasta el {simDate.getDate()} de {MONTH_NAMES[simDate.getMonth()].toLowerCase()}
+              </DialogTitle>
+              <div className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-1 max-h-56 overflow-y-auto">
+                {races.slice(currentRaceIndex, simTarget).map((r, k) => (
+                  <div key={r.id} className="flex items-center gap-2 text-sm">
+                    <span className="w-9 text-muted-foreground">R{currentRaceIndex + k + 1}</span>
+                    <span>{r.flag}</span>
+                    <span className="flex-1 truncate">{r.name}</span>
+                    {sprints.includes(r.id) && <span className="text-[9px] font-bold rounded bg-sky-400 text-black px-1">SPRINT</span>}
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Se simulan {simTarget - currentRaceIndex} fin{simTarget - currentRaceIndex > 1 ? "es" : ""} de semana con la estrategia recomendada. Mientras tanto
+                tu equipo se gestiona solo, como los rivales: firma patrocinadores para los espacios libres y lanza mejoras sin gastar la reserva. Las
+                actividades de la agenda se resuelven con la opción más prudente.
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  className="flex-1 font-display"
+                  onClick={() => {
+                    onSimTo?.(simTarget);
+                    setSimDate(null);
+                  }}
+                >
+                  <FastForward className="w-4 h-4 mr-2" /> Simular {simTarget - currentRaceIndex} carrera{simTarget - currentRaceIndex > 1 ? "s" : ""}
+                </Button>
+                <Button variant="ghost" onClick={() => setSimDate(null)}>
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

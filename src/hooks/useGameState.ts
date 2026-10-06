@@ -22,6 +22,7 @@ import {
   initManagement,
   processRaceWeekend,
   startProject as startProjectFn,
+  autopilot,
   upgradeFacility as upgradeFacilityFn,
   signSponsor as signSponsorFn,
   chargePlayer,
@@ -912,11 +913,68 @@ function finishRaceState(s: GameState): GameState {
 export const entriesFromTeams = (teams: Team[]): Entry[] =>
   teams.flatMap((t) => t.drivers.map((driver) => ({ driver, team: teamInfo(t) })));
 
+/** One whole weekend at once (sprint included), with the team managed automatically. */
+function simWeekendFull(s0: GameState): GameState {
+  if (s0.management && !s0.weekend) {
+    const ap = autopilot(s0.management, s0.currentRaceIndex);
+    s0 = { ...s0, management: ap.m };
+  }
+  let s = openWeekend(s0);
+  if (!s.weekend) return s0;
+  if (inSprint(s.weekend)) {
+    s = openSprint(s);
+    const sr = s.weekend!.sprint!.race!;
+    s = { ...s, weekend: { ...s.weekend!, sprint: { ...s.weekend!.sprint!, race: sr.finished ? sr : simulateToEnd(confirmStrategy(sr)) } } };
+    s = finishRaceState(s);
+  }
+  if (!s.weekend!.race) s = openRace({ ...s, weekend: { ...s.weekend!, qualiRevealed: 3 } });
+  const r = s.weekend!.race!;
+  s = { ...s, weekend: { ...s.weekend!, qualiRevealed: 3, race: r.finished ? r : simulateToEnd(confirmStrategy(r)) } };
+  return finishRaceState(s);
+}
+
+export interface SimRun {
+  target: number; // race index to stop at (that race is not played)
+  from: number;
+  stopped?: string;
+}
+
 export function useGameState() {
   const [gameState, setGameState] = useState<GameState>(loadState);
   setActiveCalendar(gameState.calendar);
   const stateRef = useRef(gameState);
   stateRef.current = gameState;
+
+  // Simulating ahead: one weekend per tick so the screen can show progress
+  const [simRun, setSimRun] = useState<SimRun | null>(null);
+  useEffect(() => {
+    if (!simRun || simRun.stopped) return;
+    const s = stateRef.current;
+    if (s.currentRaceIndex >= simRun.target || s.currentRaceIndex >= calendar().length) {
+      setSimRun(null);
+      return;
+    }
+    if (missingSeats(s)) {
+      setSimRun({ ...simRun, stopped: "Te falta un piloto: ficha a alguien para seguir." });
+      return;
+    }
+    const id = window.setTimeout(
+      () =>
+        setGameState((cur) => {
+          const n = simWeekendFull(cur);
+          if (n.currentRaceIndex === cur.currentRaceIndex) queueMicrotask(() => setSimRun((r) => r && { ...r, stopped: "No se pudo simular este fin de semana." }));
+          return n;
+        }),
+      40,
+    );
+    return () => window.clearTimeout(id);
+  }, [simRun, gameState.currentRaceIndex]);
+  const simulateTo = useCallback((target: number) => {
+    const s = stateRef.current;
+    if (target <= s.currentRaceIndex) return;
+    setSimRun({ target: Math.min(target, calendar().length), from: s.currentRaceIndex });
+  }, []);
+  const stopSim = useCallback(() => setSimRun(null), []);
 
   // Debounced autosave
   const saveTimer = useRef<number>();
@@ -1150,7 +1208,16 @@ export function useGameState() {
       // pending work in the factory is finished during the winter
       const off = completeOffSeason(s.management, randomSeed());
       s = { ...s, management: off.m };
-      const adv = advanceSeason({ ...s.people, salaryCap: rules.salaryCap }, s.teamsData, s.playerTeamId, carRanks);
+      // how each driver did against the team-mate shapes next year's development
+      const form: Record<string, number> = {};
+      for (const t of s.teamsData) {
+        const rows = t.drivers.map((d) => st.drivers.find((x) => x.driverId === d.id)?.points ?? 0);
+        t.drivers.forEach((d, i) => {
+          const mate = rows[1 - i] ?? rows[i];
+          form[d.id] = ((rows[i] - mate) / Math.max(20, rows[i] + mate)) * 2;
+        });
+      }
+      const adv = advanceSeason({ ...s.people, salaryCap: rules.salaryCap }, s.teamsData, s.playerTeamId, carRanks, form);
       const news = adv.news;
       let people = adv.people;
       if (rules.salaryCap) {
@@ -1296,6 +1363,9 @@ export function useGameState() {
     chooseTeam,
     startWeekend,
     quickSimWeekend,
+    simulateTo,
+    stopSim,
+    simRun,
     chooseActivity,
     revealSession,
     startRace,

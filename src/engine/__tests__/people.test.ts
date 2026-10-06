@@ -166,4 +166,38 @@ describe("negotiations", () => {
     expect(negotiate(q, "d:cheap", { ...o, salary: 50, round: 8 }).result).toBe("accept");
     expect(negotiate(p, "d:fair", { ...o, salary: 10 }).result).toBe("accept");
   });
+
+  it("top teams sign proven pace, small teams young talent", () => {
+    let p = initPeople(teams, 11);
+    let ts = applyLineups(teams, p);
+    const rk = ranks();
+    const arrivals: { rank: number; age: number; pace: number }[] = [];
+    for (let y = 0; y < 6; y++) {
+      for (const r of [8, 12, 16, 20]) p = midSeasonMarket(p, ts, null, rk, y * 100 + r).people;
+      const before = Object.fromEntries(Object.values(p.drivers).map((d) => [d.id, d.contract?.teamId ?? null]));
+      p = advanceSeason(p, ts, null, rk).people;
+      ts = applyLineups(ts, p);
+      for (const d of Object.values(p.drivers)) {
+        const to = d.contract?.teamId;
+        if (to && before[d.id] !== to) arrivals.push({ rank: rk[to], age: ageOf(d, p.season), pace: d.pace });
+      }
+    }
+    const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
+    const top = arrivals.filter((a) => a.rank <= 3);
+    const small = arrivals.filter((a) => a.rank >= 8);
+    expect(top.length).toBeGreaterThan(0);
+    expect(small.length).toBeGreaterThan(0);
+    expect(avg(top.map((a) => a.pace))).toBeGreaterThan(avg(small.map((a) => a.pace)));
+    expect(avg(small.map((a) => a.age))).toBeLessThan(avg(top.map((a) => a.age)) + 1);
+  });
+
+  it("free drivers keep changing: rust without a seat, form with one", () => {
+    let p = initPeople(teams, 5);
+    const free = Object.values(p.drivers).filter((d) => d.status === "free" && ageOf(d, 2027) >= 26);
+    expect(free.length).toBeGreaterThan(0);
+    const r = advanceSeason(p, teams, null, ranks(), { nor: 1, pia: -1 }).people;
+    const stillFree = free.filter((d) => r.drivers[d.id].status === "free");
+    expect(stillFree.some((d) => r.drivers[d.id].pace < d.pace)).toBe(true);
+    expect(r.drivers.nor.racecraft).toBeGreaterThan(r.drivers.pia.racecraft - (p.drivers.pia.racecraft - p.drivers.nor.racecraft) - 0.01);
+  });
 });

@@ -516,21 +516,51 @@ export function midSeasonMarket(p0: PeopleState, teams: Team[], playerTeamId: st
     }
     // 2) a signing for an open seat next year
     if (nextSeasonLineup(p, t.id).length >= 2 || !rng.chance(0.3)) continue;
+    // top teams can buy a driver out of a smaller team's contract (not the player's)
+    const buyout = (d: DriverRecord) =>
+      rank <= 4 &&
+      d.status === "active" &&
+      !!d.contract &&
+      d.contract.until > p0.season &&
+      d.contract.teamId !== playerTeamId &&
+      (carRanks[d.contract.teamId] ?? 6) > rank + 2 &&
+      ageOf(d, next) <= 28;
     const pool = Object.values(drivers).filter(
-      (d) => d.status !== "retired" && !d.nextContract && d.contract?.teamId !== t.id && availableForNextSeason(p, d) && ageOf(d, next) <= 36 && !willRetire(d, p0.season),
+      (d) =>
+        d.status !== "retired" && !d.nextContract && d.contract?.teamId !== t.id && (availableForNextSeason(p, d) || buyout(d)) && ageOf(d, next) <= 36 && !willRetire(d, p0.season),
     );
     if (!pool.length) continue;
-    const score = (d: DriverRecord) =>
-      d.pace + (ageOf(d, next) <= 23 ? (d.potential - d.pace) * 0.35 : 0) - marketValue(d, next) * (0.08 + rank * 0.03) + rng.next();
+    const score = (d: DriverRecord) => teamWants(d, rank, next) + rng.next();
     const pick = pool.sort((a, b) => score(b) - score(a))[0];
     const current = Object.values(drivers).filter((d) => d.contract?.teamId === t.id && d.status === "active");
-    if (pick.pace < Math.min(...current.map((d) => d.pace), 99) - 1) continue; // only if it's an upgrade
+    const worst = Math.min(...current.map((d) => d.pace), 99);
+    // big teams only sign upgrades; small teams also bet on promise
+    if (pick.pace < worst - 1 && !(rank >= 6 && ageOf(pick, next) <= 23 && pick.potential >= worst + 2)) continue;
+    if (buyout(pick) && pick.pace < worst + 2) continue; // a buy-out must be worth it
+    if (buyout(pick)) drivers[pick.id] = { ...pick, contract: { ...pick.contract!, until: p0.season } };
     const years = ageOf(pick, next) <= 24 ? 2 : rng.int(1, 2);
     const salary = capSalary(p0, marketValue(pick, next));
-    drivers[pick.id] = { ...pick, nextContract: { teamId: t.id, salary, until: next + years - 1 } };
+    drivers[pick.id] = { ...drivers[pick.id], nextContract: { teamId: t.id, salary, until: next + years - 1 } };
     moves.push({ kind: "sign", driverId: pick.id, teamId: t.id, fromTeamId: pick.contract?.teamId ?? null, until: next + years - 1, salary });
   }
   return { people: p, moves };
+}
+
+/**
+ * How much a team wants a driver. Top teams pay for proven pace; small teams look for
+ * cheap young talent they can develop (and later lose to the big teams).
+ */
+export function teamWants(d: DriverRecord, carRank: number, season: number) {
+  const t = Math.min(1, Math.max(0, (carRank - 1) / 9)); // 0 = best car, 1 = worst
+  const age = ageOf(d, season);
+  const growth = age <= 24 ? Math.max(0, d.potential - d.pace) : 0;
+  return (
+    d.pace * (1.15 - 0.3 * t) +
+    growth * (0.08 + 0.6 * t) +
+    (age <= 22 ? 3 * t : 0) -
+    (age >= 34 ? (age - 33) * (0.4 + t) : 0) -
+    marketValue(d, season) * (0.015 + 0.12 * t)
+  );
 }
 
 // --- Season change -------------------------------------------------------------
@@ -540,7 +570,7 @@ const capSalary = (p: PeopleState, s: number) => (p.salaryCap ? Math.min(p.salar
 const clamp = (x: number, lo = 50, hi = 99) => Math.max(lo, Math.min(hi, x));
 
 /** One year of experience: young drivers grow towards their potential, veterans decline. */
-function develop(d: DriverRecord, season: number, rng: Rng, coach = 80): DriverRecord {
+function develop(d: DriverRecord, season: number, rng: Rng, coach = 80, form = 0): DriverRecord {
   const age = ageOf(d, season);
   const gap = Math.max(0, d.potential - d.pace);
   const k = Math.max(0.7, Math.min(1.3, 1 + (coach - 80) * 0.02)); // race engineering boss helps them grow
@@ -551,10 +581,15 @@ function develop(d: DriverRecord, season: number, rng: Rng, coach = 80): DriverR
   else if (age <= 35) dp = -rng.next() * 0.9;
   else dp = -(0.8 + rng.next() * 1.6);
   const exp = age <= 30 ? 0.5 + rng.next() : age >= 36 ? -(rng.next() * 0.8) : rng.next() * 0.4;
+  // a good year against the team-mate builds confidence; a bad one costs it
+  dp += form * 0.8;
+  // a year without a seat: juniors keep racing in F2, everybody else gets rusty
+  if (d.status === "free" && age >= 24) dp -= 0.3 + rng.next() * 0.7;
+  if (d.status === "junior") dp += rng.next() * 0.6; // an F2 season
   return {
     ...d,
     pace: +clamp(d.pace + dp).toFixed(1),
-    racecraft: +clamp(d.racecraft + exp).toFixed(1),
+    racecraft: +clamp(d.racecraft + exp + form * 0.5).toFixed(1),
     defending: +clamp(d.defending + exp).toFixed(1),
     consistency: +clamp(d.consistency + exp * 1.2).toFixed(1),
     tyreMgmt: +clamp(d.tyreMgmt + exp).toFixed(1),
@@ -599,10 +634,7 @@ function aiPick(p: PeopleState, carRank: number, season: number, taken: Set<stri
     (d) => (d.status === "free" || d.status === "junior") && !taken.has(d.id) && !d.nextContract,
   );
   if (!pool.length) return null;
-  const priceWeight = 0.08 + carRank * 0.03;
-  const score = (d: DriverRecord) =>
-    d.pace + (ageOf(d, season) <= 23 ? (d.potential - d.pace) * 0.35 : 0) - marketValue(d, season) * priceWeight;
-  return pool.sort((a, b) => score(b) - score(a))[0];
+  return pool.sort((a, b) => teamWants(b, carRank, season) - teamWants(a, carRank, season))[0];
 }
 
 export interface SeasonChange {
@@ -621,6 +653,7 @@ export function advanceSeason(
   teams: Team[],
   playerTeamId: string | null,
   carRanks: Record<string, number>,
+  form: Record<string, number> = {}, // -1..1: how each driver did against the team-mate
 ): SeasonChange {
   const rng = createRng(p0.rngState);
   const news: string[] = [];
@@ -672,7 +705,7 @@ export function advanceSeason(
     if (d.status === "retired") continue;
     const before = d.pace;
     const coach = d.contract?.teamId ? ratings[d.contract.teamId]?.race ?? VACANT_RATING : 75;
-    const dev = develop(d, season, rng, coach);
+    const dev = develop(d, season, rng, coach, Math.max(-1, Math.min(1, form[id] ?? 0)));
     drivers[id] = dev;
     const age = ageOf(dev, season);
     if (dev.status === "active" && dev.pace - before >= 3) news.push(`${dev.name} da un gran salto (+${(dev.pace - before).toFixed(1)} de ritmo).`);

@@ -17,7 +17,7 @@ import { QualifyingView } from "@/components/game/QualifyingView";
 import { RaceView } from "@/components/game/RaceView";
 import { RulesView } from "@/components/game/RulesView";
 import { Paddock, type NavTarget } from "@/components/game/Paddock";
-import { CarSilhouette, SectionTitle, teamThemeVars } from "@/components/game/visuals";
+import { CarSilhouette, SectionTitle, TeamLogo, teamThemeVars } from "@/components/game/visuals";
 import heroImage from "@/assets/f1-hero.jpg";
 import {
   Newspaper, Trophy, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2, Users, Briefcase, Wallet, Gavel, Wrench, MoreHorizontal, X,
@@ -207,8 +207,11 @@ export default function F1Game() {
           ) : (
             <div className="relative">
               <div className="tv-label text-muted-foreground">F1 Manager · {gameState.season}</div>
-              <div className="font-display text-xl mt-1 leading-tight" style={{ color: playerTeam.hex }}>
-                {playerTeam.name}
+              <div className="flex items-center gap-2 mt-1">
+                <TeamLogo teamId={playerTeam.id} color={playerTeam.hex} label={playerTeam.shortName} className="h-9 w-9 shrink-0" />
+                <div className="font-display text-xl leading-tight" style={{ color: playerTeam.hex }}>
+                  {playerTeam.name}
+                </div>
               </div>
               <CarSilhouette color={playerTeam.hex} className="w-[85%] h-auto mt-2" />
             </div>
@@ -362,6 +365,7 @@ export default function F1Game() {
                     return w ? entryMap.get(w)?.driver.name : undefined;
                   }}
                   onRace={() => go("weekend")}
+                  onSimTo={(i) => game.simulateTo(i)}
                   onChoose={game.chooseActivity}
                   sprints={gameState.sprints}
                 />
@@ -474,6 +478,28 @@ export default function F1Game() {
               </motion.div>
             )}
           </AnimatePresence>
+          {game.simRun && (
+            <div className="fixed bottom-24 lg:bottom-6 right-4 z-50 w-[min(360px,calc(100vw-2rem))] panel p-4 space-y-2 border-primary/50 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <span className="tv-label text-primary">{game.simRun.stopped ? "Simulación detenida" : "Simulando…"}</span>
+                <span className="text-xs text-muted-foreground tabular-nums">
+                  {Math.min(gameState.currentRaceIndex, game.simRun.target) - game.simRun.from}/{game.simRun.target - game.simRun.from}
+                </span>
+              </div>
+              <div className="h-2 rounded-full bg-white/10 overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all"
+                  style={{ width: `${((gameState.currentRaceIndex - game.simRun.from) / Math.max(1, game.simRun.target - game.simRun.from)) * 100}%` }}
+                />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {game.simRun.stopped ?? `${races[gameState.currentRaceIndex]?.flag ?? ""} ${races[gameState.currentRaceIndex]?.name ?? ""}`}
+              </div>
+              <Button size="sm" variant="secondary" className="w-full h-8" onClick={game.stopSim}>
+                {game.simRun.stopped ? "Cerrar" : "Detener"}
+              </Button>
+            </div>
+          )}
         </main>
       </div>
 
