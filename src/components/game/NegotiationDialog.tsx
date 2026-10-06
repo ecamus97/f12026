@@ -56,7 +56,7 @@ export function NegotiationDialog({
   }, [open, ask, defaultYears, maxYears, minYears]);
 
   const locked = talkLocked(talk, season, round);
-  const done = last?.result === "accept";
+  const done = last?.result === "accept" || talk.log[talk.log.length - 1]?.result === "accept";
   const min = +(ask * 0.5).toFixed(1);
   const max = +Math.min(cap ?? Infinity, ask * 1.6).toFixed(1);
   const pct = Math.round((salary / ask) * 100);
@@ -66,6 +66,8 @@ export function NegotiationDialog({
     const r = onOffer(+value.toFixed(1), years);
     setLast(r);
     if (r.counter) setSalary(r.counter);
+    // deal closed: show the answer for a moment and leave the negotiation
+    if (r.result === "accept") window.setTimeout(onClose, 1300);
   };
 
   return (
