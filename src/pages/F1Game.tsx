@@ -100,6 +100,7 @@ export default function F1Game() {
     setMoreOpen(false);
     if (s === "weekend" && !weekend) {
       if (!currentRace || seasonComplete) return setScreen("calendar");
+      if (playerTeam && playerTeam.drivers.length < 2) return setScreen("drivers");
       game.startWeekend();
     }
     setScreen(s);
@@ -274,19 +275,6 @@ export default function F1Game() {
           <AnimatePresence mode="wait">
             {screen === "home" && (
               <motion.div key="home" {...fade} className="space-y-6">
-                {gameState.currentRaceIndex === 0 && gameState.seasonNews.length > 0 && (
-                  <div className="panel p-4 space-y-2">
-                    <SectionTitle>Mercado de fichajes · pretemporada {gameState.season}</SectionTitle>
-                    <ul className="grid md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground">
-                      {gameState.seasonNews.map((n, i) => (
-                        <li key={i} className={n.startsWith("Tu equipo") ? "text-primary" : ""}>
-                          • {n}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
                 {seasonComplete && (
                   <SeasonEnd
                     season={gameState.season}
@@ -324,6 +312,7 @@ export default function F1Game() {
                   teams={gameState.teamsData}
                   activities={gameState.activities}
                   isSprint={!!currentRace && gameState.sprints.includes(currentRace.id)}
+                  notices={gameState.seasonNews}
                   onChooseActivity={game.chooseActivity}
                   weather={seasonComplete ? null : weekend?.weather ?? weekendWeather(gameState, gameState.currentRaceIndex)}
                 />
@@ -565,7 +554,7 @@ function SeasonEnd({
           <p className="text-sm">
             Pilotos para {season + 1}: <b>{nextDrivers.length ? nextDrivers.join(" y ") : "ninguno confirmado"}</b>
             {nextDrivers.length < 2 && (
-              <span className="text-yellow-300"> · faltan {2 - nextDrivers.length}: fíchalos ahora o se contratará automáticamente</span>
+              <span className="text-yellow-300"> · faltan {2 - nextDrivers.length}: el asiento quedará libre hasta que fiches a alguien</span>
             )}
           </p>
           <p className="text-xs text-muted-foreground max-w-2xl mx-auto">

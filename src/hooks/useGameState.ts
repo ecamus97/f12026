@@ -35,6 +35,8 @@ import {
   payroll,
   advanceSeason,
   applyLineups,
+  ageOf,
+  willRetire,
   offerDriverContract,
   releaseAtSeasonEnd,
   hireStaff as hireStaffFn,
@@ -367,7 +369,21 @@ function seasonStories(
       chart: { type: "bars", title: "Cambio de rendimiento por el reglamento", unit: "", rows: [...impact].sort((a, b) => b.value - a.value) },
     });
   }
-  const transfers = market.filter((n) => /ficha|se cambia|debuta|retiro|se retira/.test(n));
+  const transfers = market.filter((n) => !n.startsWith("Tu equipo") && /ficha|se cambia|debuta|retiro|se retira/.test(n));
+  const staffMoves = market.filter((n) => !n.startsWith("Tu equipo") && /contrata a|deja |se incorpora/.test(n));
+  if (staffMoves.length) {
+    out.push({
+      id: `${newSeason}-staff-market`,
+      season: newSeason,
+      round: 0,
+      kind: "market",
+      title: `Cambios en los muros: ${staffMoves.length} movimientos de directivos para ${newSeason}`,
+      summary: staffMoves.slice(0, 2).join(" "),
+      body: staffMoves,
+      teamIds: [],
+      importance: 2,
+    });
+  }
   if (transfers.length) {
     out.push({
       id: `${newSeason}-market`,
@@ -487,9 +503,16 @@ function applyActivity(s: GameState, id: string, idx: number, auto = false): Gam
   };
 }
 
+/** The player needs two drivers to race. */
+export const missingSeats = (s: GameState) => {
+  const t = s.teamsData.find((x) => x.id === s.playerTeamId);
+  return t ? Math.max(0, 2 - t.drivers.length) : 0;
+};
+
 function openWeekend(s0: GameState): GameState {
   const race = calendar()[s0.currentRaceIndex];
   if (!race) return s0;
+  if (missingSeats(s0) && s0.weekend?.raceIndex !== s0.currentRaceIndex) return s0;
   if (s0.weekend?.raceIndex === s0.currentRaceIndex) return s0; // resume
   // agenda items still open are settled with the most conservative option
   let s = s0;
@@ -794,6 +817,28 @@ function finishRaceState(s: GameState): GameState {
     const ranks = Object.fromEntries(Object.keys(management.dev).map((id) => [id, carRankOf(management!, id)]));
     const mk = midSeasonMarket(people, s.teamsData, s.playerTeamId, ranks, randomSeed());
     people = mk.people;
+    for (const d of Object.values(people.drivers)) {
+      if (d.status !== "active" || !willRetire(d, s.season)) continue;
+      const id = `${s.season}-retire-${d.id}`;
+      if (s.news.some((x) => x.id === id) || news.some((x) => x.id === id)) continue;
+      const tm = d.contract ? look.team(d.contract.teamId) : null;
+      news.push({
+        id,
+        season: s.season,
+        round,
+        kind: "market",
+        title: `${d.name} anuncia que se retirará al final de ${s.season}`,
+        summary: `A los ${ageOf(d, s.season)} años, ${d.name} pone fecha a su despedida de la Fórmula 1${tm ? ` y deja libre un asiento en ${tm.name}` : ""}.`,
+        body: [
+          `${d.name} confirmó que ${s.season} será su última temporada en la Fórmula 1.`,
+          ...(d.contract?.teamId === s.playerTeamId ? ["Es uno de tus pilotos: no aceptará renovar, tendrás que buscar reemplazo."] : []),
+        ],
+        teamIds: d.contract ? [d.contract.teamId] : [],
+        color: tm?.hex,
+        mine: d.contract?.teamId === s.playerTeamId,
+        importance: 2,
+      });
+    }
     for (const mv of mk.moves.slice(0, 4)) {
       const d = people.drivers[mv.driverId];
       const to = look.team(mv.teamId)?.name ?? mv.teamId;
@@ -940,9 +985,11 @@ export function useGameState() {
       if (!cur.people || !cur.management) return cur;
       const people = { ...cur.people, talks, drivers: r.ok ? { ...cur.people.drivers, [driverId]: r.people.drivers[driverId] } : cur.people.drivers };
       if (!r.ok) return { ...cur, people };
+      const now = people.drivers[driverId].contract?.teamId === s.playerTeamId && !cur.people.drivers[driverId].contract;
       return {
         ...cur,
         people,
+        teamsData: now ? applyLineups(cur.teamsData, people) : cur.teamsData,
         management: { ...cur.management, inbox: [...cur.management.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) },
         news: addNews(cur.news, [
           marketNews({
@@ -972,7 +1019,7 @@ export function useGameState() {
     if (!s.people || !s.management || !s.playerTeamId) return { ok: false, message: "No disponible", result: "reject" };
     const r = offerStaffContract(s.people, staffId, s.playerTeamId, salary, years, s.currentRaceIndex + 1);
     if (r.result === "accept" && (s.management.player?.budget ?? 0) < r.cost) {
-      return { ok: false, message: `Aceptaría, pero no tienes presupuesto para la prima y la indemnización (US$ ${r.cost.toFixed(1)} M).`, result: "reject" };
+      return { ok: false, message: `Aceptaría, pero no tienes presupuesto para la prima de firma (US$ ${r.cost.toFixed(1)} M).`, result: "reject" };
     }
     setGameState((cur) => {
       if (!cur.people || !cur.management || !cur.playerTeamId) return cur;
@@ -985,9 +1032,11 @@ export function useGameState() {
         teamId: cur.playerTeamId,
         mine: true,
         look: lookupOf(cur),
-        title: `${lookupOf(cur).team(cur.playerTeamId)?.name} contrata a ${r.people.staff[staffId].name}`,
+        title: r.people.staff[staffId].signed
+          ? `${lookupOf(cur).team(cur.playerTeamId)?.name} ficha a ${r.people.staff[staffId].name} para ${cur.season + 1}`
+          : `${lookupOf(cur).team(cur.playerTeamId)?.name} contrata a ${r.people.staff[staffId].name}`,
         summary: r.message,
-        body: [r.message, `Sueldo US$ ${salary.toFixed(1)} M/año. Costo de la operación: US$ ${r.cost.toFixed(1)} M.`],
+        body: [r.message, `Sueldo US$ ${salary.toFixed(1)} M/año. Prima de firma: US$ ${r.cost.toFixed(1)} M.`],
       });
       return { ...cur, people: r.people, management: m, news: addNews(cur.news, [n]) };
     });
@@ -1182,7 +1231,7 @@ export function useGameState() {
         calendar: newCal,
         sprints,
         nextSprints: undefined,
-        seasonNews: [...regNews, ...news],
+        seasonNews: [...regNews, ...news].filter((n) => n.startsWith("Tu equipo")),
         news: addNews(s.news, [
           ...seasonStories(s, people.season, summary, regImpactRows, news, proposals),
           {

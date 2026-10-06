@@ -3,6 +3,7 @@ import { teams } from "@/data/f1Data";
 import {
   advanceSeason, applyLineups, askingSalary, carRankOf, initManagement, initPeople, lineup, offerDriverContract,
   hireStaff, payroll, startNewSeason, constructorsPrize, applyDevToTeams, staffRatings, nextSeasonLineup,
+  willRetire, signableNow, midSeasonMarket, fireStaff, ageOf,
 } from "@/engine";
 
 const ranks = () => Object.fromEntries(teams.map((t, i) => [t.id, i + 1]));
@@ -23,6 +24,13 @@ describe("people and seasons", () => {
       const r = advanceSeason(p, ts, "williams", ranks());
       p = r.people;
       news.push(...r.news);
+      // the player's empty seats are not filled for them: sign free agents now
+      while (lineup(p, "williams").length < 2) {
+        const pick = Object.values(p.drivers).filter(signableNow).sort((a, b) => b.pace - a.pace)[0];
+        const o = offerDriverContract(p, pick.id, "williams", 99, 1, 6, 86);
+        expect(o.ok).toBe(true);
+        p = o.people;
+      }
       ts = applyLineups(ts, p);
       const seen = new Set<string>();
       for (const t of ts) {
@@ -58,12 +66,64 @@ describe("people and seasons", () => {
     expect(next.drivers.sai.contract?.teamId).not.toBe("williams");
   });
 
-  it("hiring staff swaps the old one out and costs money", () => {
+  it("hiring staff for a taken post: no severance, joins when the season ends", () => {
     const p = initPeople(teams, 3);
-    const r = hireStaff(p, "horner", "haas");
-    expect(r.cost).toBeGreaterThan(0);
-    expect(r.people.staff.horner.teamId).toBe("haas");
-    expect(r.people.staff.komatsu.teamId).toBeNull();
+    const r = hireStaff(p, "horner", "haas", 2, 5);
+    expect(r.cost).toBeCloseTo(2.5, 5); // only the signing fee
+    expect(r.people.staff.horner.teamId).toBeNull();
+    expect(r.people.staff.horner.signed?.teamId).toBe("haas");
+    expect(r.people.staff.komatsu.teamId).toBe("haas");
+    const next = advanceSeason(r.people, teams, "haas", ranks()).people;
+    expect(next.staff.horner.teamId).toBe("haas");
+    expect(next.staff.horner.until).toBe(2028);
+    expect(next.staff.komatsu.teamId).not.toBe("haas");
+    // firing the holder brings the signed replacement in at once
+    const f = fireStaff(r.people, "komatsu");
+    expect(f.cost).toBeGreaterThan(0);
+    expect(f.people.staff.horner.teamId).toBe("haas");
+  });
+
+  it("the player's empty seat stays empty and renewed veterans don't retire", () => {
+    let p = initPeople(teams, 4);
+    // let Hamilton's deal run out at Ferrari and renew him for next year
+    p = { ...p, drivers: { ...p.drivers, ham: { ...p.drivers.ham, contract: { ...p.drivers.ham.contract!, until: 2026 }, nextContract: { teamId: "ferrari", salary: 20, until: 2027 } } } };
+    const lec = p.drivers.lec;
+    p = { ...p, drivers: { ...p.drivers, lec: { ...lec, contract: { ...lec.contract!, until: 2026 } } } };
+    const r = advanceSeason(p, teams, "ferrari", ranks());
+    expect(r.people.drivers.ham.status).toBe("active");
+    expect(r.people.drivers.ham.contract?.teamId).toBe("ferrari");
+    expect(lineup(r.people, "ferrari")).toEqual(["ham"]);
+    expect(r.news.some((n) => n.startsWith("Tu equipo") && n.includes("asiento libre"))).toBe(true);
+    // AI teams still fill their seats
+    for (const t of teams) if (t.id !== "ferrari") expect(lineup(r.people, t.id).length).toBe(2);
+  });
+
+  it("drivers who will retire refuse to renew", () => {
+    const p = initPeople(teams, 4);
+    const old = Object.values(p.drivers).find((d) => d.contract && ageOf(d, 2027) >= 38);
+    expect(old).toBeTruthy();
+    for (let seed = 0; seed < 40; seed++) {
+      const d = { ...old!, id: `${old!.id}${seed}`, contract: { ...old!.contract!, until: 2026 } };
+      if (!willRetire(d, 2026)) continue;
+      const q = { ...p, drivers: { ...p.drivers, [d.id]: d } };
+      const o = offerDriverContract(q, d.id, d.contract.teamId, 99, 1, 6, 86);
+      expect(o.ok).toBe(false);
+      expect(o.message).toContain("retira");
+      return;
+    }
+    throw new Error("no retiring case found");
+  });
+
+  it("mid-season renewals never give a team three drivers", () => {
+    let p = initPeople(teams, 9);
+    const end = (id: string) => ({ ...p.drivers[id], contract: { ...p.drivers[id].contract!, until: 2026 } });
+    p = { ...p, drivers: { ...p.drivers, oco: end("oco"), bea: end("bea") } };
+    for (let i = 0; i < 30; i++) {
+      p = midSeasonMarket(p, teams, "williams", ranks(), i).people;
+      for (const t of teams) expect(nextSeasonLineup(p, t.id).length).toBeLessThanOrEqual(2);
+    }
+    const after = advanceSeason(p, teams, "williams", ranks()).people;
+    for (const d of Object.values(p.drivers)) if (d.nextContract && d.status !== "retired") expect(after.drivers[d.id].contract?.teamId).toBe(d.nextContract.teamId);
   });
 
   it("new season pays the constructors prize and narrows the field", () => {

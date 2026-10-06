@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Play, FastForward, Gavel, Wallet, Gauge, FlaskConical, Handshake, ChevronRight, Trophy, MapPin, CalendarDays } from "lucide-react";
+import { Play, FastForward, Gavel, Wallet, Gauge, FlaskConical, Handshake, ChevronRight, Trophy, MapPin, CalendarDays, UserPlus, Briefcase, Info, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Race, Team } from "@/data/f1Data";
 import type { DriverStanding, TeamStanding, NewsItem, WeatherTimeline } from "@/engine";
@@ -7,15 +7,16 @@ import { forecast, forecastIcon } from "@/engine";
 import { NewsFeed } from "./NewsCenter";
 import { AgendaCard } from "./AgendaCalendar";
 import type { Activity } from "@/engine";
-import { carRankOf, ageOf, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
+import { carRankOf, ageOf, teamStaff, signedFor, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
+import { STAFF_ROLES, STAFF_ROLE_INFO } from "@/data/peopleData";
 import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile } from "./visuals";
 import { InboxList, money } from "./TeamHQ";
 import { cn } from "@/lib/utils";
 
-export type NavTarget = "weekend" | "car" | "drivers" | "finance" | "rules" | "standings" | "calendar" | "news";
+export type NavTarget = "weekend" | "car" | "drivers" | "staff" | "finance" | "rules" | "standings" | "calendar" | "news";
 
 export function Paddock({
-  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, activities, onChooseActivity, isSprint,
+  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, activities, onChooseActivity, isSprint, notices = [],
 }: {
   team: Team;
   season: number;
@@ -37,6 +38,7 @@ export function Paddock({
   weather: WeatherTimeline | null;
   activities: Activity[];
   isSprint?: boolean;
+  notices?: string[]; // things that happened to your team in the off-season
   onChooseActivity: (id: string, idx: number) => void;
 }) {
   const fc = weather ? forecast(weather, 0, Math.max(3, Math.round(weather.rain.length / 10))) : [];
@@ -50,6 +52,7 @@ export function Paddock({
   const pending = proposals.filter((x) => x.status === "pending" && x.season === season);
   const carRank = management ? carRankOf(management, team.id) : 0;
   const leaderPts = drivers[0]?.points ?? 0;
+  const missing = Math.max(0, 2 - team.drivers.length);
 
   return (
     <div className="space-y-6">
@@ -94,7 +97,10 @@ export function Paddock({
                 </div>
               )}
               <div className="mt-auto flex flex-wrap gap-2">
-                <Button onClick={onWeekend} size="lg" className="font-display text-lg h-12 px-6 shine">
+                {missing > 0 && !weekendActive && (
+                  <span className="w-full text-sm text-amber-300">Necesitas dos pilotos para correr: ficha {missing === 1 ? "uno" : "dos"} en Pilotos.</span>
+                )}
+                <Button onClick={onWeekend} size="lg" className="font-display text-lg h-12 px-6 shine" disabled={missing > 0 && !weekendActive}>
                   <Play className="w-5 h-5 mr-2 fill-current" />
                   {weekendActive ? (weekendHasRace ? "Volver a la carrera" : "Volver a la clasificación") : "Comenzar fin de semana"}
                 </Button>
@@ -102,6 +108,7 @@ export function Paddock({
                   onClick={onQuickSim}
                   size="lg"
                   variant="outline"
+                  disabled={missing > 0 && !weekendActive}
                   className="font-display text-base h-12 px-5 bg-black/30"
                   title="Clasificación y carrera se simulan al instante con la estrategia recomendada"
                 >
@@ -136,6 +143,8 @@ export function Paddock({
           </div>
         </motion.div>
       </div>
+
+      <TeamTodos team={team} people={people} management={management} notices={round === 0 ? notices : []} onNavigate={onNavigate} />
 
       <AgendaCard activities={activities} season={season} nextRound={round + 1} onChoose={onChooseActivity} />
 
@@ -284,6 +293,87 @@ function MiniTable({ title, rows }: { title: string; rows: { id: string; name: s
           <span className="tabular-nums">{r.pts}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/** Agenda: what your team has to sort out (empty seats, vacant posts, sponsor slots) and off-season notices. */
+function TeamTodos({
+  team, people, management, notices, onNavigate,
+}: {
+  team: Team;
+  people: PeopleState | null;
+  management: ManagementState | null;
+  notices: string[];
+  onNavigate: (t: NavTarget) => void;
+}) {
+  const items: { icon: JSX.Element; tone: "bad" | "warn" | "info"; title: string; text: string; to?: NavTarget }[] = [];
+  const missing = Math.max(0, 2 - team.drivers.length);
+  if (missing)
+    items.push({
+      icon: <UserPlus className="w-5 h-5" />,
+      tone: "bad",
+      title: missing === 1 ? "Asiento libre" : "Dos asientos libres",
+      text: "Ficha un piloto libre o un juvenil de F2: sin dos pilotos no puedes correr.",
+      to: "drivers",
+    });
+  if (people) {
+    const st = teamStaff(people, team.id);
+    for (const r of STAFF_ROLES) {
+      if (st[r]) continue;
+      const rep = signedFor(people, team.id, r);
+      items.push({
+        icon: <Briefcase className="w-5 h-5" />,
+        tone: "warn",
+        title: `${STAFF_ROLE_INFO[r].label}: vacante`,
+        text: rep ? `${rep.name} ya firmó.` : "El área rinde como un 65 mientras nadie ocupe el puesto.",
+        to: "staff",
+      });
+    }
+  }
+  const sp = management?.player?.sponsors.length ?? 3;
+  if (sp < 3)
+    items.push({
+      icon: <Handshake className="w-5 h-5" />,
+      tone: "warn",
+      title: `Patrocinios por definir (${3 - sp})`,
+      text: `Tienes ${3 - sp} espacio${3 - sp > 1 ? "s" : ""} libre${3 - sp > 1 ? "s" : ""} en el auto: revisa las ofertas.`,
+      to: "finance",
+    });
+  for (const n of notices.filter((x) => !/asientos? libres?|vacante/.test(x))) items.push({ icon: <Info className="w-5 h-5" />, tone: "info", title: "Pretemporada", text: n.replace(/^Tu equipo:\s*/, "") });
+  if (!items.length) return null;
+  const urgent = items.filter((i) => i.tone !== "info").length;
+  const toneCls = { bad: "border-red-500/50 bg-red-500/10 text-red-300", warn: "border-amber-500/40 bg-amber-500/10 text-amber-300", info: "border-white/10 bg-black/25 text-sky-300" };
+  return (
+    <div className={cn("panel p-4 space-y-3", urgent && "border-amber-500/50")}>
+      <SectionTitle right={urgent ? <span className="text-amber-300">{urgent} pendiente{urgent > 1 ? "s" : ""}</span> : "Avisos"}>
+        <span className="inline-flex items-center gap-2">
+          <ClipboardList className="w-4 h-4" /> Agenda del equipo
+        </span>
+      </SectionTitle>
+      <div className="grid md:grid-cols-2 gap-3">
+        {items.map((it, i) => {
+          const body = (
+            <>
+              <span className={cn("grid place-items-center w-10 h-10 rounded-full border shrink-0", toneCls[it.tone])}>{it.icon}</span>
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold leading-snug">{it.title}</div>
+                <div className="text-xs text-muted-foreground mt-0.5">{it.text}</div>
+              </div>
+              {it.to && <ChevronRight className="w-4 h-4 text-muted-foreground mt-2" />}
+            </>
+          );
+          return it.to ? (
+            <button key={i} onClick={() => onNavigate(it.to!)} className="panel-hover text-left rounded-xl border border-white/10 bg-black/25 p-3 flex gap-3 items-start">
+              {body}
+            </button>
+          ) : (
+            <div key={i} className="rounded-xl border border-white/10 bg-black/25 p-3 flex gap-3 items-start">
+              {body}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

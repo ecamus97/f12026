@@ -36,6 +36,8 @@ export interface StaffRecord {
   salary: number;
   until?: number; // last season of the contract
   fictional?: boolean;
+  /** Signed to replace someone: joins this team when the season ends. */
+  signed?: { teamId: string; until: number; salary: number } | null;
 }
 
 export interface PeopleState {
@@ -268,6 +270,22 @@ export function payroll(p: PeopleState, teamId: string) {
 
 // --- Market -------------------------------------------------------------------
 
+/**
+ * Will this driver retire when the season ends? Decided in advance (same answer all
+ * year) so the market can respect it: a running contract is always honoured.
+ */
+export function willRetire(d: DriverRecord, season: number) {
+  if (d.status === "retired" || d.status === "junior") return false;
+  if (d.contract && d.contract.until > season) return false;
+  return hash01(`${d.id}:${season}`) < retireChance(ageOf(d, season + 1), false);
+}
+
+/** Does the team have an empty seat right now (this season)? */
+export const seatOpenNow = (p: PeopleState, teamId: string) => lineup(p, teamId).length < 2;
+
+/** Can this driver join right away (a free agent or a junior)? */
+export const signableNow = (d: DriverRecord) => (d.status === "free" || d.status === "junior") && !d.contract && !d.nextContract;
+
 /** Can this driver be signed for next season? */
 export function availableForNextSeason(p: PeopleState, d: DriverRecord) {
   if (d.status === "retired" || d.nextContract) return false;
@@ -295,15 +313,29 @@ export function offerDriverContract(
 ): OfferResult {
   const d = p.drivers[driverId];
   if (!d) return { ok: false, message: "Piloto no encontrado", people: p };
-  if (!availableForNextSeason(p, d)) return { ok: false, message: `${d.name} tiene contrato para la próxima temporada`, people: p };
-  const seats = nextSeasonLineup(p, teamId).filter((x) => x.id !== driverId).length;
-  if (seats >= 2) return { ok: false, message: "Ya tienes dos pilotos para la próxima temporada", people: p };
+  // an empty seat right now is filled at once with a free agent or a junior
+  const now = seatOpenNow(p, teamId) && signableNow(d);
+  if (!now) {
+    if (!availableForNextSeason(p, d)) return { ok: false, message: `${d.name} tiene contrato para la próxima temporada`, people: p };
+    if (willRetire(d, p.season)) return { ok: false, message: `${d.name} anunció que se retira al final de la temporada ${p.season}. No firmará más contratos.`, people: p, result: "reject" };
+    const seats = nextSeasonLineup(p, teamId).filter((x) => x.id !== driverId).length;
+    if (seats >= 2) return { ok: false, message: "Ya tienes dos pilotos para la próxima temporada", people: p };
+  }
   const ask = askingSalary(d, p.season + 1, carRank, tpRating, p.salaryCap);
   if (p.salaryCap && salary > p.salaryCap + 1e-6) return { ok: false, message: `El tope salarial es US$ ${p.salaryCap} M por piloto`, people: p };
   const age = ageOf(d, p.season + 1);
   if (age >= 38 && years > 1) return { ok: false, message: `${d.name} solo acepta contratos de 1 año a su edad`, people: p };
   const n = negotiate(p, `d:${driverId}`, { ask, salary, years, age, name: d.name, round, star: d.pace >= 92 });
   if (n.result !== "accept") return { ok: false, message: n.message, people: n.people, result: n.result, counter: n.counter };
+  if (now) {
+    const until = p.season + years - 1;
+    return {
+      ok: true,
+      result: "accept",
+      message: `${d.name} firma por ${years} año${years > 1 ? "s" : ""} (US$ ${salary.toFixed(1)} M/año) y corre desde ya`,
+      people: { ...n.people, drivers: { ...n.people.drivers, [driverId]: { ...d, status: "active", contract: { teamId, salary, until } } } },
+    };
+  }
   const next = p.season + 1;
   return {
     ok: true,
@@ -325,21 +357,37 @@ export function releaseAtSeasonEnd(p: PeopleState, driverId: string): PeopleStat
 
 export function hireStaff(p: PeopleState, staffId: string, teamId: string, years = 3, salary?: number): { people: PeopleState; cost: number; message: string } {
   const s = p.staff[staffId];
-  if (!s || s.teamId) return { people: p, cost: 0, message: "No disponible" };
+  if (!s || s.teamId || s.signed) return { people: p, cost: 0, message: "No disponible" };
   const current = Object.values(p.staff).find((x) => x.teamId === teamId && x.role === s.role);
   const pay = salary ?? s.salary;
-  const staff = { ...p.staff, [staffId]: { ...s, teamId, until: p.season + years - 1, salary: pay } };
-  let cost = pay * 0.5; // signing fee
+  const cost = Math.round(pay * 0.5 * 10) / 10; // signing fee
+  const role = STAFF_ROLE_INFO[s.role].label.toLowerCase();
   if (current) {
-    staff[current.id] = { ...current, teamId: null };
-    cost += severance(current, p.season);
+    // the post is taken: they join when the season ends, the current holder leaves then (no severance)
+    const until = p.season + years;
+    return {
+      people: {
+        ...p,
+        staff: {
+          ...p.staff,
+          [staffId]: { ...s, signed: { teamId, until, salary: pay } },
+          [current.id]: { ...current, until: Math.min(current.until ?? p.season, p.season) },
+        },
+      },
+      cost,
+      message: `${s.name} será el nuevo ${role} desde ${p.season + 1} (hasta ${until}). ${current.name} sigue hasta el final de ${p.season}.`,
+    };
   }
   return {
-    people: { ...p, staff },
-    cost: Math.round(cost * 10) / 10,
-    message: `${s.name} es el nuevo ${STAFF_ROLE_INFO[s.role].label.toLowerCase()} hasta ${p.season + years - 1}${current ? ` (reemplaza a ${current.name})` : ""}`,
+    people: { ...p, staff: { ...p.staff, [staffId]: { ...s, teamId, until: p.season + years - 1, salary: pay, signed: null } } },
+    cost,
+    message: `${s.name} es el nuevo ${role} hasta ${p.season + years - 1}`,
   };
 }
+
+/** Someone already signed to take this post next season. */
+export const signedFor = (p: PeopleState, teamId: string, role: StaffRole) =>
+  Object.values(p.staff).find((x) => x.signed?.teamId === teamId && x.role === role) ?? null;
 
 /** Hiring through a negotiation: on agreement the person joins right away. */
 export function offerStaffContract(
@@ -351,7 +399,9 @@ export function offerStaffContract(
   round: number,
 ): { people: PeopleState; result: TalkResult; counter?: number; message: string; cost: number } {
   const s = p.staff[staffId];
-  if (!s || s.teamId) return { people: p, result: "reject", message: "No disponible", cost: 0 };
+  if (!s || s.teamId || s.signed) return { people: p, result: "reject", message: "No disponible", cost: 0 };
+  const already = signedFor(p, teamId, s.role);
+  if (already) return { people: p, result: "reject", message: `Ya firmaste a ${already.name} para ese puesto desde ${p.season + 1}.`, cost: 0 };
   const n = negotiate(p, `s:${staffId}`, { ask: s.salary, salary, years, name: s.name, round, star: s.rating >= 88 });
   if (n.result !== "accept") return { people: n.people, result: n.result, counter: n.counter, message: n.message, cost: 0 };
   const h = hireStaff(n.people, staffId, teamId, years, salary);
@@ -368,6 +418,8 @@ export function offerStaffRenewal(
 ): { people: PeopleState; result: TalkResult; counter?: number; message: string } {
   const s = p.staff[staffId];
   if (!s?.teamId) return { people: p, result: "reject", message: "No disponible" };
+  const rep = signedFor(p, s.teamId, s.role);
+  if (rep) return { people: p, result: "reject", message: `Ya firmaste a ${rep.name} para reemplazarlo en ${p.season + 1}.` };
   const n = negotiate(p, `r:${staffId}`, { ask: renewalAsk(s), salary, years, name: s.name, round, star: s.rating >= 88 });
   if (n.result !== "accept") return n;
   const until = Math.max(s.until ?? p.season, p.season) + years;
@@ -386,10 +438,14 @@ export function fireStaff(p: PeopleState, staffId: string): { people: PeopleStat
   const s = p.staff[staffId];
   if (!s?.teamId) return { people: p, cost: 0, message: "No disponible" };
   const cost = severance(s, p.season);
+  const staff = { ...p.staff, [staffId]: { ...s, teamId: null } };
+  // a replacement already signed for next year takes over right away
+  const rep = signedFor(p, s.teamId, s.role);
+  if (rep) staff[rep.id] = { ...rep, teamId: rep.signed!.teamId, until: rep.signed!.until, salary: rep.signed!.salary, signed: null };
   return {
-    people: { ...p, staff: { ...p.staff, [staffId]: { ...s, teamId: null } } },
+    people: { ...p, staff },
     cost,
-    message: `${s.name} deja el cargo de ${STAFF_ROLE_INFO[s.role].label.toLowerCase()} (indemnización US$ ${cost.toFixed(1)} M). El puesto queda vacante.`,
+    message: `${s.name} deja el cargo de ${STAFF_ROLE_INFO[s.role].label.toLowerCase()} (indemnización US$ ${cost.toFixed(1)} M).${rep ? ` ${rep.name} asume desde ya.` : " El puesto queda vacante."}`,
   };
 }
 
@@ -447,6 +503,7 @@ export function midSeasonMarket(p0: PeopleState, teams: Team[], playerTeamId: st
     // 1) renewals
     for (const d of Object.values(drivers)) {
       if (d.status !== "active" || d.contract?.teamId !== t.id || d.contract.until > p0.season || d.nextContract) continue;
+      if (willRetire(d, p0.season) || nextSeasonLineup(p, t.id).length >= 2) continue;
       const age = ageOf(d, next);
       const mate = Object.values(drivers).find((x) => x.id !== d.id && x.contract?.teamId === t.id && x.status === "active");
       const keep = age <= 37 && d.pace >= (mate?.pace ?? 0) - 4;
@@ -460,7 +517,7 @@ export function midSeasonMarket(p0: PeopleState, teams: Team[], playerTeamId: st
     // 2) a signing for an open seat next year
     if (nextSeasonLineup(p, t.id).length >= 2 || !rng.chance(0.3)) continue;
     const pool = Object.values(drivers).filter(
-      (d) => d.status !== "retired" && !d.nextContract && d.contract?.teamId !== t.id && availableForNextSeason(p, d) && ageOf(d, next) <= 36,
+      (d) => d.status !== "retired" && !d.nextContract && d.contract?.teamId !== t.id && availableForNextSeason(p, d) && ageOf(d, next) <= 36 && !willRetire(d, p0.season),
     );
     if (!pool.length) continue;
     const score = (d: DriverRecord) =>
@@ -570,11 +627,15 @@ export function advanceSeason(
   const old = p0.season;
   const season = old + 1;
   const drivers: Record<string, DriverRecord> = structuredClone(p0.drivers);
+  // retirements were decided during the year; a signed contract for next season is always honoured
+  const retiring = new Set(Object.values(p0.drivers).filter((d) => !d.nextContract && willRetire(d, old)).map((d) => d.id));
 
-  // 1) AI renewals for contracts ending now
+  // 1) AI renewals for contracts ending now (only while there is a seat)
+  const p0n: PeopleState = { ...p0, drivers };
   for (const d of Object.values(drivers)) {
     if (!d.contract || d.contract.until !== old || d.nextContract || d.status !== "active") continue;
-    if (d.contract.teamId === playerTeamId) continue;
+    if (d.contract.teamId === playerTeamId || retiring.has(d.id)) continue;
+    if (nextSeasonLineup(p0n, d.contract.teamId).length >= 2) continue;
     const age = ageOf(d, season);
     const teamPace = teams.find((t) => t.id === d.contract!.teamId)?.drivers.map((x) => x.pace) ?? [];
     const keep = age <= 38 && d.pace >= Math.max(...teamPace, 0) - 4 && rng.chance(0.8);
@@ -615,9 +676,8 @@ export function advanceSeason(
     drivers[id] = dev;
     const age = ageOf(dev, season);
     if (dev.status === "active" && dev.pace - before >= 3) news.push(`${dev.name} da un gran salto (+${(dev.pace - before).toFixed(1)} de ritmo).`);
-    if (rng.chance(retireChance(age, !!dev.contract))) {
-      if (dev.contract) news.push(`${dev.name} anuncia su retiro a los ${age} años.`);
-      else if (dev.status === "free" && dev.pace > 82) news.push(`${dev.name} se retira de la Fórmula 1 (${age} años).`);
+    if (retiring.has(id)) {
+      if (p0.drivers[id]?.contract || dev.pace > 82) news.push(`${dev.name} se retira de la Fórmula 1 a los ${age} años.`);
       drivers[id] = { ...dev, status: "retired", contract: null, nextContract: null };
     }
     if (dev.status === "junior" && age >= 26) drivers[id] = { ...drivers[id], status: "free" };
@@ -628,7 +688,11 @@ export function advanceSeason(
   const taken = new Set<string>();
   for (const t of teams) {
     let current = lineup(p1, t.id, season);
-    while (current.length < 2) {
+    // the player's empty seats stay empty: they choose who to sign
+    if (t.id === playerTeamId && current.length < 2) {
+      news.push(`Tu equipo: tienes ${2 - current.length === 1 ? "un asiento libre" : "dos asientos libres"} para ${season}. Ficha un piloto antes del primer GP.`);
+    }
+    while (current.length < 2 && t.id !== playerTeamId) {
       const pick = aiPick(p1, carRanks[t.id] ?? 6, season, taken);
       if (!pick) break;
       taken.add(pick.id);
@@ -637,11 +701,9 @@ export function advanceSeason(
       drivers[pick.id] = { ...pick, status: "active", contract: { teamId: t.id, salary, until: season + years - 1 } };
       const again = prevTeam.get(pick.id) === t.id;
       news.push(
-        t.id === playerTeamId
-          ? `Tu equipo tenía un asiento libre: se contrató a ${pick.name} (US$ ${salary.toFixed(1)} M/año).`
-          : again
-            ? `${pick.name} renueva con ${t.name}.`
-            : `${t.name} ficha a ${pick.name}${prevTeam.get(pick.id) ? "" : pick.origin === "Fórmula 2" ? " desde la Fórmula 2" : ""}.`,
+        again
+          ? `${pick.name} renueva con ${t.name}.`
+          : `${t.name} ficha a ${pick.name}${prevTeam.get(pick.id) ? "" : pick.origin === "Fórmula 2" ? " desde la Fórmula 2" : ""}.`,
       );
       current = lineup(p1, t.id, season);
     }
@@ -671,9 +733,13 @@ export function advanceSeason(
 
   // 6) staff contracts: AI teams renew most people, the rest go to the market; empty AI posts are filled
   const staff: Record<string, StaffRecord> = structuredClone(p0.staff);
+  const replaced = (st: StaffRecord) => Object.values(staff).some((x) => x.signed?.teamId === st.teamId && x.role === st.role);
   for (const st of Object.values(staff)) {
     if (!st.teamId || (st.until ?? season) >= season) continue;
-    if (st.teamId === playerTeamId) {
+    if (replaced(st)) {
+      news.push(`${st.name} deja ${teams.find((t) => t.id === st.teamId)?.name ?? st.teamId} al terminar su contrato.`);
+      staff[st.id] = { ...st, teamId: null };
+    } else if (st.teamId === playerTeamId) {
       news.push(`Tu equipo: terminó el contrato de ${st.name} (${STAFF_ROLE_INFO[st.role].label.toLowerCase()}); el puesto queda vacante.`);
       staff[st.id] = { ...st, teamId: null };
     } else if (rng.chance(0.8)) {
@@ -682,6 +748,15 @@ export function advanceSeason(
       news.push(`${st.name} deja ${teams.find((t) => t.id === st.teamId)?.name ?? st.teamId}.`);
       staff[st.id] = { ...st, teamId: null };
     }
+  }
+  // people signed during the year join now
+  for (const st of Object.values(staff)) {
+    if (!st.signed) continue;
+    const holder = Object.values(staff).find((x) => x.teamId === st.signed!.teamId && x.role === st.role);
+    if (holder) staff[holder.id] = { ...holder, teamId: null };
+    const tn = teams.find((t) => t.id === st.signed!.teamId)?.name ?? st.signed.teamId;
+    news.push(`${st.name} se incorpora a ${tn} como ${STAFF_ROLE_INFO[st.role].label.toLowerCase()}.`);
+    staff[st.id] = { ...st, teamId: st.signed.teamId, until: st.signed.until, salary: st.signed.salary, signed: null };
   }
   let n = p0.nextJunior * 10;
   for (const role of STAFF_ROLES) for (let i = 0; i < 1; i++) {
@@ -692,7 +767,7 @@ export function advanceSeason(
     if (t.id === playerTeamId) continue;
     for (const role of STAFF_ROLES) {
       if (Object.values(staff).some((x) => x.teamId === t.id && x.role === role)) continue;
-      const pool = Object.values(staff).filter((x) => !x.teamId && x.role === role).sort((a, b) => b.rating - a.rating);
+      const pool = Object.values(staff).filter((x) => !x.teamId && !x.signed && x.role === role).sort((a, b) => b.rating - a.rating);
       const pick = pool.length && rng.chance(0.7) ? pool[rng.int(0, Math.min(2, pool.length - 1))] : newStaff(rng, role, season, n++);
       staff[pick.id] = { ...pick, teamId: t.id, until: season + rng.int(1, 3) };
       news.push(`${t.name} contrata a ${pick.name} como ${STAFF_ROLE_INFO[role].label.toLowerCase()}.`);
