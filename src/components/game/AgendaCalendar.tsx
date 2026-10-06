@@ -53,7 +53,7 @@ export function ActivityDialog({ a, onChoose, onClose }: { a: Activity | null; o
             ) : (
               <div className="grid gap-2">
                 {a.choices.map((c, i) => {
-                  const fx = describeEffect(c.effect);
+                  const fx = describeEffect(c.effect, a.drivers);
                   return (
                     <motion.button
                       key={i}

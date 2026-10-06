@@ -35,6 +35,7 @@ export interface Activity {
   text: string;
   sponsorId?: string;
   tpl?: string; // template used
+  drivers?: [string, string]; // names of the team's drivers when it was planned
   choices: ActivityChoice[];
   chosen?: number;
   outcome?: string; // what happened
@@ -123,7 +124,7 @@ const TEMPLATES: Template[] = [
         {
           label: "Todo el día con ambos pilotos",
           desc: "Gran activación. Pagan un bono extra, pero los pilotos pierden un día de simulador.",
-          effect: { budget: 0.9, sponsorRaces: 2, drivers: { stat: "consistency", delta: -0.4, which: "both" } },
+          effect: { budget: 0.9, sponsorRaces: 2, drivers: { stat: "consistency", delta: -1.2, which: "both" } },
         },
         {
           label: `Solo ${d1} por la tarde`,
@@ -150,7 +151,7 @@ const TEMPLATES: Template[] = [
           label: "Aceptar todo",
           desc: "El video será viral y el contrato mejora… si nadie se lesiona.",
           effect: { budget: 1.3, sponsorRaces: 3 },
-          risk: { chance: 0.15, effect: { drivers: { stat: "pace", delta: -1, which: "first" } }, text: `${d1} se lesionó la muñeca: pierde ritmo.`, safe: `Todo salió perfecto: ${d1} grabó sin lesiones y el video es viral.` },
+          risk: { chance: 0.15, effect: { drivers: { stat: "pace", delta: -1.5, which: "first" } }, text: `${d1} se lesionó la muñeca: pierde ritmo.`, safe: `Todo salió perfecto: ${d1} grabó sin lesiones y el video es viral.` },
         },
         { label: "Solo el prototipo, sin paracaídas", desc: "Menos espectacular, sin riesgos.", effect: { budget: 0.5 } },
         { label: "Rechazar", desc: "Prioridad absoluta a la temporada.", effect: { sponsorRaces: -1 } },
@@ -187,7 +188,7 @@ const TEMPLATES: Template[] = [
         {
           label: `Va ${d1}`,
           desc: "Los invitados felices, pero el piloto llega cansado al fin de semana.",
-          effect: { budget: 1.1, drivers: { stat: "consistency", delta: -0.3, which: "first" } },
+          effect: { budget: 1.1, drivers: { stat: "consistency", delta: -0.9, which: "first" } },
         },
         { label: "Excusarse", desc: "Sin efectos, pero pierdes la oportunidad.", effect: {} },
       ],
@@ -220,7 +221,7 @@ const TEMPLATES: Template[] = [
       title: `Vuelo con aficionados de ${sponsor!.name}`,
       text: `${sponsor!.name} sortea un viaje al próximo Gran Premio con un piloto a bordo y quiere hacer un show durante el vuelo.`,
       choices: [
-        { label: `${d2} viaja con los fans`, desc: "Experiencia memorable, mejor contrato.", effect: { budget: 0.6, sponsorRaces: 2, drivers: { stat: "consistency", delta: -0.2, which: "second" } } },
+        { label: `${d2} viaja con los fans`, desc: "Experiencia memorable, mejor contrato.", effect: { budget: 0.6, sponsorRaces: 2, drivers: { stat: "consistency", delta: -0.6, which: "second" } } },
         { label: "Un video saludo y entradas para el paddock", desc: "Cumple bien y no molesta a nadie.", effect: { budget: 0.3 } },
         { label: "Rechazar", desc: "El patrocinador lo anota.", effect: { sponsorRaces: -1 } },
       ],
@@ -248,7 +249,7 @@ const TEMPLATES: Template[] = [
       title: "Pirelli pide un día de pruebas de neumáticos",
       text: "Pirelli busca equipos para probar los compuestos del próximo año. Es un día de pista con datos valiosos, pero cuesta mantener al equipo allí.",
       choices: [
-        { label: `Con ${d1} al volante`, desc: "Tu piloto aprende a cuidar mejor los neumáticos.", effect: { budget: -0.4, drivers: { stat: "tyreMgmt", delta: 0.8, which: "first" } } },
+        { label: `Con ${d1} al volante`, desc: "Tu piloto aprende a cuidar mejor los neumáticos.", effect: { budget: -0.4, drivers: { stat: "tyreMgmt", delta: 2, which: "first" } } },
         { label: "Con el piloto reserva", desc: "Pirelli paga los costos; aprendes algo del auto.", effect: { budget: 0.2, area: { area: "chassis", delta: 0.2 } } },
         { label: "No participar", desc: "Sin efectos.", effect: {} },
       ],
@@ -274,8 +275,8 @@ const TEMPLATES: Template[] = [
       title: `Polémica: ${d2} critica la estrategia del equipo`,
       text: `En una entrevista, ${d2} dijo que el equipo "lo dejó tirado" en la última carrera. La prensa pide una reacción.`,
       choices: [
-        { label: "Respaldarlo públicamente", desc: "El piloto se siente apoyado y rinde con más confianza.", effect: { drivers: { stat: "consistency", delta: 0.6, which: "second" } } },
-        { label: "Multarlo en privado", desc: "Disciplina: recuperas dinero pero el ambiente se enfría.", effect: { budget: 0.3, drivers: { stat: "consistency", delta: -0.4, which: "second" } } },
+        { label: "Respaldarlo públicamente", desc: "El piloto se siente apoyado y rinde con más confianza.", effect: { drivers: { stat: "consistency", delta: 1.8, which: "second" } } },
+        { label: "Multarlo en privado", desc: "Disciplina: recuperas dinero pero el ambiente se enfría.", effect: { budget: 0.3, drivers: { stat: "consistency", delta: -1.2, which: "second" } } },
         { label: "No comentar", desc: "Se apaga solo. Neutral.", effect: {} },
       ],
     }),
@@ -287,8 +288,8 @@ const TEMPLATES: Template[] = [
       title: "Oferta de un simulador de última generación",
       text: "Un fabricante ofrece su nuevo simulador con modelos de neumáticos mucho más precisos.",
       choices: [
-        { label: "Comprarlo", desc: "Caro, pero ambos pilotos mejoran.", effect: { budget: -2.5, drivers: { stat: "pace", delta: 0.4, which: "both" } } },
-        { label: "Arrendarlo por la temporada", desc: "Más barato, mejora menor.", effect: { budget: -1, drivers: { stat: "pace", delta: 0.2, which: "both" } } },
+        { label: "Comprarlo", desc: "Caro, pero ambos pilotos mejoran.", effect: { budget: -2.5, drivers: { stat: "pace", delta: 1, which: "both" } } },
+        { label: "Arrendarlo por la temporada", desc: "Más barato, mejora menor.", effect: { budget: -1, drivers: { stat: "pace", delta: 0.5, which: "both" } } },
         { label: "Quedarse con el actual", desc: "Sin gasto ni mejora.", effect: {} },
       ],
     }),
@@ -331,9 +332,9 @@ const TEMPLATES: Template[] = [
       title: "Visita a un hospital infantil",
       text: `Una fundación invita a ${d1} y ${d2} a visitar un hospital infantil y subastar un casco firmado.`,
       choices: [
-        { label: "Ir con ambos pilotos y donar", desc: "Motiva a todo el equipo.", effect: { budget: -0.3, drivers: { stat: "consistency", delta: 0.4, which: "both" } } },
+        { label: "Ir con ambos pilotos y donar", desc: "Motiva a todo el equipo.", effect: { budget: -0.3, drivers: { stat: "consistency", delta: 1.2, which: "both" } } },
         { label: "Donar el casco", desc: "Buen gesto, sin costo.", effect: {} },
-        { label: "Subastar y quedarse parte", desc: "Algo de dinero, mala prensa.", effect: { budget: 0.3, drivers: { stat: "consistency", delta: -0.2, which: "both" } } },
+        { label: "Subastar y quedarse parte", desc: "Algo de dinero, mala prensa.", effect: { budget: 0.3, drivers: { stat: "consistency", delta: -0.6, which: "both" } } },
       ],
     }),
   },
@@ -344,8 +345,8 @@ const TEMPLATES: Template[] = [
       title: "Campamento de preparación física",
       text: `El preparador físico propone llevar a ${d1} a un campamento de altura antes del próximo GP.`,
       choices: [
-        { label: "Una semana completa", desc: "Mejor forma física y constancia.", effect: { budget: -0.4, drivers: { stat: "consistency", delta: 0.6, which: "first" } } },
-        { label: "Fin de semana corto", desc: "Algo de mejora.", effect: { budget: -0.15, drivers: { stat: "consistency", delta: 0.25, which: "first" } } },
+        { label: "Una semana completa", desc: "Mejor forma física y constancia.", effect: { budget: -0.4, drivers: { stat: "consistency", delta: 1.8, which: "first" } } },
+        { label: "Fin de semana corto", desc: "Algo de mejora.", effect: { budget: -0.15, drivers: { stat: "consistency", delta: 0.8, which: "first" } } },
         { label: "Entrenar en casa", desc: "Sin cambios.", effect: {} },
       ],
     }),
@@ -404,6 +405,7 @@ export function generateActivities(opts: {
       icon: t.icon,
       sponsorId: sponsor?.id,
       tpl: String(TEMPLATES.indexOf(t)),
+      drivers: opts.drivers,
       ...made,
       choices: made.choices.map((c) => ({ ...c, effect: { ...c.effect, budget: c.effect.budget !== undefined ? m(c.effect.budget) : undefined } })),
     });
@@ -412,7 +414,7 @@ export function generateActivities(opts: {
 }
 
 /** Short text of an effect for the choice buttons, marked good or bad for the team. */
-export function describeEffect(e: ActivityEffect): { text: string; good: boolean }[] {
+export function describeEffect(e: ActivityEffect, names?: [string, string]): { text: string; good: boolean }[] {
   const out: { text: string; good: boolean }[] = [];
   const sg = (x: number) => (x > 0 ? "+" : "");
   if (e.budget) out.push({ text: `${sg(e.budget)}US$ ${e.budget.toFixed(1)} M`, good: e.budget > 0 });
@@ -428,7 +430,13 @@ export function describeEffect(e: ActivityEffect): { text: string; good: boolean
   }
   if (e.drivers) {
     const stat = { pace: "ritmo", consistency: "constancia", racecraft: "carrera", tyreMgmt: "manejo de neumáticos" }[e.drivers.stat];
-    const who = e.drivers.which === "both" ? " (ambos pilotos)" : e.drivers.which === "first" ? " (piloto 1)" : " (piloto 2)";
+    const short = (n?: string) => n?.split(" ").slice(-1)[0];
+    const who =
+      e.drivers.which === "both"
+        ? " (ambos pilotos)"
+        : e.drivers.which === "first"
+          ? ` (${short(names?.[0]) ?? "piloto 1"})`
+          : ` (${short(names?.[1]) ?? "piloto 2"})`;
     out.push({ text: `${stat} ${sg(e.drivers.delta)}${e.drivers.delta}${who}`, good: e.drivers.delta > 0 });
   }
   if (e.staff) out.push({ text: `personal ${sg(e.staff.delta)}${e.staff.delta}`, good: e.staff.delta > 0 });

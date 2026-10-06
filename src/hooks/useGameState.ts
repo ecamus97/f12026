@@ -421,12 +421,19 @@ function applyActivity(s: GameState, id: string, idx: number, auto = false): Gam
       );
       if (people) {
         const drivers = { ...people.drivers };
-        for (const did of ids) if (drivers[did]) drivers[did] = { ...drivers[did], [e.drivers.stat]: bump(drivers[did][e.drivers.stat]) };
+        for (const did of ids)
+          if (drivers[did])
+            drivers[did] = {
+              ...drivers[did],
+              [e.drivers.stat]: bump(drivers[did][e.drivers.stat]),
+              mods: [...(drivers[did].mods ?? []), { stat: e.drivers.stat, delta: e.drivers.delta, label: a.title, season: s.season }].slice(-4),
+            };
         people = { ...people, drivers };
       }
     }
   }
-  const applied = effects.flatMap((e) => describeEffect(e));
+  const names: [string, string] = a.drivers ?? [team.drivers[0]?.name ?? "", team.drivers[1]?.name ?? ""];
+  const applied = effects.flatMap((e) => describeEffect(e, names));
   const outcome = `${auto ? "Sin decisión a tiempo: " : ""}${c.label}.${c.risk ? ` ${risky ? c.risk.text : c.risk.safe ?? "Todo salió bien, sin contratiempos."}` : ""}${
     applied.length ? ` Resultado: ${applied.map((x) => x.text).join(", ")}.` : " Sin efectos."
   }`;

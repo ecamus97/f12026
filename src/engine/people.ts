@@ -23,6 +23,7 @@ export interface DriverRecord extends Driver {
   nextContract: Contract | null; // signed for the following season
   status: DriverStatus;
   origin?: string;
+  mods?: { stat: string; delta: number; label: string; season: number }[]; // recent changes from events
 }
 
 export interface StaffRecord {

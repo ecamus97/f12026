@@ -24,12 +24,31 @@ function potentialLabel(d: DriverRecord, season: number) {
   return `${mid - 2}–${Math.min(99, mid + 2)}`;
 }
 
-function Ratings({ d }: { d: DriverRecord }) {
+const STAT_ES: Record<string, string> = { pace: "Ritmo", consistency: "Constancia", racecraft: "Carrera", tyreMgmt: "Neumáticos", defending: "Defensa" };
+
+function Ratings({ d, season }: { d: DriverRecord; season?: number }) {
+  const mods = (d.mods ?? []).filter((m) => season === undefined || m.season === season);
   return (
-    <span className="text-[11px] text-muted-foreground tabular-nums">
-      Ritmo <b className="text-foreground">{d.pace.toFixed(0)}</b> · Carrera {d.racecraft.toFixed(0)} · Defensa {d.defending.toFixed(0)} · Constancia{" "}
-      {d.consistency.toFixed(0)} · Neum. {d.tyreMgmt.toFixed(0)}
-    </span>
+    <div className="space-y-1">
+      <span className="text-[11px] text-muted-foreground tabular-nums">
+        Ritmo <b className="text-foreground">{d.pace.toFixed(1)}</b> · Carrera {d.racecraft.toFixed(1)} · Defensa {d.defending.toFixed(1)} · Constancia{" "}
+        {d.consistency.toFixed(1)} · Neum. {d.tyreMgmt.toFixed(1)}
+      </span>
+      {mods.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {mods.map((m, i) => (
+            <span
+              key={i}
+              title={m.label}
+              className={cn("text-[10px] rounded px-1.5 py-0.5 border", m.delta > 0 ? "border-emerald-500/40 text-emerald-300" : "border-red-500/40 text-red-300")}
+            >
+              {STAT_ES[m.stat] ?? m.stat} {m.delta > 0 ? "+" : ""}
+              {m.delta} · {m.label.length > 28 ? m.label.slice(0, 28) + "…" : m.label}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -94,7 +113,7 @@ export function DriversPanel({
                   {m1(d.contract?.salary ?? 0)}/año · hasta {d.contract?.until}
                 </span>
               </div>
-              <Ratings d={d} />
+              <Ratings d={d} season={season} />
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 {renewed ? (
                   <span className="text-green-400 flex items-center gap-1">
