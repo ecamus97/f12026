@@ -241,9 +241,13 @@ export function TeamLogo({ teamId, color, label, className }: { teamId: string; 
   const text = (label ?? info?.shortName ?? teamId.slice(0, 3)).toUpperCase();
   if (url)
     return (
-      // a light badge so dark logos stay readable on the dark UI
-      <span className={cn("relative inline-block rounded-[22%] bg-white shadow-md overflow-hidden", className)}>
-        <img src={url} alt={info?.name ?? teamId} className="absolute inset-[11%] w-[78%] h-[78%] object-contain" draggable={false} />
+      <span className={cn("relative inline-block", className)}>
+        <img
+          src={url}
+          alt={info?.name ?? teamId}
+          className="absolute inset-0 w-full h-full object-contain drop-shadow-[0_2px_6px_rgba(0,0,0,0.6)]"
+          draggable={false}
+        />
       </span>
     );
   const gid = `crest-${teamId.replace(/[^a-z0-9]/gi, "")}`;

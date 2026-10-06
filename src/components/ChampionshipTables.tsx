@@ -22,8 +22,9 @@ function useRaceColumns(results: StoredRaceResult[], races?: RaceCol[]) {
   const byRace = new Map(results.map((r) => [r.raceId, r]));
   const sprintOf = (driverId: string, raceId: number): number | "DNF" | undefined => {
     const row = byRace.get(raceId)?.sprint?.find((x) => x.driverId === driverId);
-    if (!row) return undefined;
-    return row.status === "dnf" ? "DNF" : row.position;
+    // only the sprint points finishers (top 8) are shown
+    if (!row || row.status === "dnf" || row.position > 8) return undefined;
+    return row.position;
   };
   const posOf = (driverId: string, raceId: number): number | "DNF" | undefined => {
     const row = byRace.get(raceId)?.rows.find((x) => x.driverId === driverId);

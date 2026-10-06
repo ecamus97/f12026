@@ -19,4 +19,5 @@ con los colores del equipo.
 | Audi | `audi.svg` |
 | Cadillac | `cadillac.svg` |
 
-Recomendado: fondo transparente, formato cuadrado, al menos 256×256 px.
+Recomendado: fondo transparente, formato cuadrado, al menos 256×256 px, y colores claros
+(el juego tiene fondo oscuro: las partes negras no se ven).
