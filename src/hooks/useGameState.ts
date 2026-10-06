@@ -662,13 +662,34 @@ function finishRaceState(s: GameState): GameState {
     playerTeamId: s.playerTeamId,
     look,
   });
-  if (management) {
-    const h = management.history;
-    const prev = h.find((x) => x.round === round - 1);
-    const cur = h.find((x) => x.round === round);
-    if (prev && cur) {
-      const pace = (d: Record<string, import("@/engine").CarDev>) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, carPace(v)]));
-      news = [...news, ...developmentNews({ season: s.season, round, before: pace(prev.dev), after: pace(cur.dev), playerTeamId: s.playerTeamId, look })];
+  // big upgrade packages of the other teams (the two largest of the round)
+  if (management?.lastAiPackages?.length) {
+    const AREA_ES = { aero: "aerodinámica", powerUnit: "unidad de potencia", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const;
+    const PART = { aero: "un nuevo fondo y alerones", powerUnit: "una evolución del motor", chassis: "un chasis aligerado y nueva suspensión", reliability: "piezas más fiables", pitCrew: "mejoras en boxes" } as const;
+    const prevH = management.history.find((x) => x.round === round - 1);
+    const rank = (id: string, d: Record<string, import("@/engine").CarDev>) => 1 + Object.keys(d).filter((k) => carPace(d[k]) > carPace(d[id])).length;
+    for (const pk of [...management.lastAiPackages].sort((a, b) => b.gain - a.gain).slice(0, 2)) {
+      if (pk.gain < 1.2) continue;
+      const t = look.team(pk.teamId);
+      const before = prevH ? carPace(prevH.dev[pk.teamId]) : 0;
+      const after = carPace(management.dev[pk.teamId]);
+      news.push({
+        id: `${s.season}-${round}-pkg-${pk.teamId}`,
+        season: s.season,
+        round,
+        kind: "development",
+        title: `${t?.name} estrena ${PART[pk.area]}`,
+        summary: `${AREA_ES[pk.area]} +${pk.gain.toFixed(1)} · ritmo del auto ${before.toFixed(1)} → ${after.toFixed(1)} (${rank(pk.teamId, management.dev)}º de la parrilla)`,
+        body: [
+          `${t?.name} llevó a la pista un paquete grande: su ${AREA_ES[pk.area]} sube ${pk.gain.toFixed(1)} puntos.`,
+          prevH ? `Antes era el ${rank(pk.teamId, prevH.dev)}º auto más rápido; ahora es el ${rank(pk.teamId, management.dev)}º.` : "",
+          `Los equipos que van más atrás traen paquetes con más frecuencia: el campo tiende a apretarse durante la temporada.`,
+        ].filter(Boolean),
+        teamIds: [pk.teamId],
+        color: t?.hex,
+        importance: 2,
+        chart: { type: "dev", teamIds: s.playerTeamId ? [pk.teamId, s.playerTeamId] : [pk.teamId], metric: "pace" },
+      });
     }
   }
   // the title is decided when nobody can catch the leader any more
@@ -747,7 +768,10 @@ function finishRaceState(s: GameState): GameState {
     const ev = rivalEvent(s.teamsData, s.playerTeamId, randomSeed());
     if (ev && management.dev[ev.teamId]) {
       const d = management.dev[ev.teamId];
-      management = { ...management, dev: { ...management.dev, [ev.teamId]: { ...d, [ev.area]: Math.max(60, Math.min(99.5, +(d[ev.area] + ev.delta).toFixed(2))) } } };
+      const dev = { ...management.dev, [ev.teamId]: { ...d, [ev.area]: Math.max(60, Math.min(99.5, +(d[ev.area] + ev.delta).toFixed(2))) } };
+      // the change shows up in this round's point of the development chart
+      const history = management.history.map((h) => (h.round === round ? { ...h, dev: structuredClone(dev) } : h));
+      management = { ...management, dev, history };
       const AREA_ES = { aero: "aerodinámica", powerUnit: "unidad de potencia", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const;
       news.push({
         id: `${s.season}-${round}-rival-${ev.teamId}`,
@@ -760,6 +784,7 @@ function finishRaceState(s: GameState): GameState {
         teamIds: [ev.teamId],
         color: look.team(ev.teamId)?.hex,
         importance: 1,
+        chart: { type: "dev", teamIds: s.playerTeamId ? [ev.teamId, s.playerTeamId] : [ev.teamId], metric: "pace" },
       });
     }
   }

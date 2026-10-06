@@ -104,7 +104,7 @@ export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "incom
   tv: { label: "Derechos comerciales y TV", kind: "income" },
   sponsor: { label: "Patrocinadores", kind: "income" },
   prize: { label: "Premios", kind: "income" },
-  owners: { label: "Aporte de los dueños para sueldos", kind: "income" },
+  owners: { label: "Aporte de los dueños (sistema anterior)", kind: "income" },
   logistics: { label: "Logística y viajes", kind: "expense" },
   staff: { label: "Personal de carrera", kind: "expense" },
   parts: { label: "Componentes y neumáticos", kind: "expense" },
@@ -178,6 +178,7 @@ export interface ManagementState {
   history: DevSnapshot[]; // development of every team, after each round
   staffRatings?: Record<string, { tp: number; td: number; aero?: number; pu?: number; sport?: number; race?: number }>; // staff per team
   regs?: { budgetCap: number | null; puFreeze: boolean; flatPrize: boolean }; // regulations that affect development and money
+  lastAiPackages?: { teamId: string; area: DevArea; gain: number }[]; // big upgrades of the last round
 }
 
 /** R&D + facilities spent this season (the ledger restarts every season). */
@@ -220,7 +221,7 @@ export const tpSponsorMult = (tp = 80) => 0.92 + (tp - 70) * 0.006;
 
 // --- Economy constants -------------------------------------------------------
 export const CRASH_REPAIR = 1.5; // M USD per accident
-export const PRIZE_PER_POINT = 0.12; // M USD
+export const PRIZE_PER_POINT = 0.06; // M USD
 export const STAFF_COST = 1.2;
 export const PARTS_COST = 0.7;
 const EUROPE = new Set([
@@ -454,28 +455,49 @@ function applyGain(d: CarDev, area: DevArea, gain: number): CarDev {
 }
 
 /** AI teams develop a little every race, proportional to their budget. */
-function developAi(m: ManagementState, teams: Team[], rng: Rng): Record<string, CarDev> {
+export interface AiPackage {
+  teamId: string;
+  area: DevArea;
+  gain: number;
+}
+
+/**
+ * AI development: small steady work every race plus, now and then, a big upgrade package.
+ * Packages come more often (and help more) for the teams that are behind, so the field
+ * tends to close up over a season.
+ */
+function developAi(m: ManagementState, teams: Team[], rng: Rng): { dev: Record<string, CarDev>; packages: AiPackage[] } {
   const dev = { ...m.dev };
+  const packages: AiPackage[] = [];
+  const paces = Object.values(m.dev).map(carPace);
+  const best = Math.max(...paces);
+  const worst = Math.min(...paces);
   for (const t of teams) {
     if (t.id === m.player?.teamId) continue;
     const d = dev[t.id];
     if (!d) continue;
     const cap = m.regs?.budgetCap;
     const budget = Math.min(m.aiBudget[t.id] ?? 40, cap ? cap * 0.8 : Infinity);
-    const budgetFactor = budget / 45;
+    const budgetFactor = Math.max(0.6, budget / 45);
+    const behind = best > worst ? (best - carPace(d)) / (best - worst) : 0; // 0 = leader, 1 = last
+    const areas = (["aero", "powerUnit", "chassis"] as DevArea[]).filter((a) => !(a === "powerUnit" && m.regs?.puFreeze));
     let next = d;
-    // ~1.6 projects' worth of gains per race spread over areas
-    for (const area of ["aero", "powerUnit", "chassis"] as DevArea[]) {
-      if (rng.chance(0.42) && !(area === "powerUnit" && m.regs?.puFreeze)) {
-        const g = (0.6 + rng.next() * 1.2) * budgetFactor * areaMult(m, t.id, area) * diminishing(next[area]) * 0.28;
-        next = applyGain(next, area, g);
-      }
+    // steady work
+    for (const area of areas) {
+      if (rng.chance(0.35)) next = applyGain(next, area, (0.3 + rng.next() * 0.5) * budgetFactor * areaMult(m, t.id, area) * diminishing(next[area]) * 0.35);
+    }
+    // a big upgrade package
+    if (areas.length && rng.chance(0.08 + behind * 0.11)) {
+      const area = rng.pick(areas);
+      const g = +((1.0 + rng.next() * 1.6) * (1 + behind * 0.4) * areaMult(m, t.id, area) * Math.min(1.2, diminishing(next[area]) * 1.1)).toFixed(2);
+      next = applyGain(next, area, g);
+      packages.push({ teamId: t.id, area, gain: g });
     }
     if (rng.chance(0.2)) next = applyGain(next, "reliability", (1 + rng.next() * 2) * diminishing(next.reliability) * 0.6);
     if (rng.chance(0.15)) next = applyGain(next, "pitCrew", (0.5 + rng.next() * 1.5) * diminishing(next.pitCrew) * 0.6);
     dev[t.id] = next;
   }
-  return dev;
+  return { dev, packages };
 }
 
 /**
@@ -492,7 +514,8 @@ export function processRaceWeekend(
 ): ManagementState {
   const rng = createRng(m.rngState);
   const inbox: InboxMessage[] = [];
-  let dev = developAi(m, teams, rng);
+  const ai = developAi(m, teams, rng);
+  let dev = ai.dev;
   let player = m.player;
 
   if (player) {
@@ -530,8 +553,6 @@ export function processRaceWeekend(
     ledger.push({ race: round, concept: "Personal de carrera", amount: -STAFF_COST, category: "staff" });
     ledger.push({ race: round, concept: "Componentes y neumáticos", amount: -PARTS_COST, category: "parts" });
     if (payrollPerSeason !== undefined) {
-      const fund = player.salaryFund ?? payrollPerSeason;
-      ledger.push({ race: round, concept: "Aporte de los dueños para sueldos", amount: +(fund / calendar().length).toFixed(2), category: "owners" });
       ledger.push({ race: round, concept: "Sueldos de pilotos y dirección", amount: -(payrollPerSeason / calendar().length).toFixed(2), category: "salaries" });
     }
     if (crashes > 0) {
@@ -604,6 +625,7 @@ export function processRaceWeekend(
     inbox: [...m.inbox, ...inbox].slice(-60),
     rngState: rng.state(),
     history: [...(m.history ?? []), { round, dev: structuredClone(dev) }],
+    lastAiPackages: ai.packages,
   };
 }
 
@@ -611,7 +633,7 @@ export function processRaceWeekend(
 export function baseRaceBalance(m: ManagementState, round: number, payrollPerSeason = 0) {
   const p = m.player!;
   const n = calendar().length;
-  const income = tvRights(carRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0) + (p.salaryFund ?? payrollPerSeason) / n;
+  const income = tvRights(carRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0);
   return { income, costs: raceRunningCost(Math.max(1, round)) + payrollPerSeason / n };
 }
 

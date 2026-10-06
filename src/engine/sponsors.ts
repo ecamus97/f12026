@@ -42,10 +42,10 @@ const NAMES = [
 ];
 
 /** Reference per-race value of a principal sponsor for a given car rating. */
-export const sponsorReference = (pace: number) => Math.max(0.9, 1.2 + (pace - 78) * 0.08);
+export const sponsorReference = (pace: number) => Math.max(0.6, 0.8 + (pace - 78) * 0.05);
 
 /** TV / commercial rights from the sport, by car rank (1 = best). */
-export const tvRights = (carRank: number) => +(1.3 - carRank * 0.05).toFixed(2);
+export const tvRights = (carRank: number) => +(2.6 + (11 - Math.min(11, carRank)) * 0.13).toFixed(2);
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
