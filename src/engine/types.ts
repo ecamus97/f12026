@@ -1,7 +1,9 @@
 import type { Driver, TeamInfo, Track } from "@/data/f1Data";
 
-export type Compound = "S" | "M" | "H";
-export type DriverMode = "push" | "normal" | "conserve";
+export type Compound = "S" | "M" | "H" | "I" | "W";
+export type DriverMode = "push" | "normal" | "conserve"; // tyre usage
+export type FuelMode = "rich" | "normal" | "lean";
+export type ErsMode = "deploy" | "balanced" | "harvest";
 
 export interface Entry {
   driver: Driver;
@@ -39,7 +41,12 @@ export interface CarState {
   usedCompounds: Compound[];
   plan: Stint[]; // remaining stints including the current one
   stops: number;
-  mode: DriverMode;
+  mode: DriverMode; // tyres
+  fuelMode?: FuelMode;
+  ersMode?: ErsMode;
+  fuel?: number; // laps of fuel left (normal consumption)
+  battery?: number; // 0-100 %
+  fuelWarned?: boolean;
   pitRequest: Compound | null; // manual pit call (manager)
   controlled?: boolean; // player car: only planned/manual stops, no AI improvisation
   status: "running" | "dnf";
@@ -50,7 +57,7 @@ export interface CarState {
 }
 
 export type RaceEventType =
-  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish";
+  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather";
 
 export interface RaceEvent {
   lap: number;
@@ -73,6 +80,7 @@ export interface RaceState {
   finished: boolean;
   strategyConfirmed?: boolean; // player has reviewed the pre-race plan
   bestSectors?: ({ time: number; driverId: string } | null)[]; // overall best per sector
+  weather?: import("./weather").WeatherTimeline;
 }
 
 export interface ClassifiedRow {

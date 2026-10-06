@@ -7,3 +7,5 @@ export * from "./championship";
 export { buildPlan, estimatePlanTime, normalisePlan, planLabel, recommendPlans, type PlanOption } from "./strategy";
 export * from "./management";
 export * from "./sponsors";
+export * from "./weather";
+export { dryCompoundFor, replan } from "./strategy";

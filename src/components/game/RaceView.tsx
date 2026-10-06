@@ -583,6 +583,7 @@ const EVENT_STYLE: Record<RaceEvent["type"], string> = {
   fastest: "text-purple-400",
   mistake: "text-amber-400",
   finish: "text-primary font-semibold",
+  weather: "text-sky-300 font-semibold",
 };
 
 function EventRow({ e, mine }: { e: RaceEvent; mine: boolean }) {

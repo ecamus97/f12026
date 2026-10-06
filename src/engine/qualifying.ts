@@ -3,7 +3,7 @@ import type { Race } from "@/data/f1Data";
 import { createRng, type Rng } from "./rng";
 import type { Entry, SimConfig } from "./types";
 import { DEFAULT_SIM_CONFIG } from "./types";
-import { basePace, COMPOUNDS } from "./model";
+import { basePace, COMPOUNDS, wetPenalty } from "./model";
 
 export type SessionName = "Q1" | "Q2" | "Q3";
 
@@ -23,6 +23,7 @@ export interface QualifyingResult {
   raceId: number;
   sessions: QualiSession[];
   grid: string[]; // driver ids, P1 first
+  wet?: number; // track wetness during qualifying (0 = dry)
 }
 
 const SESSIONS: { name: SessionName; advance: number; evo: number }[] = [
@@ -31,16 +32,18 @@ const SESSIONS: { name: SessionName; advance: number; evo: number }[] = [
   { name: "Q3", advance: 0, evo: 0.45 },
 ];
 
-function qualiLap(e: Entry, race: Race, evo: number, rng: Rng, cfg: SimConfig): number {
+function qualiLap(e: Entry, race: Race, evo: number, rng: Rng, cfg: SimConfig, wet = 0): number {
   const c = e.driver.consistency;
-  if (rng.chance((100 - c) * 0.0025 * cfg.incidents)) return 0; // lap ruined
-  const noise = rng.gauss() * (0.1 + (100 - c) * 0.004) * cfg.randomness;
-  return race.track.baseLap + 0.6 + basePace(e) + COMPOUNDS.S.offset - evo + noise;
+  if (rng.chance((100 - c) * 0.0025 * cfg.incidents * (1 + 2 * wet))) return 0; // lap ruined
+  const noise = rng.gauss() * (0.1 + (100 - c) * 0.004) * cfg.randomness * (1 + 1.5 * wet);
+  // in the wet everyone runs the best rain tyre for the conditions
+  const tyre = wet > 0.12 ? Math.min(wetPenalty("I", wet), wetPenalty("W", wet)) + wet * 7 : COMPOUNDS.S.offset;
+  return race.track.baseLap + 0.6 + basePace(e, race.track) + tyre - evo + noise;
 }
 
-function runSession(entries: Entry[], race: Race, name: SessionName, evo: number, advance: number, rng: Rng, cfg: SimConfig): QualiSession {
+function runSession(entries: Entry[], race: Race, name: SessionName, evo: number, advance: number, rng: Rng, cfg: SimConfig, wet = 0): QualiSession {
   const rows: QualiRow[] = entries.map((e) => {
-    const runs = [qualiLap(e, race, evo, rng, cfg), qualiLap(e, race, evo + 0.12, rng, cfg)];
+    const runs = [qualiLap(e, race, evo, rng, cfg, wet), qualiLap(e, race, evo + 0.12, rng, cfg, wet)];
     const valid = runs.filter((r) => r > 0);
     return { driverId: e.driver.id, runs, best: valid.length ? Math.min(...valid) : 0, eliminated: false };
   });
@@ -51,10 +54,12 @@ function runSession(entries: Entry[], race: Race, name: SessionName, evo: number
 
 export function runQualifying(race: Race, entries: Entry[], seed: number, cfg: SimConfig = DEFAULT_SIM_CONFIG): QualifyingResult {
   const rng = createRng(seed);
+  // Saturday weather: its own roll against the circuit's rain chance
+  const wet = rng.chance((race.track.rain ?? 0.15) * 0.8) ? 0.2 + rng.next() * 0.6 : 0;
   const sessions: QualiSession[] = [];
   let field = entries;
   for (const s of SESSIONS) {
-    const session = runSession(field, race, s.name, s.evo, s.advance, rng, cfg);
+    const session = runSession(field, race, s.name, s.evo, s.advance, rng, cfg, wet);
     sessions.push(session);
     const through = new Set(session.rows.filter((r) => !r.eliminated).map((r) => r.driverId));
     field = field.filter((e) => through.has(e.driver.id));
@@ -65,5 +70,5 @@ export function runQualifying(race: Race, entries: Entry[], seed: number, cfg: S
     ...sessions[1].rows.filter((r) => r.eliminated).map((r) => r.driverId),
     ...sessions[0].rows.filter((r) => r.eliminated).map((r) => r.driverId),
   ];
-  return { raceId: race.id, sessions, grid };
+  return { raceId: race.id, sessions, grid, wet };
 }

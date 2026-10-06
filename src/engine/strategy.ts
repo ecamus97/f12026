@@ -2,7 +2,7 @@
 import type { Track } from "@/data/f1Data";
 import type { Rng } from "./rng";
 import type { CarState, Compound, Stint } from "./types";
-import { COMPOUNDS, raceLapTime, tyreLife } from "./model";
+import { bestTyreFor, DRY_COMPOUNDS, isWetTyre, raceLapTime, tyreLife } from "./model";
 import type { Entry } from "./types";
 import { DEFAULT_SIM_CONFIG } from "./types";
 
@@ -123,7 +123,7 @@ export const planLabel = (plan: Stint[]) =>
 
 /** Best plan for each tyre sequence (1 and 2 stops), sorted by expected time. */
 export function recommendPlans(entry: Entry, track: Track, max = 4): PlanOption[] {
-  const C = Object.keys(COMPOUNDS) as Compound[];
+  const C = DRY_COMPOUNDS;
   const laps = track.laps;
   const options: PlanOption[] = [];
   const minStint = 5;
@@ -176,4 +176,47 @@ export function normalisePlan(plan: Stint[], laps: number, fromLap = 0): Stint[]
     out[i].untilLap = i === out.length - 1 ? laps : Math.max(min, Math.min(max, Math.round(out[i].untilLap)));
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Weather calls (AI)
+// ---------------------------------------------------------------------------
+
+/** Dry compound to finish the race on, given the laps left. */
+export function dryCompoundFor(lapsLeft: number, track: Track, tyreMgmt = 85): Compound {
+  if (lapsLeft <= tyreLife("S", track, tyreMgmt) * 0.95) return "S";
+  if (lapsLeft <= tyreLife("M", track, tyreMgmt) * 0.95) return "M";
+  return "H";
+}
+
+/** Fresh plan after an unplanned (weather) stop. */
+export function replan(fitted: Compound, lap: number, totalLaps: number, track: Track, tyreMgmt = 85): Stint[] {
+  const left = totalLaps - lap;
+  if (isWetTyre(fitted)) return [{ compound: fitted, untilLap: totalLaps }];
+  const life = tyreLife(fitted, track, tyreMgmt);
+  if (left <= life * 1.05) return [{ compound: fitted, untilLap: totalLaps }];
+  const stop = Math.min(totalLaps - 3, lap + Math.round(life * 0.85));
+  return [
+    { compound: fitted, untilLap: stop },
+    { compound: dryCompoundFor(totalLaps - stop, track, tyreMgmt), untilLap: totalLaps },
+  ];
+}
+
+/**
+ * AI reaction to the weather: switch between slicks, intermediates and wets.
+ * `wetSoon` is what the team's radar expects for the next laps. Each driver reacts
+ * a little differently (`jitter` in [-1, 1]).
+ */
+export function aiWeatherPit(car: CarState, wetNow: number, wetSoon: number, lapsLeft: number, track: Track, jitter: number): Compound | null {
+  if (lapsLeft <= 2) return null;
+  const target = bestTyreFor(wetNow * 0.5 + wetSoon * 0.5 + jitter * 0.04);
+  const onWet = isWetTyre(car.compound);
+  if (!onWet && target !== "slick") return target;
+  if (onWet && target === "slick") return dryCompoundFor(lapsLeft, track, car.entry.driver.tyreMgmt);
+  if (onWet && target !== "slick" && target !== car.compound) {
+    // only swap between inters and wets when clearly worth it
+    if (target === "W" && wetNow > 0.68) return "W";
+    if (target === "I" && wetNow < 0.55) return "I";
+  }
+  return null;
 }

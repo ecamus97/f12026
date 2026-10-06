@@ -2,10 +2,14 @@
 import type { Race } from "@/data/f1Data";
 import { pointsSystem } from "@/data/f1Data";
 import { createRng, type Rng } from "./rng";
-import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, RaceEvent, RaceState, SimConfig, Stint } from "./types";
+import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, ErsMode, FuelMode, RaceEvent, RaceState, SimConfig, Stint } from "./types";
 import { DEFAULT_SIM_CONFIG } from "./types";
-import { COMPOUNDS, DIRTY_AIR_WINDOW, MIN_GAP, MODES, overtakeChance, raceLapTime } from "./model";
-import { advancePlan, aiPitDecision, buildPlan, normalisePlan, recommendPlans } from "./strategy";
+import {
+  bestTyreFor, COMPOUNDS, DIRTY_AIR_WINDOW, ERS_MODES, FUEL_MARGIN, FUEL_MODES, isWetTyre, MIN_GAP, MODES,
+  overtakeChance, raceLapTime,
+} from "./model";
+import { advancePlan, aiPitDecision, aiWeatherPit, buildPlan, normalisePlan, recommendPlans, replan } from "./strategy";
+import { generateWeather, type WeatherTimeline } from "./weather";
 
 const clone = <T,>(x: T): T => structuredClone(x);
 
@@ -15,13 +19,17 @@ export function createRace(
   seed: number,
   config: SimConfig = DEFAULT_SIM_CONFIG,
   playerTeamId: string | null = null,
+  weather?: WeatherTimeline,
 ): RaceState {
   const rng = createRng(seed);
   const track = race.track;
+  const wx = weather ?? generateWeather(track, track.laps, seed);
+  const startTyre = bestTyreFor(wx.wet[0]);
   const cars: CarState[] = grid.map((entry, i) => {
     const controlled = entry.team.id === playerTeamId;
     // player cars start from the engineer's recommendation (editable before the start)
-    const plan = controlled ? recommendPlans(entry, track, 1)[0].plan : buildPlan(track, entry.driver.tyreMgmt, rng);
+    let plan = controlled ? recommendPlans(entry, track, 1)[0].plan : buildPlan(track, entry.driver.tyreMgmt, rng);
+    if (startTyre !== "slick") plan = replan(startTyre, 0, track.laps, track, entry.driver.tyreMgmt); // wet start
     return {
       id: entry.driver.id,
       entry,
@@ -36,6 +44,10 @@ export function createRace(
       plan,
       stops: 0,
       mode: "normal",
+      fuelMode: "normal",
+      ersMode: "balanced",
+      fuel: track.laps + FUEL_MARGIN,
+      battery: 80,
       pitRequest: null,
       controlled,
       status: "running",
@@ -55,6 +67,7 @@ export function createRace(
     fastest: null,
     finished: false,
     strategyConfirmed: !playerTeamId,
+    weather: wx,
   };
 }
 
@@ -120,6 +133,23 @@ export function simulateLap(prev: RaceState): RaceState {
   const running = state.cars.filter((c) => c.status === "running");
   const retired = state.cars.filter((c) => c.status === "dnf");
 
+  // --- Weather on this lap ---
+  const wx = state.weather;
+  const rainNow = wx?.rain[Math.min(lap, wx.rain.length - 1)] ?? 0;
+  const rainBefore = wx?.rain[Math.min(lap - 1, wx.rain.length - 1)] ?? 0;
+  const wetStart = wx?.wet[Math.max(0, lap - 1)] ?? 0;
+  const wetEnd = wx?.wet[Math.min(lap, wx.wet.length - 1)] ?? 0;
+  const wet = (wetStart + wetEnd) / 2;
+  const wetSoon = wx ? Math.max(...wx.wet.slice(lap, lap + 3)) : 0;
+  const trackTemp = wx?.trackTemp[Math.min(lap, wx.trackTemp.length - 1)];
+  if (wx && lap > 1) {
+    if (rainNow >= 0.08 && rainBefore < 0.08) events.push({ lap, type: "weather", text: "🌧️ Empieza a llover", drivers: [] });
+    if (rainNow < 0.08 && rainBefore >= 0.08) events.push({ lap, type: "weather", text: "🌤️ Deja de llover", drivers: [] });
+    if (rainNow >= 0.6 && rainBefore < 0.6) events.push({ lap, type: "weather", text: "⛈️ La lluvia se intensifica: pista para neumáticos de lluvia extrema", drivers: [] });
+    if (wetEnd < 0.2 && wetStart >= 0.2) events.push({ lap, type: "weather", text: "☀️ La pista se está secando: ya se puede volver a los slicks", drivers: [] });
+    if (wetEnd >= 0.2 && wetStart < 0.2) events.push({ lap, type: "weather", text: "💧 La pista está mojada: los slicks ya no funcionan", drivers: [] });
+  }
+
   // previous intervals for dirty air
   const prevTotals = running.map((c) => c.total);
   const startTotal = new Map(running.map((c) => [c.id, c.total]));
@@ -133,8 +163,39 @@ export function simulateLap(prev: RaceState): RaceState {
     car.tyreAge += 1;
     const e = car.entry;
 
+    // --- Energy (ERS) and fuel ---
+    if (!car.controlled) {
+      const gapAhead = idx > 0 ? prevTotals[idx] - prevTotals[idx - 1] : 99;
+      const bat = car.battery ?? 80;
+      car.ersMode = scLap || bat < 25 ? "harvest" : gapAhead < 1.0 && bat > 30 ? "deploy" : bat > 85 ? "deploy" : "balanced";
+    }
+    const ers = car.ersMode ?? "balanced";
+    const batteryBefore = car.battery ?? 80;
+    car.battery = Math.max(0, Math.min(100, batteryBefore + (scLap ? 15 : ERS_MODES[ers].charge)));
+    const lapsToGo = state.totalLaps - lap + 1;
+    let burn = FUEL_MODES[car.fuelMode ?? "normal"].burn * (scLap ? 0.55 : 1);
+    let liftAndCoast = 0;
+    if ((car.fuel ?? lapsToGo) < lapsToGo - 0.05 && !scLap) {
+      // not enough fuel: forced to lift and coast
+      liftAndCoast = 1.0;
+      burn *= 0.85;
+      if (!car.fuelWarned) {
+        car.fuelWarned = true;
+        events.push({ lap, type: "mistake", text: `${name(car)} tiene que ahorrar combustible (lift & coast)`, drivers: [car.id] });
+      }
+    }
+    car.fuel = (car.fuel ?? lapsToGo) - burn;
+    if (car.fuel < -0.1) {
+      car.status = "dnf";
+      car.dnfLap = lap;
+      car.dnfReason = "Sin combustible";
+      events.push({ lap, type: "dnf", text: `${name(car)} se queda sin combustible`, drivers: [car.id] });
+      return;
+    }
+
     // --- Retirements ---
-    const risk = MODES[car.mode].risk;
+    const slickOnWet = !isWetTyre(car.compound) && wet > 0.3 ? 1 + 8 * (wet - 0.3) : 1;
+    const risk = MODES[car.mode].risk * (1 + 2 * wet) * slickOnWet;
     const lap1 = lap === 1 ? 4 : 1;
     const mech = (100 - e.team.reliability) * 0.00011 * config.incidents;
     const crash = (100 - e.driver.consistency) * 0.00004 * config.incidents * lap1 * risk * (scLap ? 0.1 : 1);
@@ -159,7 +220,7 @@ export function simulateLap(prev: RaceState): RaceState {
     let time: number;
     let mistakeLoss = 0;
     if (scLap) {
-      time = track.baseLap * 1.4 + rng.next() * 0.3;
+      time = track.baseLap * 1.4 + wet * 4 + rng.next() * 0.3;
     } else {
       time = raceLapTime({
         entry: e,
@@ -171,7 +232,13 @@ export function simulateLap(prev: RaceState): RaceState {
         totalLaps: state.totalLaps,
         cfg: config,
         noise: rng.gauss(),
+        fuelMode: car.fuelMode,
+        ersMode: ers,
+        battery: batteryBefore,
+        wet,
+        trackTemp,
       });
+      time += liftAndCoast;
       if (lap === 1) time += 2.5 + idx * 0.05; // standing start
       // dirty air
       if (idx > 0) {
@@ -202,8 +269,17 @@ export function simulateLap(prev: RaceState): RaceState {
 
     // --- Pit stop at end of lap ---
     if (lap < state.totalLaps) {
-      const call = car.pitRequest ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
-      if (call) doPitStop(car, call, state, rng, events, lap);
+      const jitter = ((car.id.charCodeAt(0) * 31 + car.id.charCodeAt(1) * 7 + lap) % 21) / 10 - 1;
+      const weatherCall =
+        !car.controlled && wx ? aiWeatherPit(car, wetEnd, wetSoon, state.totalLaps - lap, track, jitter) : null;
+      const call = car.pitRequest ?? weatherCall ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
+      if (call) {
+        const manual = !!car.pitRequest;
+        doPitStop(car, call, state, rng, events, lap);
+        // weather stops (or switching between dry and rain tyres) need a fresh plan
+        if (weatherCall && !manual) car.plan = replan(call, lap, state.totalLaps, track, car.entry.driver.tyreMgmt);
+        else if (manual && isWetTyre(call)) car.plan = [{ compound: call, untilLap: state.totalLaps }];
+      }
     }
   });
 
@@ -238,7 +314,10 @@ export function simulateLap(prev: RaceState): RaceState {
       }
       if (behind.total < ahead.total) {
         const delta = ahead.total - behind.total;
-        const p = overtakeChance({ delta, attacker: behind.entry, defender: ahead.entry, track, bonus });
+        const ersBonus =
+          (behind.ersMode === "deploy" && (behind.battery ?? 0) > 10 ? 0.6 : 0) -
+          (ahead.ersMode === "deploy" && (ahead.battery ?? 0) > 10 ? 0.4 : 0);
+        const p = overtakeChance({ delta, attacker: behind.entry, defender: ahead.entry, track, bonus: bonus + ersBonus });
         if (rng.chance(p)) {
           order[j] = ahead;
           order[j - 1] = behind;
@@ -274,7 +353,7 @@ export function simulateLap(prev: RaceState): RaceState {
       events.push({ lap, type: "sc_end", text: "Safety car entra a pits — ¡relanzamiento!", drivers: [] });
     }
   } else if (config.safetyCar && lap < state.totalLaps - 2) {
-    const randomSc = rng.chance((state.track.scChance * 0.4) / state.totalLaps);
+    const randomSc = rng.chance(((state.track.scChance * 0.4) / state.totalLaps) * (1 + 3 * wet));
     if (newSafetyCar || randomSc) {
       sc.active = true;
       sc.lapsLeft = rng.int(3, 5);
@@ -341,7 +420,7 @@ export function simulateLap(prev: RaceState): RaceState {
   if (lap >= state.totalLaps) {
     // Dry-race rule: at least two different compounds
     for (const c of order) {
-      if (c.usedCompounds.length < 2) {
+      if (c.usedCompounds.length < 2 && !c.usedCompounds.some(isWetTyre)) {
         c.total += 30;
         events.push({ lap, type: "mistake", text: `${name(c)} penalizado con 30s: no usó dos compuestos`, drivers: [c.id] });
       }
@@ -365,6 +444,12 @@ export function simulateToEnd(state: RaceState): RaceState {
 /** Manager controls */
 export function setMode(state: RaceState, driverId: string, mode: DriverMode): RaceState {
   return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, mode } : c)) };
+}
+export function setFuelMode(state: RaceState, driverId: string, fuelMode: FuelMode): RaceState {
+  return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, fuelMode } : c)) };
+}
+export function setErsMode(state: RaceState, driverId: string, ersMode: ErsMode): RaceState {
+  return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, ersMode } : c)) };
 }
 export function requestPit(state: RaceState, driverId: string, compound: Compound | null): RaceState {
   return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, pitRequest: compound } : c)) };
