@@ -125,8 +125,12 @@ interface TeamProps {
 
 export function TeamChampionshipTable({ standings, results, playerTeamId, compact, races }: TeamProps) {
   const { done } = useRaceColumns(results, races);
-  const teamPointsInRace = (teamId: string, raceId: number) =>
-    results.find((r) => r.raceId === raceId)?.rows.filter((x) => x.teamId === teamId).reduce((a, x) => a + x.points, 0) ?? 0;
+  // whole weekend: Grand Prix + sprint
+  const teamPointsInRace = (teamId: string, raceId: number) => {
+    const r = results.find((x) => x.raceId === raceId);
+    if (!r) return 0;
+    return [...r.rows, ...(r.sprint ?? [])].filter((x) => x.teamId === teamId).reduce((a, x) => a + x.points, 0);
+  };
   return (
     <div className="rounded-lg border border-border/40 overflow-hidden">
       <ScrollArea className="w-full">
