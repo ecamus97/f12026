@@ -111,4 +111,26 @@ describe("calendar changes", () => {
     expect(after.indexOf("haas")).toBeLessThan(before.indexOf("haas"));
     expect(r.m.player!.megaPrep).toBe(0);
   });
+
+  it("old changes tend to be reviewed and undone when they pile up", () => {
+    const rules = { ...DEFAULT_RULES, twoCompound: false, puFreeze: true, flatPrize: true, overtakeAid: true };
+    const history = [
+      { key: "twoCompound", effective: 2027 },
+      { key: "puFreeze", effective: 2028 },
+      { key: "flatPrize", effective: 2028 },
+      { key: "overtakeAid", effective: 2029 },
+    ].map((h, i) => ({ id: `h${i}`, season: h.effective - 1, effective: h.effective, round: 6, key: h.key, patch: {}, title: "", desc: "", by: "fia" as const, status: "decreed" as const }));
+    let reverts = 0;
+    let total = 0;
+    for (let seed = 0; seed < 60; seed++) {
+      for (const round of [6, 10, 17]) {
+        for (const p of generateProposals(2030, round, rules, history, seed)) {
+          if (p.calendar) continue;
+          total++;
+          if (p.revert) reverts++;
+        }
+      }
+    }
+    expect(reverts / total).toBeGreaterThan(0.5);
+  });
 });

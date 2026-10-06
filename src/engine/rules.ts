@@ -71,6 +71,7 @@ export interface RuleProposal {
   effect?: TechEffect; // one-off impact on every car when it comes into force
   calendar?: { op: "add" | "remove" | "swap"; add?: number; remove?: number }; // calendar change for next season
   mega?: boolean; // a new generation of cars: the whole order is reshuffled
+  revert?: number; // undoes a change in force since this season
   votes?: Record<string, Vote>;
   playerVote?: Vote;
 }
@@ -381,10 +382,24 @@ export function generateProposals(season: number, round: number, rules: RuleSet,
     }
     const pool = TEMPLATES.filter((t) => (slot.by === "fia" ? t.fiaOk : t.voteOk) && t.available(rules) && !usedKeys.has(t.key));
     if (!pool.length) continue;
-    const t = rng.pick(pool);
+    // changes that have been in force for a while are more likely to be reviewed (and undone);
+    // with several changes piled up, the FIA goes back to basics
+    const piled = describeRules(rules).filter((r) => r.changed).length;
+    const weight = (t: Template) => {
+      const since = revertSince(t, rules, existing, season);
+      if (since !== null) return 1 + Math.min(4, season + 1 - since) * 0.8 + (piled >= 3 ? 3 : 0);
+      if (t.make(rules).effect) return 1;
+      return piled >= 3 ? 0.25 : 1;
+    };
+    const total = pool.reduce((a, t) => a + weight(t), 0);
+    let roll = rng.next() * total;
+    const t = pool.find((x) => (roll -= weight(x)) <= 0) ?? pool[pool.length - 1];
     usedKeys.add(t.key);
     const m = t.make(rules);
+    const since = revertSince(t, rules, existing, season);
+    if (since !== null) m.desc = `${m.desc} Revierte un cambio vigente desde ${since}.`;
     out.push({
+      ...(since !== null ? { revert: since } : {}),
       id: `${season}-${round}-${t.key}`,
       season,
       effective: season + 1,
@@ -396,6 +411,17 @@ export function generateProposals(season: number, round: number, rules: RuleSet,
     });
   }
   return out;
+}
+
+/** If this template would take a rule back to its original value: since when is the change in force? */
+function revertSince(t: Template, rules: RuleSet, existing: RuleProposal[], season: number): number | null {
+  const patch = t.make(rules).patch as Partial<Record<keyof RuleSet, unknown>>;
+  const keys = Object.keys(patch) as (keyof RuleSet)[];
+  if (!keys.length || !keys.every((k) => patch[k] === DEFAULT_RULES[k] && rules[k] !== DEFAULT_RULES[k])) return null;
+  const last = existing
+    .filter((p) => p.key === t.key && (p.status === "approved" || p.status === "decreed") && p.effective <= season)
+    .sort((a, b) => b.effective - a.effective)[0];
+  return last?.effective ?? season;
 }
 
 function teamVote(p: RuleProposal, c: TeamContext, seed: number): Vote {

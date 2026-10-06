@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Gavel, Landmark, Check, X, Minus, Scale, Sparkles } from "lucide-react";
+import { Gavel, Landmark, Check, X, Minus, Scale, Sparkles, ChevronDown, Undo2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Team } from "@/data/f1Data";
 import { describeRules, rulesFor, tally, pendingMega, MEGA_PREP_COST, MEGA_PREP_MAX, type RuleProposal, type RuleSet, type Vote } from "@/engine";
@@ -33,6 +34,10 @@ export function RulesView({
   const nowRows = describeRules(rules);
   const nextRows = describeRules(next);
   const past = proposals.filter((p) => p.season < season).sort((a, b) => b.season - a.season || b.round - a.round);
+  const years = [...new Set(past.map((p) => p.season))].sort((a, b) => b - a);
+  const [year, setYear] = useState<number | "all">(years[0] ?? "all");
+  const [kind, setKind] = useState<"all" | "fia" | "vote">("all");
+  const shown = past.filter((p) => (year === "all" || p.season === year) && (kind === "all" || p.by === kind));
 
   return (
     <div className="space-y-6">
@@ -142,10 +147,37 @@ export function RulesView({
 
       {past.length > 0 && (
         <div className="space-y-3">
-          <SectionTitle>Historial</SectionTitle>
-          {past.map((p) => (
-            <ProposalCard key={p.id} p={p} teams={teams} playerTeamId={playerTeamId} compact />
+          <SectionTitle right={`${shown.length} cambio${shown.length === 1 ? "" : "s"}`}>Historial</SectionTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap rounded-md border border-white/10 overflow-hidden text-xs">
+              {years.map((y) => (
+                <button key={y} onClick={() => setYear(y)} className={cn("px-3 py-1.5 font-racing", year === y ? "bg-primary text-primary-foreground" : "hover:bg-white/5")}>
+                  {y}
+                </button>
+              ))}
+              <button onClick={() => setYear("all")} className={cn("px-3 py-1.5", year === "all" ? "bg-primary text-primary-foreground" : "hover:bg-white/5")}>
+                Todos
+              </button>
+            </div>
+            <div className="flex rounded-md border border-white/10 overflow-hidden text-xs">
+              {(
+                [
+                  ["all", "Todo"],
+                  ["fia", "Decretos FIA"],
+                  ["vote", "Votaciones"],
+                ] as const
+              ).map(([k, l]) => (
+                <button key={k} onClick={() => setKind(k)} className={cn("px-3 py-1.5", kind === k ? "bg-white/15" : "hover:bg-white/5 text-muted-foreground")}>
+                  {l}
+                </button>
+              ))}
+            </div>
+            <span className="text-[11px] text-muted-foreground">Toca un cambio para ver el detalle y el voto de cada equipo.</span>
+          </div>
+          {shown.map((p) => (
+            <ProposalCard key={p.id} p={p} teams={teams} playerTeamId={playerTeamId} collapsible />
           ))}
+          {!shown.length && <div className="panel p-4 text-sm text-muted-foreground">No hay cambios con ese filtro.</div>}
         </div>
       )}
     </div>
@@ -223,19 +255,39 @@ function RulesTable({ title, rows, compare }: { title: string; rows: ReturnType<
   );
 }
 
-export function ProposalCard({ p, teams, playerTeamId, compact }: { p: RuleProposal; teams: Team[]; playerTeamId: string | null; compact?: boolean }) {
+export function ProposalCard({
+  p, teams, playerTeamId, compact: compactProp, collapsible,
+}: {
+  p: RuleProposal;
+  teams: Team[];
+  playerTeamId: string | null;
+  compact?: boolean;
+  collapsible?: boolean; // history: compact until clicked
+}) {
+  const [open, setOpen] = useState(false);
+  const compact = collapsible ? !open : compactProp;
   const fia = p.by === "fia";
   const ok = p.status === "approved" || p.status === "decreed";
   const n = tally(p.votes);
   const total = Math.max(1, n.for + n.against + n.abstain);
   return (
-    <div className="panel p-4 space-y-3">
+    <div
+      className={cn("panel p-4 space-y-3", collapsible && "cursor-pointer hover:border-white/20", p.mega && "border-amber-400/50")}
+      onClick={collapsible ? () => setOpen((o) => !o) : undefined}
+    >
       <div className="flex flex-wrap items-start gap-3">
-        <span className={cn("tv-label rounded px-2 py-1", fia ? "bg-sky-500/20 text-sky-300" : "bg-white/10 text-foreground")}>
-          {fia ? "Decreto FIA" : "Votación"} · {p.season} R{p.round}
+        <span className={cn("tv-label rounded px-2 py-1", p.mega ? "bg-amber-400/20 text-amber-300" : fia ? "bg-sky-500/20 text-sky-300" : "bg-white/10 text-foreground")}>
+          {p.mega ? "Nueva generación" : fia ? "Decreto FIA" : "Votación"} · {p.season} R{p.round}
         </span>
         <div className="flex-1 min-w-[200px]">
-          <div className="font-display text-xl">{p.title}</div>
+          <div className="font-display text-xl flex items-center gap-2">
+            {p.title}
+            {p.revert && (
+              <span className="inline-flex items-center gap-1 tv-label rounded bg-white/10 px-1.5 py-0.5 text-[10px] text-muted-foreground" title={`Deshace un cambio vigente desde ${p.revert}`}>
+                <Undo2 className="w-3 h-3" /> revierte {p.revert}
+              </span>
+            )}
+          </div>
           {!compact && <p className="text-xs text-muted-foreground mt-0.5">{p.desc}</p>}
           {!compact && <ImpactChip p={p} />}
         </div>
@@ -247,6 +299,7 @@ export function ProposalCard({ p, teams, playerTeamId, compact }: { p: RulePropo
         >
           {p.status === "decreed" ? "Impuesto" : ok ? "Aprobado" : "Rechazado"} · {p.effective}
         </span>
+        {collapsible && <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform mt-1", open && "rotate-180")} />}
       </div>
       {p.votes && (
         <>
