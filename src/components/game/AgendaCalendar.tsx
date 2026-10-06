@@ -40,6 +40,15 @@ export function ActivityDialog({ a, onChoose, onClose }: { a: Activity | null; o
               <div className="rounded-xl border border-primary/40 bg-primary/10 p-4 text-sm">
                 <div className="tv-label text-primary mb-1">Decisión tomada</div>
                 {a.outcome}
+                {a.applied && a.applied.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {a.applied.map((f) => (
+                      <span key={f.text} className={cn("text-[11px] rounded px-1.5 py-0.5 border", f.good ? "border-emerald-500/40 text-emerald-300" : "border-red-500/40 text-red-300")}>
+                        {f.text}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="grid gap-2">
@@ -64,13 +73,10 @@ export function ActivityDialog({ a, onChoose, onClose }: { a: Activity | null; o
                         {fx.length ? (
                           fx.map((f) => (
                             <span
-                              key={f}
-                              className={cn(
-                                "text-[11px] rounded px-1.5 py-0.5 border",
-                                /[−-]|\+\d+ carrera/.test(f) && !/proyecto −/.test(f) ? "border-red-500/40 text-red-300" : "border-emerald-500/40 text-emerald-300",
-                              )}
+                              key={f.text}
+                              className={cn("text-[11px] rounded px-1.5 py-0.5 border", f.good ? "border-emerald-500/40 text-emerald-300" : "border-red-500/40 text-red-300")}
                             >
-                              {f}
+                              {f.text}
                             </span>
                           ))
                         ) : (
@@ -157,7 +163,7 @@ export function SeasonCalendar({
     return map;
   }, [races, season, activities]);
 
-  const months = Array.from({ length: 11 }, (_, k) => k + 1); // Feb..Dec
+  const months = Array.from({ length: 12 }, (_, k) => k); // Jan..Dec
   const nextKey = races[currentRaceIndex] ? isoDate(weekendDates(races[currentRaceIndex].date, season).start) : null;
 
   return (
@@ -174,8 +180,6 @@ export function SeasonCalendar({
           const offset = (first.getDay() + 6) % 7;
           const len = new Date(season, mo + 1, 0).getDate();
           const cells = Array.from({ length: offset + len }, (_, i) => (i < offset ? null : i - offset + 1));
-          const hasSomething = cells.some((d) => d && days.has(isoDate(new Date(season, mo, d))));
-          if (!hasSomething) return null;
           return (
             <div key={mo} className="panel p-3">
               <div className="font-display text-lg mb-2 flex items-center gap-2">

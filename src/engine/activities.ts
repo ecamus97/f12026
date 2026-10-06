@@ -19,7 +19,7 @@ export interface ActivityChoice {
   label: string;
   desc: string;
   effect: ActivityEffect;
-  risk?: { chance: number; effect: ActivityEffect; text: string }; // something can go wrong (or right)
+  risk?: { chance: number; effect: ActivityEffect; text: string; safe?: string }; // something can go wrong (or right)
 }
 
 export type ActivityKind = "sponsor" | "media" | "team" | "technical" | "fans" | "charity";
@@ -38,6 +38,7 @@ export interface Activity {
   choices: ActivityChoice[];
   chosen?: number;
   outcome?: string; // what happened
+  applied?: { text: string; good: boolean }[]; // effects that were applied
 }
 
 export const ACTIVITY_KIND_INFO: Record<ActivityKind, { label: string; color: string }> = {
@@ -149,7 +150,7 @@ const TEMPLATES: Template[] = [
           label: "Aceptar todo",
           desc: "El video será viral y el contrato mejora… si nadie se lesiona.",
           effect: { budget: 1.3, sponsorRaces: 3 },
-          risk: { chance: 0.15, effect: { drivers: { stat: "pace", delta: -1, which: "first" } }, text: `${d1} se lesionó la muñeca: pierde ritmo.` },
+          risk: { chance: 0.15, effect: { drivers: { stat: "pace", delta: -1, which: "first" } }, text: `${d1} se lesionó la muñeca: pierde ritmo.`, safe: `Todo salió perfecto: ${d1} grabó sin lesiones y el video es viral.` },
         },
         { label: "Solo el prototipo, sin paracaídas", desc: "Menos espectacular, sin riesgos.", effect: { budget: 0.5 } },
         { label: "Rechazar", desc: "Prioridad absoluta a la temporada.", effect: { sponsorRaces: -1 } },
@@ -204,7 +205,7 @@ const TEMPLATES: Template[] = [
           label: "Integrarla en la simulación del auto",
           desc: "Acelera el proyecto en curso, pero compartes datos sensibles.",
           effect: { project: 1 },
-          risk: { chance: 0.2, effect: { budget: -0.8 }, text: "Una filtración obligó a pagar una auditoría de seguridad." },
+          risk: { chance: 0.2, effect: { budget: -0.8 }, text: "Una filtración obligó a pagar una auditoría de seguridad.", safe: "La integración fue un éxito y no hubo filtraciones." },
         },
         { label: "Usarla solo en logística", desc: "Ahorro de costos seguro.", effect: { budget: 0.5 } },
         { label: "Solo hacer el comercial", desc: "Pago pequeño y nada más.", effect: { budget: 0.2 } },
@@ -303,7 +304,7 @@ const TEMPLATES: Template[] = [
           label: "Contratarlo ya",
           desc: "Mejora la aerodinámica, pero el rival podría demandar.",
           effect: { budget: -1.2, area: { area: "aero", delta: 0.8 } },
-          risk: { chance: 0.25, effect: { budget: -2 }, text: "El rival demandó: hubo que pagar un acuerdo." },
+          risk: { chance: 0.25, effect: { budget: -2 }, text: "El rival demandó: hubo que pagar un acuerdo.", safe: "El rival no tomó acciones legales." },
         },
         { label: "Esperar a que cumpla su jardinería", desc: "Llega más tarde y sin riesgo.", effect: { budget: -0.8, area: { area: "aero", delta: 0.4 } } },
         { label: "Rechazar", desc: "Sin efectos.", effect: {} },
@@ -378,7 +379,7 @@ export function generateActivities(opts: {
 }): Activity[] {
   const rng = createRng(opts.seed ^ (opts.season * 7907) ^ (opts.beforeRound * 15485863));
   const days = Math.max(1, Math.round((opts.to.getTime() - opts.from.getTime()) / 86400000) - 1);
-  const count = days > 10 ? 2 : rng.chance(0.75) ? 1 : 0;
+  const count = opts.beforeRound === 1 ? 3 : days > 10 ? 2 : rng.chance(0.75) ? 1 : 0;
   const out: Activity[] = [];
   const used = new Set(opts.taken);
   for (let i = 0; i < count; i++) {
@@ -410,17 +411,57 @@ export function generateActivities(opts: {
   return out;
 }
 
-/** Short text of an effect for the choice buttons. */
-export function describeEffect(e: ActivityEffect): string[] {
-  const out: string[] = [];
-  if (e.budget) out.push(`${e.budget > 0 ? "+" : ""}US$ ${e.budget.toFixed(1)} M`);
-  if (e.sponsorRaces) out.push(`contrato ${e.sponsorRaces > 0 ? "+" : ""}${e.sponsorRaces} carreras`);
-  if (e.project) out.push(e.project > 0 ? `proyecto −${e.project} carrera` : `proyecto +${-e.project} carrera${e.project < -1 ? "s" : ""}`);
-  if (e.area) out.push(`${({ aero: "aerodinámica", powerUnit: "motor", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const)[e.area.area]} ${e.area.delta > 0 ? "+" : ""}${e.area.delta}`);
-  if (e.drivers) {
-    const stat = { pace: "ritmo", consistency: "constancia", racecraft: "carrera", tyreMgmt: "neumáticos" }[e.drivers.stat];
-    out.push(`${stat} ${e.drivers.delta > 0 ? "+" : ""}${e.drivers.delta}${e.drivers.which === "both" ? " (ambos)" : ""}`);
+/** Short text of an effect for the choice buttons, marked good or bad for the team. */
+export function describeEffect(e: ActivityEffect): { text: string; good: boolean }[] {
+  const out: { text: string; good: boolean }[] = [];
+  const sg = (x: number) => (x > 0 ? "+" : "");
+  if (e.budget) out.push({ text: `${sg(e.budget)}US$ ${e.budget.toFixed(1)} M`, good: e.budget > 0 });
+  if (e.sponsorRaces) out.push({ text: `contrato del patrocinador ${sg(e.sponsorRaces)}${e.sponsorRaces} carreras`, good: e.sponsorRaces > 0 });
+  if (e.project)
+    out.push({
+      text: e.project > 0 ? `proyecto en curso ${e.project} carrera antes` : `proyecto en curso ${-e.project} carrera${e.project < -1 ? "s" : ""} más`,
+      good: e.project > 0,
+    });
+  if (e.area) {
+    const label = ({ aero: "aerodinámica", powerUnit: "motor", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const)[e.area.area];
+    out.push({ text: `${label} ${sg(e.area.delta)}${e.area.delta}`, good: e.area.delta > 0 });
   }
-  if (e.staff) out.push(`personal ${e.staff.delta > 0 ? "+" : ""}${e.staff.delta}`);
+  if (e.drivers) {
+    const stat = { pace: "ritmo", consistency: "constancia", racecraft: "carrera", tyreMgmt: "manejo de neumáticos" }[e.drivers.stat];
+    const who = e.drivers.which === "both" ? " (ambos pilotos)" : e.drivers.which === "first" ? " (piloto 1)" : " (piloto 2)";
+    out.push({ text: `${stat} ${sg(e.drivers.delta)}${e.drivers.delta}${who}`, good: e.drivers.delta > 0 });
+  }
+  if (e.staff) out.push({ text: `personal ${sg(e.staff.delta)}${e.staff.delta}`, good: e.staff.delta > 0 });
   return out;
+}
+
+// --- Events of the other teams -----------------------------------------------------
+
+export interface RivalEvent {
+  teamId: string;
+  area: DevArea;
+  delta: number;
+  title: string;
+  text: string;
+}
+
+const RIVAL_EVENTS: { area: DevArea; delta: [number, number]; title: (t: string) => string; text: (t: string) => string }[] = [
+  { area: "aero", delta: [0.5, 0.9], title: (t) => `${t} ficha a un ingeniero de aerodinámica de un rival`, text: (t) => `Llega con ideas nuevas para el fondo del auto: ${t} mejora su aerodinámica.` },
+  { area: "powerUnit", delta: [0.4, 0.8], title: (t) => `${t} encuentra potencia extra en el banco`, text: (t) => `Un nuevo mapa de motor da a ${t} más rendimiento sin perder fiabilidad.` },
+  { area: "chassis", delta: [0.4, 0.8], title: (t) => `${t} compra un simulador de última generación`, text: (t) => `Su correlación con la pista mejora y el chasis de ${t} da un paso adelante.` },
+  { area: "aero", delta: [-0.7, -0.4], title: (t) => `Fuga de ingenieros en ${t}`, text: (t) => `Tres ingenieros clave dejaron ${t}: su programa aerodinámico se resiente.` },
+  { area: "reliability", delta: [-1.5, -0.8], title: (t) => `Problemas con un proveedor de ${t}`, text: (t) => `Piezas defectuosas obligan a ${t} a cambiar de proveedor: su fiabilidad baja por un tiempo.` },
+  { area: "pitCrew", delta: [0.8, 1.4], title: (t) => `${t} renueva su equipo de pits`, text: (t) => `Nuevas pistolas de rueda y entrenamiento intensivo: las paradas de ${t} son más rápidas.` },
+];
+
+/** Now and then a rival team has its own big event (not every race, so development doesn't explode). */
+export function rivalEvent(teams: { id: string; name: string }[], playerTeamId: string | null, seed: number): RivalEvent | null {
+  const rng = createRng(seed);
+  if (!rng.chance(0.22)) return null;
+  const pool = teams.filter((t) => t.id !== playerTeamId);
+  if (!pool.length) return null;
+  const t = rng.pick(pool);
+  const e = rng.pick(RIVAL_EVENTS);
+  const delta = +(e.delta[0] + rng.next() * (e.delta[1] - e.delta[0])).toFixed(2);
+  return { teamId: t.id, area: e.area, delta, title: e.title(t.name), text: e.text(t.name) };
 }

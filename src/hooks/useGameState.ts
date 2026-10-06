@@ -54,6 +54,8 @@ import {
   type Vote,
   techChanges,
   generateActivities,
+  describeEffect,
+  rivalEvent,
   weekendDates,
   createRng,
   type Activity,
@@ -341,7 +343,7 @@ function withAgenda(s: GameState): GameState {
   if (!p || !team || !race) return s;
   const key = `${s.season}-${r + 1}`;
   if (s.agendaRounds.includes(key)) return s;
-  const from = r === 0 ? new Date(s.season, 1, 12) : weekendDates(races2026[r - 1].date, s.season).end;
+  const from = r === 0 ? new Date(s.season, 0, 6) : weekendDates(races2026[r - 1].date, s.season).end;
   const to = weekendDates(race.date, s.season).start;
   const items = generateActivities({
     season: s.season,
@@ -414,14 +416,17 @@ function applyActivity(s: GameState, id: string, idx: number, auto = false): Gam
       }
     }
   }
-  const outcome = `${auto ? "Sin decisión a tiempo: " : ""}${c.label}.${risky ? ` ${c.risk!.text}` : ""}`;
+  const applied = effects.flatMap((e) => describeEffect(e));
+  const outcome = `${auto ? "Sin decisión a tiempo: " : ""}${c.label}.${c.risk ? ` ${risky ? c.risk.text : c.risk.safe ?? "Todo salió bien, sin contratiempos."}` : ""}${
+    applied.length ? ` Resultado: ${applied.map((x) => x.text).join(", ")}.` : " Sin efectos."
+  }`;
   m = { ...m, inbox: [...m.inbox, { race: s.currentRaceIndex, tone: risky ? ("bad" as const) : ("info" as const), text: `${a.icon} ${a.title}: ${outcome}` }].slice(-60) };
   return {
     ...s,
     management: m,
     people,
     teamsData: applyDevToTeams(teamsData, m),
-    activities: s.activities.map((x) => (x.id === id ? { ...x, chosen: idx, outcome } : x)),
+    activities: s.activities.map((x) => (x.id === id ? { ...x, chosen: idx, outcome, applied } : x)),
   };
 }
 
@@ -744,6 +749,27 @@ export function useGameState() {
             look,
           }),
         ];
+      }
+      // now and then a rival has its own big event
+      if (management) {
+        const ev = rivalEvent(s.teamsData, s.playerTeamId, randomSeed());
+        if (ev && management.dev[ev.teamId]) {
+          const d = management.dev[ev.teamId];
+          management = { ...management, dev: { ...management.dev, [ev.teamId]: { ...d, [ev.area]: Math.max(60, Math.min(99.5, +(d[ev.area] + ev.delta).toFixed(2))) } } };
+          const AREA_ES = { aero: "aerodinámica", powerUnit: "unidad de potencia", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const;
+          news.push({
+            id: `${s.season}-${round}-rival-${ev.teamId}`,
+            season: s.season,
+            round,
+            kind: "development",
+            title: ev.title,
+            summary: `${ev.text} (${AREA_ES[ev.area]} ${ev.delta > 0 ? "+" : ""}${ev.delta.toFixed(1)})`,
+            body: [ev.text, `Efecto: ${AREA_ES[ev.area]} ${ev.delta > 0 ? "+" : ""}${ev.delta.toFixed(1)} para ${look.team(ev.teamId)?.name}.`],
+            teamIds: [ev.teamId],
+            color: look.team(ev.teamId)?.hex,
+            importance: 1,
+          });
+        }
       }
       // AI teams close deals for next season during the year
       let people = s.people;
