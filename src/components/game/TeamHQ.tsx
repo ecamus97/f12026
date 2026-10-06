@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { Building2, FlaskConical, Wallet, Inbox, Hammer, Users, Briefcase, TrendingUp, TrendingDown, Clock, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { races2026, type Team } from "@/data/f1Data";
+import { calendar } from "@/data/calendar";
 import {
   AREA_INFO, CATEGORY_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, SLOT_INFO, STYLE_INFO,
   areaRanks, baseRaceBalance, isInvestment, ledgerCategory, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
@@ -421,7 +422,7 @@ function Finance({ management, onSignSponsor }: { management: ManagementState; o
               className="w-full grid grid-cols-[1fr_repeat(5,minmax(0,80px))] gap-2 px-3 py-2 text-sm hover:bg-muted/20 text-left"
             >
               <span>
-                {open === row.r ? "▾" : "▸"} {row.r === 0 ? "Pretemporada" : `Ronda ${row.r} · ${races2026[row.r - 1]?.flag ?? ""}`}
+                {open === row.r ? "▾" : "▸"} {row.r === 0 ? "Pretemporada" : `Ronda ${row.r} · ${calendar()[row.r - 1]?.flag ?? ""}`}
               </span>
               <span className="text-right font-mono text-xs text-green-400">{row.inc ? fmt(row.inc) : "—"}</span>
               <span className="text-right font-mono text-xs text-red-400">{row.run ? fmt(row.run) : "—"}</span>

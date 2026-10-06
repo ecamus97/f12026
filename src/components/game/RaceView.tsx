@@ -22,6 +22,7 @@ interface Props {
   playerTeamId: string | null;
   onUpdate: (s: RaceState) => void;
   onFinish: () => void;
+  round?: number;
 }
 
 // Time on screen per lap
@@ -33,7 +34,7 @@ const SPEEDS = [
   { label: "64x", ms: 190 },
 ];
 
-export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Props) {
+export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round }: Props) {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(0);
   const [showInterval, setShowInterval] = useState(false);
@@ -230,7 +231,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           <div className="bg-primary text-primary-foreground px-4 md:px-6 py-3 clip-slant pr-8 md:pr-12 flex items-center gap-3">
             <span className="text-3xl">{race.flag}</span>
             <div>
-              <div className="tv-label opacity-80">Ronda {race.id} · {race.circuit}</div>
+              <div className="tv-label opacity-80">Ronda {round ?? race.id} · {race.circuit}</div>
               <h2 className="font-display text-xl md:text-3xl">{race.name}</h2>
             </div>
           </div>

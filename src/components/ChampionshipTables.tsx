@@ -1,5 +1,6 @@
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { races2026 } from "@/data/f1Data";
+import { calendar } from "@/data/calendar";
 import type { DriverStanding, StoredRaceResult, TeamStanding } from "@/engine";
 import { TeamStripe, mineStyle } from "@/components/game/common";
 import { cn } from "@/lib/utils";
@@ -14,26 +15,34 @@ function cellClass(pos: number | "DNF" | undefined) {
   return "bg-muted/20 text-muted-foreground";
 }
 
-function useRaceColumns(results: StoredRaceResult[]) {
-  const done = races2026.filter((r) => results.some((x) => x.raceId === r.id));
+type RaceCol = { id: number; name: string; flag: string };
+
+function useRaceColumns(results: StoredRaceResult[], races?: RaceCol[]) {
+  const done = (races ?? calendar()).filter((r) => results.some((x) => x.raceId === r.id));
   const byRace = new Map(results.map((r) => [r.raceId, r]));
+  const sprintOf = (driverId: string, raceId: number): number | "DNF" | undefined => {
+    const row = byRace.get(raceId)?.sprint?.find((x) => x.driverId === driverId);
+    if (!row) return undefined;
+    return row.status === "dnf" ? "DNF" : row.position;
+  };
   const posOf = (driverId: string, raceId: number): number | "DNF" | undefined => {
     const row = byRace.get(raceId)?.rows.find((x) => x.driverId === driverId);
     if (!row) return undefined;
     return row.status === "dnf" ? "DNF" : row.position;
   };
-  return { done, posOf };
+  return { done, posOf, sprintOf };
 }
 
 interface DriverProps {
+  races?: RaceCol[];
   standings: DriverStanding[];
   results: StoredRaceResult[];
   playerTeamId?: string | null;
   compact?: boolean;
 }
 
-export function DriverChampionshipTable({ standings, results, playerTeamId, compact }: DriverProps) {
-  const { done, posOf } = useRaceColumns(results);
+export function DriverChampionshipTable({ standings, results, playerTeamId, compact, races }: DriverProps) {
+  const { done, posOf, sprintOf } = useRaceColumns(results, races);
   const leader = standings[0]?.points ?? 0;
   return (
     <div className="rounded-lg border border-border/40 overflow-hidden">
@@ -70,8 +79,22 @@ export function DriverChampionshipTable({ standings, results, playerTeamId, comp
                     const p = posOf(d.driverId, r.id);
                     return (
                       <td key={r.id} className="px-0.5 py-1 text-center">
-                        <div className={cn("w-7 h-6 mx-auto rounded flex items-center justify-center text-[11px]", cellClass(p))}>
+                        <div className={cn("relative w-7 h-6 mx-auto rounded flex items-center justify-center text-[11px]", cellClass(p))}>
                           {p === "DNF" ? "Ret" : p ?? "·"}
+                          {(() => {
+                            const sp = sprintOf(d.driverId, r.id);
+                            return sp !== undefined ? (
+                              <span
+                                className={cn(
+                                  "absolute -bottom-1 -right-1 min-w-[12px] h-3 px-0.5 rounded-sm text-[8px] leading-3 font-bold",
+                                  typeof sp === "number" && sp <= 8 ? "bg-sky-400 text-black" : "bg-zinc-700 text-zinc-200",
+                                )}
+                                title={`Sprint: ${sp === "DNF" ? "abandono" : `P${sp}`}`}
+                              >
+                                {sp === "DNF" ? "R" : sp}
+                              </span>
+                            ) : null;
+                          })()}
                         </div>
                       </td>
                     );
@@ -92,14 +115,15 @@ export function DriverChampionshipTable({ standings, results, playerTeamId, comp
 }
 
 interface TeamProps {
+  races?: RaceCol[];
   standings: TeamStanding[];
   results: StoredRaceResult[];
   playerTeamId?: string | null;
   compact?: boolean;
 }
 
-export function TeamChampionshipTable({ standings, results, playerTeamId, compact }: TeamProps) {
-  const { done } = useRaceColumns(results);
+export function TeamChampionshipTable({ standings, results, playerTeamId, compact, races }: TeamProps) {
+  const { done } = useRaceColumns(results, races);
   const teamPointsInRace = (teamId: string, raceId: number) =>
     results.find((r) => r.raceId === raceId)?.rows.filter((x) => x.teamId === teamId).reduce((a, x) => a + x.points, 0) ?? 0;
   return (

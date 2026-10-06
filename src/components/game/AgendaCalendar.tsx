@@ -135,8 +135,9 @@ export function AgendaCard({ activities, season, nextRound, onChoose }: { activi
 
 /** Real calendar: month grids with the race weekends and the agenda. */
 export function SeasonCalendar({
-  races, season, results, currentRaceIndex, activities, winnerOf, onRace, onChoose,
+  races, season, results, currentRaceIndex, activities, winnerOf, onRace, onChoose, sprints = [],
 }: {
+  sprints?: number[];
   races: Race[];
   season: number;
   results: StoredRaceResult[];
@@ -173,6 +174,7 @@ export function SeasonCalendar({
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-white/25" /> Gran Premio</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-emerald-600/60" /> Disputado</span>
         <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-sm bg-amber-400" /> Actividad pendiente</span>
+        <span className="flex items-center gap-1.5"><span className="text-[9px] font-bold rounded bg-sky-400 text-black px-1">S</span> Fin de semana sprint</span>
       </div>
       <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-4">
         {months.map((mo) => {
@@ -204,7 +206,7 @@ export function SeasonCalendar({
                         if (info?.acts.length) setOpen(info.acts[0]);
                         else if (next) onRace();
                       }}
-                      title={[race ? `R${race.r.id} ${race.r.name}${done ? ` · ganó ${winnerOf(race.r.id) ?? ""}` : ""}` : "", ...(info?.acts.map((a) => `${a.icon} ${a.title}`) ?? [])].filter(Boolean).join("\n")}
+                      title={[race ? `R${race.i + 1} ${race.r.name}${sprints.includes(race.r.id) ? " (sprint)" : ""}${done ? ` · ganó ${winnerOf(race.r.id) ?? ""}` : ""}` : "", ...(info?.acts.map((a) => `${a.icon} ${a.title}`) ?? [])].filter(Boolean).join("\n")}
                       className={cn(
                         "relative aspect-square rounded-md text-[11px] flex flex-col items-center justify-center leading-none",
                         race ? (next ? "bg-primary text-primary-foreground" : done ? "bg-emerald-600/40" : "bg-white/15") : "bg-white/[0.03]",
@@ -214,6 +216,9 @@ export function SeasonCalendar({
                     >
                       <span className={cn(race?.sunday && "font-bold")}>{d}</span>
                       {race?.first && <span className="text-[13px] leading-none mt-0.5">{race.r.flag}</span>}
+                      {race?.first && sprints.includes(race.r.id) && (
+                        <span className="absolute -bottom-1 -left-1 text-[8px] font-bold rounded bg-sky-400 text-black px-0.5">S</span>
+                      )}
                       {race?.sunday && <Flag className="w-2.5 h-2.5 mt-0.5" />}
                       {info?.acts.length ? (
                         <span className={cn("absolute -top-1 -right-1 text-[11px] rounded-full w-4 h-4 grid place-items-center", pendingAct ? "bg-amber-400" : "bg-white/20")}>
@@ -233,9 +238,10 @@ export function SeasonCalendar({
                     const done = results.some((x) => x.raceId === r.id);
                     return (
                       <div key={r.id} className={cn("flex items-center gap-2 text-xs", i === currentRaceIndex && "text-primary font-semibold")}>
-                        <span className="w-9 text-muted-foreground">R{r.id}</span>
+                        <span className="w-9 text-muted-foreground">R{i + 1}</span>
                         <span>{r.flag}</span>
                         <span className="flex-1 truncate">{r.name}</span>
+                        {sprints.includes(r.id) && <span className="text-[9px] font-bold rounded bg-sky-400 text-black px-1">SPRINT</span>}
                         <span className="text-muted-foreground">{d.start.getDate()}-{d.end.getDate()}</span>
                         {done && <span className="text-emerald-400 truncate max-w-[90px]">🏆 {winnerOf(r.id)?.split(" ").slice(-1)[0]}</span>}
                       </div>

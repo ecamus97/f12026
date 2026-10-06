@@ -79,3 +79,19 @@ describe("forecast", () => {
     expect(maxJump).toBeLessThanOrEqual(30);
   });
 });
+
+import { calendarFor } from "@/engine";
+import { datesForSeason } from "@/data/calendar";
+describe("calendar changes", () => {
+  it("adds, removes and swaps races for next season", () => {
+    const base = races2026;
+    const mk = (calendar: { op: "add" | "remove" | "swap"; add?: number; remove?: number }) =>
+      ({ id: "c", season: 2026, effective: 2027, round: 6, key: "calendar", patch: {}, title: "", desc: "", by: "fia" as const, status: "decreed" as const, calendar });
+    expect(calendarFor(2027, base, [mk({ op: "add", add: 27 })]).map((r) => r.id)).toContain(27);
+    expect(calendarFor(2027, base, [mk({ op: "remove", remove: 17 })])).toHaveLength(23);
+    const sw = calendarFor(2027, base, [mk({ op: "swap", add: 29, remove: 9 })]);
+    expect(sw.find((r) => r.id === 29)?.date).toBe(base.find((r) => r.id === 9)?.date);
+    const next = datesForSeason(sw, 2027);
+    expect(next).toHaveLength(24);
+  });
+});

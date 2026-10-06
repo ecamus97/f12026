@@ -2,7 +2,8 @@ import { motion } from "framer-motion";
 import { Gavel, Landmark, Check, X, Minus, Scale } from "lucide-react";
 import type { Team } from "@/data/f1Data";
 import { describeRules, rulesFor, tally, type RuleProposal, type RuleSet, type Vote } from "@/engine";
-import { SectionTitle } from "./visuals";
+import { CircuitOutline, SectionTitle } from "./visuals";
+import { raceById } from "@/data/calendar";
 import { cn } from "@/lib/utils";
 
 const VOTE_INFO: Record<Vote, { label: string; icon: typeof Check; cls: string; bar: string }> = {
@@ -114,6 +115,39 @@ const EFFECT_LABEL = { aero: "Aerodinámica", powerUnit: "Unidad de potencia", c
 
 /** Rules that change the cars' ratings when they come into force. */
 function ImpactChip({ p }: { p: RuleProposal }) {
+  if (p.calendar) {
+    const add = p.calendar.add ? raceById(p.calendar.add) : undefined;
+    const rem = p.calendar.remove ? raceById(p.calendar.remove) : undefined;
+    return (
+      <div className="mt-2 space-y-2">
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-400/10 px-2 py-1 text-[11px] text-sky-200">
+          🗓️ Cambia el calendario de {p.effective}
+        </span>
+        <div className="flex flex-wrap gap-3">
+          {rem && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/10 p-2 flex items-center gap-2">
+              <CircuitOutline raceId={rem.id} className="h-14 w-14 text-red-300" width={14} />
+              <div className="text-xs">
+                <div className="tv-label text-red-300">Sale</div>
+                <div className="font-semibold">{rem.flag} {rem.name}</div>
+                <div className="text-muted-foreground">{rem.circuit}</div>
+              </div>
+            </div>
+          )}
+          {add && (
+            <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-2 flex items-center gap-2">
+              <CircuitOutline raceId={add.id} className="h-14 w-14 text-emerald-300" width={14} />
+              <div className="text-xs">
+                <div className="tv-label text-emerald-300">Entra</div>
+                <div className="font-semibold">{add.flag} {add.name}</div>
+                <div className="text-muted-foreground">{add.circuit} · {add.track.laps} vueltas</div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
   const label = p.effect ? EFFECT_LABEL[p.effect] : p.key === "budgetCap" && p.patch.budgetCap ? "Aero, motor y chasis de los equipos de adelante" : null;
   if (!label) return null;
   return (

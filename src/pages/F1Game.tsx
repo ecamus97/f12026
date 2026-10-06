@@ -6,7 +6,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useGameState, weekendWeather } from "@/hooks/useGameState";
+import { useGameState, weekendWeather, inSprint, sprintOf, type SeasonArchive } from "@/hooks/useGameState";
 import { NewsScreen } from "@/components/game/NewsCenter";
 import { SeasonCalendar } from "@/components/game/AgendaCalendar";
 import { RaceCard } from "@/components/RaceCard";
@@ -23,7 +23,7 @@ import {
   Newspaper, Trophy, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2, Users, Briefcase, Wallet, Gavel, Wrench, MoreHorizontal, X,
 } from "lucide-react";
 import { TeamHQ, money } from "@/components/game/TeamHQ";
-import { nextSeasonLineup } from "@/engine";
+import { nextSeasonLineup, computeStandings, type StoredRaceResult } from "@/engine";
 import { cn } from "@/lib/utils";
 
 type Screen = "home" | "news" | "weekend" | "calendar" | "standings" | "car" | "facilities" | "drivers" | "staff" | "finance" | "rules";
@@ -323,6 +323,7 @@ export default function F1Game() {
                   news={gameState.news}
                   teams={gameState.teamsData}
                   activities={gameState.activities}
+                  isSprint={!!currentRace && gameState.sprints.includes(currentRace.id)}
                   onChooseActivity={game.chooseActivity}
                   weather={seasonComplete ? null : weekend?.weather ?? weekendWeather(gameState, gameState.currentRaceIndex)}
                 />
@@ -373,6 +374,7 @@ export default function F1Game() {
                   }}
                   onRace={() => go("weekend")}
                   onChoose={game.chooseActivity}
+                  sprints={gameState.sprints}
                 />
               </motion.div>
             )}
@@ -381,9 +383,36 @@ export default function F1Game() {
               <motion.div key="weekend" {...fade}>
                 {!weekend || !weekendRace ? (
                   <div className="text-center text-muted-foreground py-12">No hay un fin de semana en curso.</div>
+                ) : inSprint(weekend) ? (
+                  weekend.sprint!.race ? (
+                    <RaceView
+                      key="sprint"
+                      race={{ ...sprintOf(weekendRace), name: `Sprint · ${weekendRace.name}` }}
+                      round={weekend.raceIndex + 1}
+                      state={weekend.sprint!.race}
+                      playerTeamId={gameState.playerTeamId}
+                      onUpdate={game.updateRace}
+                      onFinish={() => game.finishRace()}
+                    />
+                  ) : (
+                    <QualifyingView
+                      key="sq"
+                      sprint
+                      race={weekendRace}
+                      quali={weekend.sprint!.quali}
+                      weather={weekend.weather}
+                      revealed={weekend.sprint!.qualiRevealed}
+                      entryMap={entryMap}
+                      playerTeamId={gameState.playerTeamId}
+                      onReveal={game.revealSession}
+                      onStartRace={game.startRace}
+                    />
+                  )
                 ) : weekend.race ? (
                   <RaceView
+                    key="gp"
                     race={weekendRace}
+                    round={weekend.raceIndex + 1}
                     state={weekend.race}
                     playerTeamId={gameState.playerTeamId}
                     onUpdate={game.updateRace}
@@ -394,6 +423,7 @@ export default function F1Game() {
                   />
                 ) : (
                   <QualifyingView
+                    key="q"
                     race={weekendRace}
                     quali={weekend.quali}
                     weather={weekend.weather}
@@ -442,28 +472,16 @@ export default function F1Game() {
             )}
 
             {screen === "standings" && (
-              <motion.div key="standings" {...fade} className="space-y-5">
-                <div className="flex items-center justify-between gap-2">
-                  <SectionTitle>Campeonato {gameState.season}</SectionTitle>
-                  {currentRace && !seasonComplete && (
-                    <Button onClick={() => go("weekend")} className="font-display" size="sm">
-                      Siguiente: {currentRace.flag} {currentRace.country}
-                      <ChevronRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  )}
-                </div>
-                <Tabs defaultValue="drivers">
-                  <TabsList className="w-full grid grid-cols-2">
-                    <TabsTrigger value="drivers" className="font-racing">Pilotos</TabsTrigger>
-                    <TabsTrigger value="teams" className="font-racing">Constructores</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="drivers" className="mt-4">
-                    <DriverChampionshipTable standings={standings.drivers} results={gameState.results} playerTeamId={gameState.playerTeamId} />
-                  </TabsContent>
-                  <TabsContent value="teams" className="mt-4">
-                    <TeamChampionshipTable standings={standings.teams} results={gameState.results} playerTeamId={gameState.playerTeamId} />
-                  </TabsContent>
-                </Tabs>
+              <motion.div key="standings" {...fade}>
+                <StandingsScreen
+                  season={gameState.season}
+                  standings={standings}
+                  results={gameState.results}
+                  archive={gameState.archive}
+                  playerTeamId={gameState.playerTeamId}
+                  next={currentRace && !seasonComplete ? `${currentRace.flag} ${currentRace.country}` : null}
+                  onNext={() => go("weekend")}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -579,6 +597,76 @@ function EndStat({ label, value, highlight }: { label: string; value: string; hi
     <div className={cn("rounded-xl border border-white/10 bg-black/30 p-3", highlight && "border-primary/60")}>
       <div className="tv-label text-muted-foreground">{label}</div>
       <div className={cn("font-display text-xl mt-1", highlight && "text-primary text-3xl")}>{value}</div>
+    </div>
+  );
+}
+
+function StandingsScreen({
+  season, standings, results, archive, playerTeamId, next, onNext,
+}: {
+  season: number;
+  standings: ReturnType<typeof computeStandings>;
+  results: StoredRaceResult[];
+  archive: SeasonArchive[];
+  playerTeamId: string | null;
+  next: string | null;
+  onNext: () => void;
+}) {
+  const [view, setView] = useState<number>(season);
+  const arch = archive.find((a) => a.season === view);
+  const st = arch ? computeStandings(arch.teams, arch.results) : standings;
+  const res = arch ? arch.results : results;
+  const races = arch?.calendar;
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <SectionTitle>Campeonato {view}</SectionTitle>
+        <div className="flex flex-wrap items-center gap-2">
+          {archive.length > 0 && (
+            <div className="flex rounded-md border border-white/10 overflow-hidden text-xs">
+              {[...archive.map((a) => a.season), season].map((y) => (
+                <button key={y} onClick={() => setView(y)} className={cn("px-3 py-1.5 font-racing", view === y ? "bg-primary text-primary-foreground" : "hover:bg-white/5")}>
+                  {y}
+                  {y === season ? " · actual" : ""}
+                </button>
+              ))}
+            </div>
+          )}
+          {next && view === season && (
+            <Button onClick={onNext} className="font-display" size="sm">
+              Siguiente: {next}
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          )}
+        </div>
+      </div>
+      {arch && (
+        <div className="panel p-4 flex flex-wrap gap-4 items-center">
+          <span className="text-3xl">🏆</span>
+          <div>
+            <div className="tv-label text-muted-foreground">Campeón {view}</div>
+            <div className="font-display text-2xl">{st.drivers[0]?.driverName}</div>
+          </div>
+          <div>
+            <div className="tv-label text-muted-foreground">Constructores</div>
+            <div className="font-display text-2xl">{st.teams[0]?.teamName}</div>
+          </div>
+          <div className="text-xs text-muted-foreground">{arch.results.length} carreras disputadas</div>
+        </div>
+      )}
+      <Tabs defaultValue="drivers">
+        <TabsList className="w-full grid grid-cols-2">
+          <TabsTrigger value="drivers" className="font-racing">Pilotos</TabsTrigger>
+          <TabsTrigger value="teams" className="font-racing">Constructores</TabsTrigger>
+        </TabsList>
+        <TabsContent value="drivers" className="mt-4 space-y-2">
+          <p className="text-[11px] text-muted-foreground">El número chico azul en la esquina de una carrera es la posición en la sprint de ese fin de semana (puntúan los 8 primeros).</p>
+          <DriverChampionshipTable standings={st.drivers} results={res} playerTeamId={playerTeamId} races={races} />
+        </TabsContent>
+        <TabsContent value="teams" className="mt-4">
+          <TeamChampionshipTable standings={st.teams} results={res} playerTeamId={playerTeamId} races={races} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

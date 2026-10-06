@@ -51,11 +51,13 @@ export interface StandingLite {
 
 const ord = (n: number) => `P${n}`;
 
-const COUNTRY_ES: Record<string, string> = {
+export const COUNTRY_ES: Record<string, string> = {
   Australia: "Australia", Austria: "Austria", Azerbaijan: "Azerbaiyán", Bahrain: "Baréin", Belgium: "Bélgica", Brazil: "Brasil",
   Canada: "Canadá", China: "China", "Great Britain": "Gran Bretaña", Hungary: "Hungría", Italy: "Italia", Japan: "Japón",
   Mexico: "México", Monaco: "Mónaco", Netherlands: "Países Bajos", Qatar: "Catar", "Saudi Arabia": "Arabia Saudita",
   Singapore: "Singapur", Spain: "España", UAE: "Abu Dabi", USA: "Estados Unidos",
+  France: "Francia", Germany: "Alemania", "Emilia-Romagna": "Imola", Eifel: "Nürburgring", Portugal: "Portugal", Tuscany: "Mugello",
+  Malaysia: "Malasia", Turkey: "Turquía", "South Africa": "Sudáfrica", Argentina: "Argentina",
 };
 const surname = (n: string) => n.split(" ").slice(-1)[0];
 

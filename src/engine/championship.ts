@@ -7,6 +7,7 @@ export interface StoredRaceResult {
   rows: ClassifiedRow[];
   pole: string;
   fastestLap: { driverId: string; time: number } | null;
+  sprint?: ClassifiedRow[]; // sprint race of the same weekend (points only)
 }
 
 export interface DriverStanding {
@@ -59,6 +60,10 @@ export function computeStandings(teams: Team[], results: StoredRaceResult[]) {
   const counts = new Map<string, number[]>();
 
   for (const r of results) {
+    for (const row of r.sprint ?? []) {
+      const d = byId.get(row.driverId);
+      if (d) d.points += row.points;
+    }
     const pole = byId.get(r.pole);
     if (pole) pole.poles++;
     for (const row of r.rows) {

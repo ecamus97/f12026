@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { races2026, teams as defaultTeams, teamInfo, type Team } from "@/data/f1Data";
+import { races2026, teams as defaultTeams, teamInfo, type Race, type Team } from "@/data/f1Data";
+import { calendar, setActiveCalendar, SPRINTS_2026, datesForSeason } from "@/data/calendar";
 import {
   classify,
+  type ClassifiedRow,
   simulateToEnd,
   confirmStrategy,
   computeStandings,
@@ -56,6 +58,9 @@ import {
   type TeamContext,
   type Vote,
   techChanges,
+  COUNTRY_ES,
+  calendarFor,
+  completeOffSeason,
   generateActivities,
   describeEffect,
   rivalEvent,
@@ -84,12 +89,36 @@ export interface NegotiationAnswer {
   counter?: number;
 }
 
+export interface SprintWeekend {
+  quali: QualifyingResult;
+  qualiRevealed: number;
+  race: RaceState | null;
+  rows?: ClassifiedRow[]; // set when the sprint is over
+}
+
+/** Sprint first (its own qualifying and race), then the Grand Prix. */
+export const inSprint = (w: Weekend | null | undefined) => !!w?.sprint && !w.sprint.rows;
+
+export const SPRINT_POINTS = [8, 7, 6, 5, 4, 3, 2, 1];
+
+/** A sprint is a third of the race distance. */
+export const sprintOf = (race: Race): Race => ({ ...race, track: { ...race.track, laps: Math.max(10, Math.round(race.track.laps / 3)) } });
+
 export interface Weekend {
+  sprint?: SprintWeekend;
   raceIndex: number;
   quali: QualifyingResult;
   qualiRevealed: number; // sessions shown to the player (0-3)
   race: RaceState | null;
   weather?: WeatherTimeline; // Sunday's real weather (the player only sees the forecast)
+}
+
+/** Everything needed to show the final tables of a past season. */
+export interface SeasonArchive {
+  season: number;
+  calendar: { id: number; name: string; flag: string; country: string }[];
+  teams: Team[];
+  results: StoredRaceResult[];
 }
 
 export interface SeasonSummary {
@@ -120,12 +149,16 @@ export interface GameState {
   news: NewsItem[]; // paddock news, newest last
   activities: Activity[]; // agenda between races (sponsor events, media, factory...)
   agendaRounds: string[]; // "season-round" whose agenda was already planned
+  calendar: Race[]; // races of this season, in order
+  sprints: number[]; // race ids with a sprint this season
+  nextSprints?: number[]; // announced for next season
+  archive: SeasonArchive[]; // full results of past seasons
   seed: number; // career seed: makes each weekend's weather fixed (paddock, qualifying and race agree)
 }
 
 /** The weather of a weekend is decided in advance so every forecast is consistent. */
 export function weekendWeather(s: Pick<GameState, "seed" | "season">, raceIndex: number) {
-  const race = races2026[raceIndex];
+  const race = calendar()[raceIndex];
   if (!race) return null;
   const seed = (Math.imul(s.seed ^ (s.season * 2654435761), 1) + raceIndex * 40503) >>> 0;
   return generateWeather(race.track, race.track.laps, seed);
@@ -150,6 +183,9 @@ const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = D
   news: [],
   activities: [],
   agendaRounds: [],
+  calendar: races2026,
+  sprints: SPRINTS_2026,
+  archive: [],
   seed: randomSeed(),
 });
 
@@ -234,6 +270,10 @@ function loadState(): GameState {
     const state = { ...initialState(), ...parsed };
     state.rules = { ...DEFAULT_RULES, ...(parsed.rules ?? {}) };
     if (typeof parsed.seed !== "number") state.seed = randomSeed();
+    if (!Array.isArray(parsed.calendar) || !parsed.calendar.length) state.calendar = races2026;
+    if (!Array.isArray(parsed.sprints)) state.sprints = SPRINTS_2026;
+    if (!Array.isArray(parsed.archive)) state.archive = [];
+    setActiveCalendar(state.calendar);
     if (!Array.isArray(parsed.news)) state.news = [];
     if (!Array.isArray(parsed.activities)) state.activities = [];
     if (!Array.isArray(parsed.agendaRounds)) state.agendaRounds = [];
@@ -349,11 +389,11 @@ function withAgenda(s: GameState): GameState {
   const p = s.management?.player;
   const team = s.teamsData.find((t) => t.id === s.playerTeamId);
   const r = s.currentRaceIndex;
-  const race = races2026[r];
+  const race = calendar()[r];
   if (!p || !team || !race) return s;
   const key = `${s.season}-${r + 1}`;
   if (s.agendaRounds.includes(key)) return s;
-  const from = r === 0 ? new Date(s.season, 0, 6) : weekendDates(races2026[r - 1].date, s.season).end;
+  const from = r === 0 ? new Date(s.season, 0, 6) : weekendDates(calendar()[r - 1].date, s.season).end;
   const to = weekendDates(race.date, s.season).start;
   const items = generateActivities({
     season: s.season,
@@ -448,7 +488,7 @@ function applyActivity(s: GameState, id: string, idx: number, auto = false): Gam
 }
 
 function openWeekend(s0: GameState): GameState {
-  const race = races2026[s0.currentRaceIndex];
+  const race = calendar()[s0.currentRaceIndex];
   if (!race) return s0;
   if (s0.weekend?.raceIndex === s0.currentRaceIndex) return s0; // resume
   // agenda items still open are settled with the most conservative option
@@ -458,13 +498,37 @@ function openWeekend(s0: GameState): GameState {
   }
   const weather = weekendWeather(s, s.currentRaceIndex)!;
   const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet);
-  return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather } };
+  const sprint = s.sprints.includes(race.id)
+    ? { quali: runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet), qualiRevealed: 0, race: null }
+    : undefined;
+  return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather, sprint } };
+}
+
+/** Sprint race: short, no mandatory stop, everyone on one set of tyres unless they decide otherwise. */
+function openSprint(s: GameState): GameState {
+  const w = s.weekend;
+  if (!w?.sprint || w.sprint.race) return s;
+  const race = sprintOf(calendar()[w.raceIndex]);
+  const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
+  const grid = w.sprint.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
+  const r = s.rules;
+  const weather = generateWeather(race.track, race.track.laps, ((w.weather?.seed ?? 1) ^ 0x51) >>> 0);
+  const rs = createRace(race, grid, randomSeed(), s.simConfig, s.playerTeamId, weather);
+  const laps = race.track.laps;
+  rs.cars = rs.cars.map((c, i) => {
+    const wet = c.plan[0] && (c.plan[0].compound === "I" || c.plan[0].compound === "W");
+    const compound = wet ? c.plan[0].compound : !c.controlled && i % 4 === 3 ? "S" : "M";
+    return { ...c, compound, usedCompounds: [compound], plan: [{ compound, untilLap: laps }] };
+  });
+  rs.rules = { twoCompound: false, overtakeAid: r.overtakeAid, points: SPRINT_POINTS, fastestLapPoint: false };
+  return { ...s, weekend: { ...w, sprint: { ...w.sprint, qualiRevealed: 3, race: rs } } };
 }
 
 function openRace(s: GameState): GameState {
   const w = s.weekend;
+  if (inSprint(w)) return openSprint(s);
   if (!w || w.race) return s;
-  const race = races2026[w.raceIndex];
+  const race = calendar()[w.raceIndex];
   const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
   const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
@@ -474,11 +538,313 @@ function openRace(s: GameState): GameState {
   return { ...s, weekend: { ...w, race: rs } };
 }
 
+/** Six sprint weekends: keep most of last year's, rotate a couple (never the opener or the finale). */
+function pickSprints(cal: Race[], prev: number[], seed: number): number[] {
+  const rng = createRng(seed >>> 0);
+  const ids = cal.map((r) => r.id);
+  const candidates = ids.slice(1, -1);
+  let keep = prev.filter((id) => candidates.includes(id));
+  while (keep.length > 4) keep.splice(rng.int(0, keep.length - 1), 1);
+  const pool = candidates.filter((id) => !keep.includes(id));
+  while (keep.length < 6 && pool.length) keep.push(pool.splice(rng.int(0, pool.length - 1), 1)[0]);
+  return ids.filter((id) => keep.includes(id));
+}
+
+/** Close a race (or the sprint) of the weekend. */
+function finishRaceState(s: GameState): GameState {
+  const w0 = s.weekend;
+  if (w0 && inSprint(w0)) {
+    const sr = w0.sprint!.race;
+    if (!sr?.finished) return s;
+    const rows = classify(sr);
+    const race = calendar()[w0.raceIndex];
+    const look = lookupOf(s);
+    const win = rows[0];
+    const mine = rows.filter((r) => r.teamId === s.playerTeamId);
+    const winTeam = look.team(win.teamId);
+    const story: NewsItem = {
+      id: `${s.season}-${w0.raceIndex + 1}-sprint`,
+      season: s.season,
+      round: w0.raceIndex + 1,
+      kind: "race",
+      title: `${look.driver(win.driverId)?.name.split(" ").slice(-1)[0]} gana el sprint en ${COUNTRY_ES[race.country] ?? race.country}`,
+      summary: `Sprint de ${sr.totalLaps} vueltas. Tu equipo: ${mine.map((r) => `${look.driver(r.driverId)?.short} ${r.status === "dnf" ? "abandonó" : `P${r.position}`}${r.points ? ` (+${r.points})` : ""}`).join(" · ")}.`,
+      body: [
+        `${look.driver(win.driverId)?.name} (${winTeam?.name}) ganó la carrera sprint, que reparte puntos del 1º al 8º (8-7-6-5-4-3-2-1).`,
+        `Podio: ${rows.slice(0, 3).map((r) => look.driver(r.driverId)?.name).join(", ")}.`,
+        `El domingo se corre el Gran Premio con su propia clasificación.`,
+      ],
+      teamIds: [win.teamId],
+      color: winTeam?.hex,
+      raceId: race.id,
+      importance: 2,
+      chart: {
+        type: "podium",
+        rows: rows.slice(0, 3).map((r) => ({ name: look.driver(r.driverId)?.name ?? r.driverId, team: look.team(r.teamId)?.name ?? "", color: look.team(r.teamId)?.hex ?? "#888", note: r.position === 1 ? "Ganador" : r.gap })),
+      },
+    };
+    return { ...s, weekend: { ...w0, sprint: { ...w0.sprint!, rows } }, news: addNews(s.news, [story]) };
+  }
+  const w = s.weekend;
+  if (!w?.race?.finished) return s;
+  const result: StoredRaceResult = {
+    raceId: calendar()[w.raceIndex].id,
+    rows: classify(w.race),
+    pole: w.quali.grid[0],
+    fastestLap: w.race.fastest ? { driverId: w.race.fastest.driverId, time: w.race.fastest.time } : null,
+    sprint: w.sprint?.rows,
+  };
+  const round = w.raceIndex + 1;
+  const pay = s.people && s.playerTeamId ? totalPayroll(s.people, s.playerTeamId) : undefined;
+  let management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, round, result.pole, pay) : null;
+  // contract reminders
+  if (management && s.people && s.playerTeamId && (round === 1 || round === 12 || round === 20)) {
+    const ending = lineup(s.people, s.playerTeamId)
+      .map((id) => s.people!.drivers[id])
+      .filter((d) => d.contract && d.contract.until <= s.people!.season && !d.nextContract);
+    if (ending.length) {
+      management = {
+        ...management,
+        inbox: [
+          ...management.inbox,
+          {
+            race: round,
+            tone: "info" as const,
+            text: `Contrato${ending.length > 1 ? "s" : ""} que termina${ending.length > 1 ? "n" : ""} este año: ${ending.map((d) => d.name).join(" y ")}. Renueva o ficha en Equipo → Pilotos.`,
+          },
+        ].slice(-60),
+      };
+    }
+  }
+  // regulations: votes not cast in time count as abstentions, new proposals are announced
+  let proposals = s.proposals.map((p) =>
+    p.status === "pending" && p.round < round ? resolveVote(p, teamContexts(s), s.playerTeamId, "abstain", randomSeed()) : p,
+  );
+  const fresh = generateProposals(s.season, round, rulesFor(s.season + 1, s.rules, proposals), proposals, randomSeed(), calendar().map((r) => r.id));
+  proposals = [...proposals, ...fresh];
+  if (management && fresh.length) {
+    management = {
+      ...management,
+      inbox: [
+        ...management.inbox,
+        ...fresh.map((p) => ({
+          race: round,
+          tone: "info" as const,
+          text: p.by === "fia" ? `La FIA decreta para ${p.effective}: ${p.title}.` : `Votación de reglamento para ${p.effective}: ${p.title}. Vota en Reglamento.`,
+        })),
+      ].slice(-60),
+    };
+  }
+  // news of the weekend
+  const look = lookupOf(s);
+  const lite = (st: ReturnType<typeof computeStandings>) => ({
+    drivers: st.drivers.map((d) => ({ id: d.driverId, name: d.driverName, teamId: d.teamId, points: d.points })),
+    teams: st.teams.map((t) => ({ id: t.teamId, name: t.teamName, teamId: t.teamId, points: t.points })),
+  });
+  const results = [...s.results.filter((r) => r.raceId !== result.raceId), result];
+  const before = lite(computeStandings(s.teamsData, s.results));
+  const after = lite(computeStandings(s.teamsData, results));
+  const raceInfo = calendar()[w.raceIndex];
+  let news = raceNews({
+    season: s.season,
+    round,
+    raceId: raceInfo.id,
+    raceName: raceInfo.name,
+    country: raceInfo.country,
+    rows: result.rows,
+    events: w.race.events,
+    fastest: result.fastestLap,
+    poleId: result.pole,
+    before: before.drivers,
+    after: after.drivers,
+    teamsAfter: after.teams,
+    teamsBefore: before.teams,
+    playerTeamId: s.playerTeamId,
+    look,
+  });
+  if (management) {
+    const h = management.history;
+    const prev = h.find((x) => x.round === round - 1);
+    const cur = h.find((x) => x.round === round);
+    if (prev && cur) {
+      const pace = (d: Record<string, import("@/engine").CarDev>) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, carPace(v)]));
+      news = [...news, ...developmentNews({ season: s.season, round, before: pace(prev.dev), after: pace(cur.dev), playerTeamId: s.playerTeamId, look })];
+    }
+  }
+  // the title is decided when nobody can catch the leader any more
+  {
+    const cal = calendar();
+    const left = cal.length - round;
+    const sprintsLeft = cal.slice(round).filter((r) => s.sprints.includes(r.id)).length;
+    const fl = s.rules.fastestLapPoint ? left : 0;
+    const maxD = left * 25 + sprintsLeft * 8 + fl;
+    const maxT = left * 43 + sprintsLeft * 15 + fl;
+    const has = (id: string) => s.news.some((n) => n.id === id);
+    const [d1, d2] = after.drivers;
+    if (d1 && d2 && d1.points - d2.points > maxD && !has(`${s.season}-clinch-d`)) {
+      const t = look.team(d1.teamId);
+      news.push({
+        id: `${s.season}-clinch-d`,
+        season: s.season,
+        round,
+        kind: "season",
+        title: `¡${d1.name} es campeón del mundo ${s.season}!`,
+        summary: left > 0 ? `Asegura el título con ${left} carrera${left === 1 ? "" : "s"} por disputarse: nadie puede alcanzarlo.` : `Se lleva el título en la última carrera.`,
+        body: [
+          `${d1.name} (${t?.name}) se corona campeón de pilotos con ${d1.points} puntos, ${d1.points - d2.points} más que ${d2.name}.`,
+          left > 0 ? `Quedan ${left} carreras con ${maxD} puntos en juego, insuficientes para que alguien lo alcance.` : `Lo decidió en la última cita del año.`,
+        ],
+        teamIds: [d1.teamId],
+        color: t?.hex,
+        mine: d1.teamId === s.playerTeamId,
+        importance: 5,
+        chart: { type: "bars", title: `Campeonato de pilotos ${s.season}`, unit: "pts", rows: after.drivers.slice(0, 6).map((d) => ({ label: d.name, color: look.team(d.teamId)?.hex ?? "#888", value: d.points, mine: d.teamId === s.playerTeamId })) },
+      });
+    }
+    const [t1, t2] = after.teams;
+    if (t1 && t2 && t1.points - t2.points > maxT && !has(`${s.season}-clinch-t`)) {
+      const t = look.team(t1.id);
+      news.push({
+        id: `${s.season}-clinch-t`,
+        season: s.season,
+        round,
+        kind: "season",
+        title: `¡${t?.name} campeón de constructores ${s.season}!`,
+        summary: left > 0 ? `El título de equipos queda decidido con ${left} carrera${left === 1 ? "" : "s"} por correr.` : `Se lleva el título de equipos en la última carrera.`,
+        body: [`${t?.name} suma ${t1.points} puntos, ${t1.points - t2.points} más que ${look.team(t2.id)?.name}, y ya no puede ser alcanzado.`],
+        teamIds: [t1.id],
+        color: t?.hex,
+        mine: t1.id === s.playerTeamId,
+        importance: 5,
+        chart: { type: "bars", title: `Constructores ${s.season}`, unit: "pts", rows: after.teams.slice(0, 6).map((x) => ({ label: look.team(x.id)?.name ?? x.name, color: look.team(x.id)?.hex ?? "#888", value: x.points, mine: x.id === s.playerTeamId })) },
+      });
+    }
+  }
+  // the player's own upgrades and finished buildings
+  if (management?.player && s.management?.player && s.playerTeamId) {
+    const b = s.management.dev[s.playerTeamId];
+    const a = management.dev[s.playerTeamId];
+    const fb = s.management.player.facilities;
+    const fa = management.player.facilities;
+    const done = (Object.keys(fa) as (keyof typeof fa)[]).find((k) => fa[k] > fb[k]);
+    news = [
+      ...news,
+      ...playerDevNews({
+        season: s.season,
+        round,
+        teamId: s.playerTeamId,
+        before: b,
+        after: a,
+        facility: done ? { label: FACILITY_INFO[done].label, level: fa[done] } : null,
+        paceBefore: carPace(b),
+        paceAfter: carPace(a),
+        look,
+      }),
+    ];
+  }
+  // now and then a rival has its own big event
+  if (management) {
+    const ev = rivalEvent(s.teamsData, s.playerTeamId, randomSeed());
+    if (ev && management.dev[ev.teamId]) {
+      const d = management.dev[ev.teamId];
+      management = { ...management, dev: { ...management.dev, [ev.teamId]: { ...d, [ev.area]: Math.max(60, Math.min(99.5, +(d[ev.area] + ev.delta).toFixed(2))) } } };
+      const AREA_ES = { aero: "aerodinámica", powerUnit: "unidad de potencia", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const;
+      news.push({
+        id: `${s.season}-${round}-rival-${ev.teamId}`,
+        season: s.season,
+        round,
+        kind: "development",
+        title: ev.title,
+        summary: `${ev.text} (${AREA_ES[ev.area]} ${ev.delta > 0 ? "+" : ""}${ev.delta.toFixed(1)})`,
+        body: [ev.text, `Efecto: ${AREA_ES[ev.area]} ${ev.delta > 0 ? "+" : ""}${ev.delta.toFixed(1)} para ${look.team(ev.teamId)?.name}.`],
+        teamIds: [ev.teamId],
+        color: look.team(ev.teamId)?.hex,
+        importance: 1,
+      });
+    }
+  }
+  // AI teams close deals for next season during the year
+  let people = s.people;
+  if (people && management && [8, 12, 16, 20].includes(round)) {
+    const ranks = Object.fromEntries(Object.keys(management.dev).map((id) => [id, carRankOf(management!, id)]));
+    const mk = midSeasonMarket(people, s.teamsData, s.playerTeamId, ranks, randomSeed());
+    people = mk.people;
+    for (const mv of mk.moves.slice(0, 4)) {
+      const d = people.drivers[mv.driverId];
+      const to = look.team(mv.teamId)?.name ?? mv.teamId;
+      const from = mv.fromTeamId ? look.team(mv.fromTeamId)?.name : null;
+      news.push(
+        marketNews({
+          season: s.season,
+          round,
+          id: `${mv.kind}-${mv.driverId}`,
+          teamId: mv.teamId,
+          look,
+          title: mv.kind === "renew" ? `${d.name} renueva con ${to} hasta ${mv.until}` : `Bombazo: ${to} ficha a ${d.name} para ${s.season + 1}`,
+          summary:
+            mv.kind === "renew"
+              ? `Contrato hasta ${mv.until} por unos US$ ${mv.salary.toFixed(1)} M al año.`
+              : `${d.name}${from ? ` deja ${from}` : d.status === "junior" ? " da el salto desde la Fórmula 2" : " vuelve a la parrilla"} y firma hasta ${mv.until}.`,
+          body: [
+            mv.kind === "renew"
+              ? `${to} aseguró la continuidad de ${d.name} hasta ${mv.until}.`
+              : `${to} cerró el fichaje de ${d.name} para la próxima temporada${from ? `: deja ${from} al final del año` : ""}.`,
+            `Salario estimado: US$ ${mv.salary.toFixed(1)} M por año. Ritmo actual ${d.pace.toFixed(0)}.`,
+            ...(mv.fromTeamId === s.playerTeamId ? [`Es uno de tus pilotos: tendrás que buscar reemplazo.`] : []),
+          ],
+        }),
+      );
+    }
+    if (mk.moves.length && management) {
+      management = {
+        ...management,
+        inbox: [...management.inbox, { race: round, tone: "info" as const, text: `Mercado: ${mk.moves.length} movimiento(s) de otros equipos para ${s.season + 1}. Revisa Noticias.` }].slice(-60),
+      };
+    }
+  }
+  const resolvedNow = proposals.filter((p) => p.status !== "pending" && s.proposals.find((q) => q.id === p.id)?.status === "pending");
+  news = [...news, ...resolvedNow.map((p) => ruleNews(p, round, s)), ...fresh.map((p) => ruleNews(p, round, s))];
+  // sprint weekends of next season are announced near the end of the year
+  let nextSprints = s.nextSprints;
+  if (!nextSprints && round === calendar().length - 4) {
+    const nextCal = calendarFor(s.season + 1, calendar(), proposals);
+    nextSprints = pickSprints(nextCal, s.sprints, (s.seed ^ (s.season + 1)) >>> 0);
+    const names = nextCal.filter((r) => nextSprints!.includes(r.id));
+    news.push({
+      id: `${s.season + 1}-sprints`,
+      season: s.season,
+      round,
+      kind: "season",
+      title: `Anunciadas las carreras sprint de ${s.season + 1}`,
+      summary: names.map((r) => r.country).join(", "),
+      body: [
+        `La F1 confirmó los ${names.length} fines de semana con carrera sprint para ${s.season + 1}: ${names.map((r) => r.name).join(", ")}.`,
+        `En esos fines de semana hay clasificación sprint y carrera sprint el sábado (puntos del 1º al 8º), además de la clasificación y el Gran Premio del domingo.`,
+      ],
+      teamIds: [],
+      importance: 2,
+    });
+  }
+  return withAgenda({
+    ...s,
+    proposals,
+    nextSprints,
+    news: addNews(s.news, news),
+    people,
+    results,
+    currentRaceIndex: round,
+    weekend: null,
+    management,
+    teamsData: management ? applyDevToTeams(s.teamsData, management) : s.teamsData,
+  });
+}
+
 export const entriesFromTeams = (teams: Team[]): Entry[] =>
   teams.flatMap((t) => t.drivers.map((driver) => ({ driver, team: teamInfo(t) })));
 
 export function useGameState() {
   const [gameState, setGameState] = useState<GameState>(loadState);
+  setActiveCalendar(gameState.calendar);
   const stateRef = useRef(gameState);
   stateRef.current = gameState;
 
@@ -503,8 +869,8 @@ export function useGameState() {
   const entries = useMemo(() => entriesFromTeams(gameState.teamsData), [gameState.teamsData]);
   const entryMap = useMemo(() => new Map(entries.map((e) => [e.driver.id, e])), [entries]);
 
-  const currentRace = races2026[gameState.currentRaceIndex] ?? null;
-  const seasonComplete = gameState.currentRaceIndex >= races2026.length;
+  const currentRace = calendar()[gameState.currentRaceIndex] ?? null;
+  const seasonComplete = gameState.currentRaceIndex >= calendar().length;
 
   const chooseTeam = useCallback((teamId: string) => {
     setGameState((s) => {
@@ -654,215 +1020,44 @@ export function useGameState() {
     setGameState((s0) => {
       let s = openWeekend(s0);
       if (!s.weekend) return s0;
-      if (!s.weekend.race) s = openRace({ ...s, weekend: { ...s.weekend, qualiRevealed: 3 } });
+      if (inSprint(s.weekend)) {
+        s = openSprint(s);
+        const sr = s.weekend!.sprint!.race!;
+        s = { ...s, weekend: { ...s.weekend!, sprint: { ...s.weekend!.sprint!, race: sr.finished ? sr : simulateToEnd(confirmStrategy(sr)) } } };
+        s = finishRaceState(s);
+      }
+      if (!s.weekend!.race) s = openRace({ ...s, weekend: { ...s.weekend!, qualiRevealed: 3 } });
       const r = s.weekend!.race!;
       return { ...s, weekend: { ...s.weekend!, qualiRevealed: 3, race: r.finished ? r : simulateToEnd(confirmStrategy(r)) } };
     });
   }, []);
 
   const revealSession = useCallback((all = false) => {
-    setGameState((s) =>
-      s.weekend
-        ? { ...s, weekend: { ...s.weekend, qualiRevealed: all ? 3 : Math.min(3, s.weekend.qualiRevealed + 1) } }
-        : s,
-    );
+    setGameState((s) => {
+      const w = s.weekend;
+      if (!w) return s;
+      if (inSprint(w)) {
+        const sp = w.sprint!;
+        return { ...s, weekend: { ...w, sprint: { ...sp, qualiRevealed: all ? 3 : Math.min(3, sp.qualiRevealed + 1) } } };
+      }
+      return { ...s, weekend: { ...w, qualiRevealed: all ? 3 : Math.min(3, w.qualiRevealed + 1) } };
+    });
   }, []);
 
   const startRace = useCallback(() => setGameState(openRace), []);
 
   const updateRace = useCallback((race: RaceState) => {
-    setGameState((s) => (s.weekend ? { ...s, weekend: { ...s.weekend, race } } : s));
+    setGameState((s) =>
+      !s.weekend ? s : inSprint(s.weekend) ? { ...s, weekend: { ...s.weekend, sprint: { ...s.weekend.sprint!, race } } } : { ...s, weekend: { ...s.weekend, race } },
+    );
   }, []);
 
-  const finishRace = useCallback(() => {
-    setGameState((s) => {
-      const w = s.weekend;
-      if (!w?.race?.finished) return s;
-      const result: StoredRaceResult = {
-        raceId: races2026[w.raceIndex].id,
-        rows: classify(w.race),
-        pole: w.quali.grid[0],
-        fastestLap: w.race.fastest ? { driverId: w.race.fastest.driverId, time: w.race.fastest.time } : null,
-      };
-      const round = w.raceIndex + 1;
-      const pay = s.people && s.playerTeamId ? totalPayroll(s.people, s.playerTeamId) : undefined;
-      let management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, round, result.pole, pay) : null;
-      // contract reminders
-      if (management && s.people && s.playerTeamId && (round === 1 || round === 12 || round === 20)) {
-        const ending = lineup(s.people, s.playerTeamId)
-          .map((id) => s.people!.drivers[id])
-          .filter((d) => d.contract && d.contract.until <= s.people!.season && !d.nextContract);
-        if (ending.length) {
-          management = {
-            ...management,
-            inbox: [
-              ...management.inbox,
-              {
-                race: round,
-                tone: "info" as const,
-                text: `Contrato${ending.length > 1 ? "s" : ""} que termina${ending.length > 1 ? "n" : ""} este año: ${ending.map((d) => d.name).join(" y ")}. Renueva o ficha en Equipo → Pilotos.`,
-              },
-            ].slice(-60),
-          };
-        }
-      }
-      // regulations: votes not cast in time count as abstentions, new proposals are announced
-      let proposals = s.proposals.map((p) =>
-        p.status === "pending" && p.round < round ? resolveVote(p, teamContexts(s), s.playerTeamId, "abstain", randomSeed()) : p,
-      );
-      const fresh = generateProposals(s.season, round, rulesFor(s.season + 1, s.rules, proposals), proposals, randomSeed());
-      proposals = [...proposals, ...fresh];
-      if (management && fresh.length) {
-        management = {
-          ...management,
-          inbox: [
-            ...management.inbox,
-            ...fresh.map((p) => ({
-              race: round,
-              tone: "info" as const,
-              text: p.by === "fia" ? `La FIA decreta para ${p.effective}: ${p.title}.` : `Votación de reglamento para ${p.effective}: ${p.title}. Vota en Reglamento.`,
-            })),
-          ].slice(-60),
-        };
-      }
-      // news of the weekend
-      const look = lookupOf(s);
-      const lite = (st: ReturnType<typeof computeStandings>) => ({
-        drivers: st.drivers.map((d) => ({ id: d.driverId, name: d.driverName, teamId: d.teamId, points: d.points })),
-        teams: st.teams.map((t) => ({ id: t.teamId, name: t.teamName, teamId: t.teamId, points: t.points })),
-      });
-      const results = [...s.results.filter((r) => r.raceId !== result.raceId), result];
-      const before = lite(computeStandings(s.teamsData, s.results));
-      const after = lite(computeStandings(s.teamsData, results));
-      const raceInfo = races2026[w.raceIndex];
-      let news = raceNews({
-        season: s.season,
-        round,
-        raceId: raceInfo.id,
-        raceName: raceInfo.name,
-        country: raceInfo.country,
-        rows: result.rows,
-        events: w.race.events,
-        fastest: result.fastestLap,
-        poleId: result.pole,
-        before: before.drivers,
-        after: after.drivers,
-        teamsAfter: after.teams,
-        teamsBefore: before.teams,
-        playerTeamId: s.playerTeamId,
-        look,
-      });
-      if (management) {
-        const h = management.history;
-        const prev = h.find((x) => x.round === round - 1);
-        const cur = h.find((x) => x.round === round);
-        if (prev && cur) {
-          const pace = (d: Record<string, import("@/engine").CarDev>) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, carPace(v)]));
-          news = [...news, ...developmentNews({ season: s.season, round, before: pace(prev.dev), after: pace(cur.dev), playerTeamId: s.playerTeamId, look })];
-        }
-      }
-      // the player's own upgrades and finished buildings
-      if (management?.player && s.management?.player && s.playerTeamId) {
-        const b = s.management.dev[s.playerTeamId];
-        const a = management.dev[s.playerTeamId];
-        const fb = s.management.player.facilities;
-        const fa = management.player.facilities;
-        const done = (Object.keys(fa) as (keyof typeof fa)[]).find((k) => fa[k] > fb[k]);
-        news = [
-          ...news,
-          ...playerDevNews({
-            season: s.season,
-            round,
-            teamId: s.playerTeamId,
-            before: b,
-            after: a,
-            facility: done ? { label: FACILITY_INFO[done].label, level: fa[done] } : null,
-            paceBefore: carPace(b),
-            paceAfter: carPace(a),
-            look,
-          }),
-        ];
-      }
-      // now and then a rival has its own big event
-      if (management) {
-        const ev = rivalEvent(s.teamsData, s.playerTeamId, randomSeed());
-        if (ev && management.dev[ev.teamId]) {
-          const d = management.dev[ev.teamId];
-          management = { ...management, dev: { ...management.dev, [ev.teamId]: { ...d, [ev.area]: Math.max(60, Math.min(99.5, +(d[ev.area] + ev.delta).toFixed(2))) } } };
-          const AREA_ES = { aero: "aerodinámica", powerUnit: "unidad de potencia", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const;
-          news.push({
-            id: `${s.season}-${round}-rival-${ev.teamId}`,
-            season: s.season,
-            round,
-            kind: "development",
-            title: ev.title,
-            summary: `${ev.text} (${AREA_ES[ev.area]} ${ev.delta > 0 ? "+" : ""}${ev.delta.toFixed(1)})`,
-            body: [ev.text, `Efecto: ${AREA_ES[ev.area]} ${ev.delta > 0 ? "+" : ""}${ev.delta.toFixed(1)} para ${look.team(ev.teamId)?.name}.`],
-            teamIds: [ev.teamId],
-            color: look.team(ev.teamId)?.hex,
-            importance: 1,
-          });
-        }
-      }
-      // AI teams close deals for next season during the year
-      let people = s.people;
-      if (people && management && [8, 12, 16, 20].includes(round)) {
-        const ranks = Object.fromEntries(Object.keys(management.dev).map((id) => [id, carRankOf(management!, id)]));
-        const mk = midSeasonMarket(people, s.teamsData, s.playerTeamId, ranks, randomSeed());
-        people = mk.people;
-        for (const mv of mk.moves.slice(0, 4)) {
-          const d = people.drivers[mv.driverId];
-          const to = look.team(mv.teamId)?.name ?? mv.teamId;
-          const from = mv.fromTeamId ? look.team(mv.fromTeamId)?.name : null;
-          news.push(
-            marketNews({
-              season: s.season,
-              round,
-              id: `${mv.kind}-${mv.driverId}`,
-              teamId: mv.teamId,
-              look,
-              title: mv.kind === "renew" ? `${d.name} renueva con ${to} hasta ${mv.until}` : `Bombazo: ${to} ficha a ${d.name} para ${s.season + 1}`,
-              summary:
-                mv.kind === "renew"
-                  ? `Contrato hasta ${mv.until} por unos US$ ${mv.salary.toFixed(1)} M al año.`
-                  : `${d.name}${from ? ` deja ${from}` : d.status === "junior" ? " da el salto desde la Fórmula 2" : " vuelve a la parrilla"} y firma hasta ${mv.until}.`,
-              body: [
-                mv.kind === "renew"
-                  ? `${to} aseguró la continuidad de ${d.name} hasta ${mv.until}.`
-                  : `${to} cerró el fichaje de ${d.name} para la próxima temporada${from ? `: deja ${from} al final del año` : ""}.`,
-                `Salario estimado: US$ ${mv.salary.toFixed(1)} M por año. Ritmo actual ${d.pace.toFixed(0)}.`,
-                ...(mv.fromTeamId === s.playerTeamId ? [`Es uno de tus pilotos: tendrás que buscar reemplazo.`] : []),
-              ],
-            }),
-          );
-        }
-        if (mk.moves.length && management) {
-          management = {
-            ...management,
-            inbox: [...management.inbox, { race: round, tone: "info" as const, text: `Mercado: ${mk.moves.length} movimiento(s) de otros equipos para ${s.season + 1}. Revisa Noticias.` }].slice(-60),
-          };
-        }
-      }
-      const resolvedNow = proposals.filter((p) => p.status !== "pending" && s.proposals.find((q) => q.id === p.id)?.status === "pending");
-      news = [...news, ...resolvedNow.map((p) => ruleNews(p, round, s)), ...fresh.map((p) => ruleNews(p, round, s))];
-      return withAgenda({
-        ...s,
-        proposals,
-        news: addNews(s.news, news),
-        people,
-        results,
-        currentRaceIndex: round,
-        weekend: null,
-        management,
-        teamsData: management ? applyDevToTeams(s.teamsData, management) : s.teamsData,
-      });
-    });
-  }, []);
+  const finishRace = useCallback(() => setGameState(finishRaceState), []);
 
   /** Close the season and start the next one (contracts, ageing, retirements, prize money). */
   const startNextSeason = useCallback(() => {
     setGameState((s) => {
-      if (s.currentRaceIndex < races2026.length || !s.management || !s.people) return s;
+      if (s.currentRaceIndex < calendar().length || !s.management || !s.people) return s;
       const st = computeStandings(s.teamsData, s.results);
       const order = st.teams.map((t) => t.teamId);
       const carRanks = Object.fromEntries(Object.keys(s.management.dev).map((id) => [id, carRankOf(s.management!, id)]));
@@ -870,6 +1065,17 @@ export function useGameState() {
         p.status === "pending" ? resolveVote(p, teamContexts(s), s.playerTeamId, "abstain", randomSeed()) : p,
       );
       const rules = rulesFor(s.season + 1, s.rules, proposals);
+      // archive the season that ends, then build next year's calendar (and its sprint weekends)
+      const archive = [
+        ...s.archive,
+        { season: s.season, calendar: calendar().map((r) => ({ id: r.id, name: r.name, flag: r.flag, country: r.country })), teams: s.teamsData, results: s.results },
+      ].slice(-12);
+      const newCal = datesForSeason(calendarFor(s.season + 1, calendar(), proposals), s.season + 1);
+      const sprints = pickSprints(newCal, s.nextSprints ?? s.sprints, s.seed ^ s.season);
+      setActiveCalendar(newCal);
+      // pending work in the factory is finished during the winter
+      const off = completeOffSeason(s.management, randomSeed());
+      s = { ...s, management: off.m };
       const adv = advanceSeason({ ...s.people, salaryCap: rules.salaryCap }, s.teamsData, s.playerTeamId, carRanks);
       const news = adv.news;
       let people = adv.people;
@@ -947,8 +1153,29 @@ export function useGameState() {
         pastSeasons: [...s.pastSeasons, summary],
         rules,
         proposals,
+        archive,
+        calendar: newCal,
+        sprints,
+        nextSprints: undefined,
         seasonNews: [...regNews, ...news],
-        news: addNews(s.news, seasonStories(s, people.season, summary, regImpactRows, news, proposals)),
+        news: addNews(s.news, [
+          ...seasonStories(s, people.season, summary, regImpactRows, news, proposals),
+          {
+            id: `${people.season}-calendar`,
+            season: people.season,
+            round: 0,
+            kind: "season",
+            title: `Calendario ${people.season}: ${newCal.length} Grandes Premios y ${sprints.length} sprints`,
+            summary: `Sprints en ${newCal.filter((r) => sprints.includes(r.id)).map((r) => r.country).join(", ")}.`,
+            body: [
+              `La temporada ${people.season} tiene ${newCal.length} carreras: de ${newCal[0]?.name} a ${newCal[newCal.length - 1]?.name}.`,
+              `Fines de semana sprint: ${newCal.filter((r) => sprints.includes(r.id)).map((r) => r.name).join(", ")}.`,
+              ...(off.done.length ? [`Tu equipo terminó en el invierno: ${off.done.join("; ")}.`] : []),
+            ],
+            teamIds: [],
+            importance: 2,
+          },
+        ]),
       });
     });
   }, []);
@@ -991,7 +1218,7 @@ export function useGameState() {
     entryMap,
     currentRace,
     seasonComplete,
-    races: races2026,
+    races: gameState.calendar,
     chooseTeam,
     startWeekend,
     quickSimWeekend,

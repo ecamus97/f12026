@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 export type NavTarget = "weekend" | "car" | "drivers" | "finance" | "rules" | "standings" | "calendar" | "news";
 
 export function Paddock({
-  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, activities, onChooseActivity,
+  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, activities, onChooseActivity, isSprint,
 }: {
   team: Team;
   season: number;
@@ -36,6 +36,7 @@ export function Paddock({
   teams: Team[];
   weather: WeatherTimeline | null;
   activities: Activity[];
+  isSprint?: boolean;
   onChooseActivity: (id: string, idx: number) => void;
 }) {
   const fc = weather ? forecast(weather, 0, Math.max(3, Math.round(weather.rain.length / 10))) : [];
@@ -64,7 +65,7 @@ export function Paddock({
                   {weekendActive ? "En curso" : "Próxima carrera"}
                 </span>
                 <span className="tv-label text-muted-foreground">
-                  Ronda {race.id} de {totalRaces} · {season}
+                  Ronda {round + 1} de {totalRaces} · {season}
                 </span>
               </div>
               <div className="flex items-center gap-4">
@@ -79,6 +80,7 @@ export function Paddock({
                 <span className="flex items-center gap-1.5"><CalendarDays className="w-4 h-4" /> {race.date}</span>
               </div>
               <div className="flex flex-wrap gap-2">
+                {isSprint && <span className="rounded-md bg-sky-400 text-black px-2.5 py-1 text-xs font-bold">FIN DE SEMANA SPRINT</span>}
                 <Chip label="Vueltas" value={race.track.laps} />
                 <Chip label="Adelantar" value={race.track.overtaking > 0.7 ? "Difícil" : race.track.overtaking < 0.4 ? "Fácil" : "Medio"} />
                 <Chip label="Desgaste" value={race.track.deg >= 1.2 ? "Alto" : race.track.deg <= 0.8 ? "Bajo" : "Medio"} />

@@ -18,6 +18,7 @@ interface Props {
   onReveal: (all?: boolean) => void;
   onStartRace: () => void;
   weather?: WeatherTimeline; // Sunday's weather (shown as a forecast)
+  sprint?: boolean; // sprint qualifying (SQ1-SQ3)
 }
 
 type Row = QualifyingResult["sessions"][number]["rows"][number];
@@ -26,6 +27,12 @@ const SESSION_INFO = [
   { name: "Q1", out: 6, text: "22 autos · los 6 más lentos quedan eliminados", minutes: 18 },
   { name: "Q2", out: 6, text: "16 autos · otros 6 quedan eliminados", minutes: 15 },
   { name: "Q3", out: 0, text: "Top 10 · pelean la pole position", minutes: 12 },
+];
+
+const SPRINT_INFO = [
+  { name: "SQ1", out: 6, text: "Clasificación sprint · los 6 más lentos quedan eliminados", minutes: 12 },
+  { name: "SQ2", out: 6, text: "16 autos · otros 6 quedan eliminados", minutes: 10 },
+  { name: "SQ3", out: 0, text: "Top 10 · pelean la pole del sprint", minutes: 8 },
 ];
 
 const SPEEDS = [
@@ -51,7 +58,8 @@ function buildSequence(rows: Row[], salt: number): Step[] {
   return [...order(0), ...order(1)];
 }
 
-export function QualifyingView({ weather, race, quali, revealed, entryMap, playerTeamId, onReveal, onStartRace }: Props) {
+export function QualifyingView({ sprint, weather, race, quali, revealed, entryMap, playerTeamId, onReveal, onStartRace }: Props) {
+  const INFO = sprint ? SPRINT_INFO : SESSION_INFO;
   const done = revealed >= 3;
   const liveIndex = done ? -1 : revealed; // session that is next / in progress
   const [tab, setTab] = useState<string>(done ? "grid" : `${revealed}`);
@@ -87,7 +95,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
     const id = window.setInterval(() => setNow(performance.now()), 100);
     return () => window.clearInterval(id);
   }, [playing]);
-  const sessionSecs = liveIndex >= 0 ? SESSION_INFO[liveIndex].minutes * 60 : 0;
+  const sessionSecs = liveIndex >= 0 ? INFO[liveIndex].minutes * 60 : 0;
   const partial = playing && step >= 0 && step < sequence.length - 1 ? Math.min(1, (now - stepAt) / SPEEDS[speed].ms) : 0;
   const clockSec =
     step < 0 ? sessionSecs : step >= sequence.length - 1 ? 0 : Math.max(0, sessionSecs * (1 - (step + 1 + partial) / sequence.length));
@@ -100,7 +108,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
   return (
     <div className="space-y-5">
       <div className="text-center space-y-1">
-        <p className="text-xs uppercase tracking-widest text-muted-foreground">Clasificación</p>
+        <p className="text-xs uppercase tracking-widest text-muted-foreground">{sprint ? "Clasificación sprint · viernes" : "Clasificación"}</p>
         <h2 className="font-display text-4xl md:text-5xl">
           {race.flag} {race.name}
         </h2>
@@ -118,7 +126,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
         <TabsList className="w-full grid grid-cols-4">
           {quali.sessions.map((s, i) => (
             <TabsTrigger key={s.name} value={`${i}`} disabled={i > revealed} className="font-racing text-xs">
-              {s.name}
+              {sprint ? `S${s.name}` : s.name}
               {i === liveIndex && step >= 0 && <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
             </TabsTrigger>
           ))}
@@ -130,7 +138,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
 
       {viewingLive && liveSession && (
         <LiveSession
-          info={SESSION_INFO[liveIndex]}
+          info={INFO[liveIndex]}
           rows={liveSession.rows}
           sequence={sequence}
           step={step}
@@ -187,7 +195,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
         {done ? (
           <Button onClick={onStartRace} className="flex-1 font-racing" size="lg">
             <Flag className="w-4 h-4 mr-2" />
-            Ir a la carrera
+            {sprint ? "Ir a la carrera sprint" : "Ir a la carrera"}
           </Button>
         ) : step < 0 ? (
           <>
@@ -201,7 +209,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
               size="lg"
             >
               <Timer className="w-4 h-4 mr-2" />
-              Iniciar {SESSION_INFO[liveIndex].name}
+              Iniciar {INFO[liveIndex].name}
             </Button>
             <Button onClick={() => onReveal(true)} variant="outline" size="lg" title="Simular toda la clasificación">
               <FastForward className="w-4 h-4" />
@@ -210,7 +218,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
         ) : sessionOver ? (
           <Button onClick={() => onReveal(false)} className="flex-1 font-racing" size="lg">
             <SkipForward className="w-4 h-4 mr-2" />
-            {liveIndex < 2 ? `Siguiente: ${SESSION_INFO[liveIndex + 1].name}` : "Ver parrilla de salida"}
+            {liveIndex < 2 ? `Siguiente: ${INFO[liveIndex + 1].name}` : "Ver parrilla de salida"}
           </Button>
         ) : (
           <>
@@ -238,7 +246,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
               className="ml-auto text-xs"
               title="Mostrar todos los tiempos de la sesión"
             >
-              <SkipForward className="w-4 h-4 mr-1" /> Terminar {SESSION_INFO[liveIndex].name}
+              <SkipForward className="w-4 h-4 mr-1" /> Terminar {INFO[liveIndex].name}
             </Button>
           </>
         )}

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { races2026, type Team } from "@/data/f1Data";
+import { calendar } from "@/data/calendar";
 import { AREA_INFO, carPace, type CarDev, type DevArea, type ManagementState } from "@/engine";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +34,7 @@ export function PerformanceChart({ management, teams, playerTeamId, metric, onMe
   const data = useMemo(() => {
     const byRound = new Map(history.map((h) => [h.round, h]));
     const first = byRound.has(-1) ? -1 : 0;
-    return Array.from({ length: races2026.length + 1 - first }, (_, i) => {
+    return Array.from({ length: calendar().length + 1 - first }, (_, i) => {
       const r = i + first;
       const row: Record<string, number | string> = { label: r === -1 ? "Año ant." : r === 0 ? "Inicio" : `R${r}` };
       const h = byRound.get(r);

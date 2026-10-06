@@ -1,6 +1,8 @@
 // Sporting & technical regulations that can change from one season to the next:
 // some are imposed by the FIA, others are voted by the team principals.
 import { createRng } from "./rng";
+import { ALL_RACES, freeSlot, raceById, sortByDate } from "@/data/calendar";
+import type { Race } from "@/data/f1Data";
 import type { ClassifiedRow } from "./types";
 
 export interface RuleSet {
@@ -67,6 +69,7 @@ export interface RuleProposal {
   by: "fia" | "vote";
   status: ProposalStatus;
   effect?: TechEffect; // one-off impact on every car when it comes into force
+  calendar?: { op: "add" | "remove" | "swap"; add?: number; remove?: number }; // calendar change for next season
   votes?: Record<string, Vote>;
   playerVote?: Vote;
 }
@@ -264,13 +267,72 @@ export const PROPOSAL_ROUNDS: { round: number; by: "fia" | "vote" }[] = [
 ];
 
 /** New proposals announced after `round` of `season` (rules = rules that will be in force next season so far). */
-export function generateProposals(season: number, round: number, rules: RuleSet, existing: RuleProposal[], seed: number): RuleProposal[] {
+const CLASSICS = new Set([1, 8, 11, 15, 24]); // opener, Monaco, Silverstone, Monza, finale
+
+/** A calendar change for next season (FIA decision or team vote). */
+function calendarProposal(season: number, round: number, by: "fia" | "vote", calIds: number[], rng: ReturnType<typeof createRng>): RuleProposal | null {
+  const outside = ALL_RACES.filter((r) => !calIds.includes(r.id));
+  const removable = calIds.filter((id) => !CLASSICS.has(id));
+  const ops: ("add" | "remove" | "swap")[] = [];
+  if (outside.length && calIds.length < 25) ops.push("add");
+  if (removable.length && calIds.length > 21) ops.push("remove");
+  if (outside.length && removable.length) ops.push("swap", "swap");
+  if (!ops.length) return null;
+  const op = rng.pick(ops);
+  const add = op !== "remove" ? rng.pick(outside) : undefined;
+  const rem = op !== "add" ? raceById(rng.pick(removable)) : undefined;
+  const nm = (r?: Race) => r?.name.replace(" Grand Prix", "") ?? "";
+  const title =
+    op === "add" ? `Nuevo Gran Premio: ${nm(add)} se suma al calendario` : op === "remove" ? `${nm(rem)} sale del calendario` : `${nm(add)} reemplaza a ${nm(rem)}`;
+  const desc =
+    op === "add"
+      ? `${add!.name} (${add!.circuit}) se agrega en ${season + 1}: una carrera más, más ingresos por TV y más logística.`
+      : op === "remove"
+        ? `${rem!.name} deja de estar en ${season + 1}: una carrera menos en la temporada.`
+        : `${add!.name} (${add!.circuit}) ocupa la fecha de ${rem!.name} desde ${season + 1}.`;
+  return {
+    id: `${season}-${round}-cal`,
+    season,
+    effective: season + 1,
+    round,
+    key: "calendar",
+    patch: {},
+    title,
+    desc,
+    by,
+    status: by === "fia" ? "decreed" : "pending",
+    calendar: { op, add: add?.id, remove: rem?.id },
+  };
+}
+
+/** Next season's calendar after the approved changes (sorted by date). */
+export function calendarFor(season: number, races: Race[], proposals: RuleProposal[]): Race[] {
+  let cal = [...races];
+  for (const p of proposals.filter((x) => x.effective === season && x.calendar && (x.status === "approved" || x.status === "decreed"))) {
+    const c = p.calendar!;
+    const removed = c.remove ? cal.find((r) => r.id === c.remove) : undefined;
+    if (removed) cal = cal.filter((r) => r.id !== removed.id);
+    const add = c.add ? raceById(c.add) : undefined;
+    if (add && !cal.some((r) => r.id === add.id)) cal.push({ ...add, date: removed?.date ?? freeSlot(cal) });
+  }
+  return sortByDate(cal);
+}
+
+export function generateProposals(season: number, round: number, rules: RuleSet, existing: RuleProposal[], seed: number, calIds?: number[]): RuleProposal[] {
   const slots = PROPOSAL_ROUNDS.filter((s) => s.round === round);
   if (!slots.length) return [];
   const rng = createRng(seed ^ (season * 7919) ^ (round * 104729));
   const usedKeys = new Set(existing.filter((p) => p.season === season).map((p) => p.key));
   const out: RuleProposal[] = [];
   for (const slot of slots) {
+    if (calIds && !usedKeys.has("calendar") && rng.chance(slot.by === "fia" ? 0.4 : 0.25)) {
+      const cp = calendarProposal(season, round, slot.by, calIds, rng);
+      if (cp) {
+        usedKeys.add("calendar");
+        out.push(cp);
+        continue;
+      }
+    }
     const pool = TEMPLATES.filter((t) => (slot.by === "fia" ? t.fiaOk : t.voteOk) && t.available(rules) && !usedKeys.has(t.key));
     if (!pool.length) continue;
     const t = rng.pick(pool);
