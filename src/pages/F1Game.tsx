@@ -24,7 +24,7 @@ import {
   Newspaper, Trophy, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2, Users, Briefcase, Wallet, Gavel, Wrench, MoreHorizontal, X,
 } from "lucide-react";
 import { TeamHQ, money } from "@/components/game/TeamHQ";
-import { nextSeasonLineup, computeStandings, type StoredRaceResult, type PeopleState, type ManagementState } from "@/engine";
+import { nextSeasonLineup, computeStandings, canInvestMegaPrep, type StoredRaceResult, type PeopleState, type ManagementState } from "@/engine";
 import type { Team } from "@/data/f1Data";
 import { cn } from "@/lib/utils";
 
@@ -80,6 +80,15 @@ export default function F1Game() {
   const { gameState, standings, currentRace, seasonComplete, races, entryMap } = game;
   const [screen, setScreen] = useState<Screen>(gameState.weekend ? "weekend" : "home");
   const [moreOpen, setMoreOpen] = useState(false);
+  // driver / team cards can be opened from any screen
+  const [profile, setProfile] = useState<ProfileTarget>(null);
+  const profileSeasons: SeasonData[] = useMemo(
+    () => [
+      ...gameState.archive.map((a) => ({ season: a.season, teams: a.teams, results: a.results, finished: true })),
+      { season: gameState.season, teams: gameState.teamsData, results: gameState.results, finished: false },
+    ],
+    [gameState.archive, gameState.season, gameState.teamsData, gameState.results],
+  );
 
   const playerTeam = gameState.teamsData.find((t) => t.id === gameState.playerTeamId) ?? null;
   // dialogs render outside the app wrapper: paint the whole document with the team colours
@@ -449,6 +458,9 @@ export default function F1Game() {
                   onHireStaff={game.hireStaff}
                   onFireStaff={game.fireStaff}
                   onRenewStaff={game.renewStaff}
+                  onHireReserve={game.hireReserve}
+                  onReleaseReserve={game.releaseReserve}
+                  onProfile={(id) => setProfile({ kind: "driver", id })}
                 />
               </motion.div>
             )}
@@ -462,6 +474,9 @@ export default function F1Game() {
                   teams={gameState.teamsData}
                   playerTeamId={gameState.playerTeamId}
                   onVote={game.castVote}
+                  megaPrep={gameState.management?.player?.megaPrep ?? 0}
+                  megaBlock={gameState.management ? canInvestMegaPrep(gameState.management) : "Sin equipo"}
+                  onInvestMega={game.investMegaPrep}
                 />
               </motion.div>
             )}
@@ -476,13 +491,21 @@ export default function F1Game() {
                   playerTeamId={gameState.playerTeamId}
                   next={currentRace && !seasonComplete ? `${currentRace.flag} ${currentRace.country}` : null}
                   onNext={() => go("weekend")}
-                  people={gameState.people}
-                  management={gameState.management}
-                  teams={gameState.teamsData}
+                  onProfile={setProfile}
                 />
               </motion.div>
             )}
           </AnimatePresence>
+          <ProfileDialog
+            target={profile}
+            onClose={() => setProfile(null)}
+            onOpen={setProfile}
+            seasons={profileSeasons}
+            people={gameState.people}
+            management={gameState.management}
+            teams={gameState.teamsData}
+            season={gameState.season}
+          />
           {game.simRun && (
             <div className="fixed bottom-24 lg:bottom-6 right-4 z-50 w-[min(360px,calc(100vw-2rem))] panel p-4 space-y-2 border-primary/50 shadow-2xl">
               <div className="flex items-center justify-between">
@@ -622,11 +645,9 @@ function EndStat({ label, value, highlight }: { label: string; value: string; hi
 }
 
 function StandingsScreen({
-  season, standings, results, archive, playerTeamId, next, onNext, people, management, teams,
+  season, standings, results, archive, playerTeamId, next, onNext, onProfile,
 }: {
-  people: PeopleState | null;
-  management: ManagementState | null;
-  teams: Team[];
+  onProfile: (t: ProfileTarget) => void;
   season: number;
   standings: ReturnType<typeof computeStandings>;
   results: StoredRaceResult[];
@@ -640,23 +661,9 @@ function StandingsScreen({
   const st = arch ? computeStandings(arch.teams, arch.results) : standings;
   const res = arch ? arch.results : results;
   const races = arch?.calendar;
-  const [profile, setProfile] = useState<ProfileTarget>(null);
-  const seasons: SeasonData[] = useMemo(
-    () => [...archive.map((a) => ({ season: a.season, teams: a.teams, results: a.results, finished: true })), { season, teams, results, finished: false }],
-    [archive, season, teams, results],
-  );
+  const setProfile = onProfile;
   return (
     <div className="space-y-5">
-      <ProfileDialog
-        target={profile}
-        onClose={() => setProfile(null)}
-        onOpen={setProfile}
-        seasons={seasons}
-        people={people}
-        management={management}
-        teams={teams}
-        season={season}
-      />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SectionTitle>Campeonato {view}</SectionTitle>
         <div className="flex flex-wrap items-center gap-2">

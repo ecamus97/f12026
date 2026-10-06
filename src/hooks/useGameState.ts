@@ -49,6 +49,12 @@ import {
   offerStaffRenewal,
   migrateStaff,
   migrateFeeder,
+  migrateReserves,
+  megaChange,
+  applyMegaRegulation,
+  investMegaPrep as investMegaPrepFn,
+  hireReserve as hireReserveFn,
+  releaseReserve as releaseReserveFn,
   fireStaff as fireStaffFn,
   renewStaff as renewStaffFn,
   DEFAULT_RULES,
@@ -235,7 +241,7 @@ function ruleNews(p: RuleProposal, round: number, s: GameState): NewsItem {
           : `Los 11 jefes de equipo votarán antes de la próxima carrera. Tu voto está en la sección Reglamento.`,
     ],
     teamIds: s.playerTeamId ? [s.playerTeamId] : [],
-    importance: p.effect || p.key === "budgetCap" ? 3 : 2,
+    importance: p.effect || p.mega || p.key === "budgetCap" ? 3 : 2,
     chart: resolved && p.votes ? { type: "votes", proposalId: p.id } : undefined,
   };
 }
@@ -288,7 +294,7 @@ function loadState(): GameState {
     }
     // saves from before contracts and staff existed
     if (state.playerTeamId && !state.people) state.people = initPeople(state.teamsData, randomSeed());
-    if (state.people) state.people = migrateFeeder(migrateStaff(state.people));
+    if (state.people) state.people = migrateReserves(migrateFeeder(migrateStaff(state.people)), state.teamsData);
     if (state.management && state.people) {
       state.management = withStaff(state.management, state.people);
       const pl = state.management.player;
@@ -1116,6 +1122,37 @@ export function useGameState() {
     return { ok: r.result === "accept", message: r.message, result: r.result, counter: r.counter };
   }, []);
 
+  /** Sign or change the reserve driver (salary goes into the payroll). */
+  const hireReserve = useCallback((driverId: string, years: number) => {
+    const s = stateRef.current;
+    if (!s.people || !s.playerTeamId) return { ok: false, message: "No disponible" };
+    const r = hireReserveFn(s.people, driverId, s.playerTeamId, years);
+    if (r.ok)
+      setGameState((cur) => {
+        if (!cur.people || !cur.management) return cur;
+        const people = { ...cur.people, drivers: { ...cur.people.drivers, ...Object.fromEntries(Object.entries(r.people.drivers).filter(([id, d]) => d !== cur.people!.drivers[id])) } };
+        return {
+          ...cur,
+          people,
+          management: { ...withStaff(cur.management, people), inbox: [...cur.management.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) },
+        };
+      });
+    return { ok: r.ok, message: r.message };
+  }, []);
+
+  const releaseReserve = useCallback(() => {
+    setGameState((cur) => {
+      if (!cur.people || !cur.management || !cur.playerTeamId) return cur;
+      const people = releaseReserveFn(cur.people, cur.playerTeamId);
+      return { ...cur, people, management: withStaff(cur.management, people) };
+    });
+  }, []);
+
+  /** Invest in next year's car when a new generation is coming. */
+  const investMegaPrep = useCallback(() => {
+    setGameState((s) => (s.management ? { ...s, management: investMegaPrepFn(s.management, s.currentRaceIndex, s.season) } : s));
+  }, []);
+
   const fireStaff = useCallback((staffId: string) => {
     setGameState((s) => {
       if (!s.people || !s.management) return s;
@@ -1256,8 +1293,59 @@ export function useGameState() {
       const newCap = !!rules.budgetCap && (s.rules.budgetCap === null || rules.budgetCap < s.rules.budgetCap);
       const reg = applyRegulationImpact(management, effects, newCap, randomSeed());
       management = reg.m;
+      // a new generation of cars: everyone starts from scratch
+      const mega = megaChange(people.season, proposals);
+      let megaStory: NewsItem | null = null;
+      if (mega) {
+        const prep = management.player?.megaPrep ?? 0;
+        const mr = applyMegaRegulation(management, randomSeed());
+        management = mr.m;
+        for (const [id, d] of Object.entries(mr.impact)) reg.impact[id] = { ...(reg.impact[id] ?? {}), ...d };
+        const ids = Object.keys(mr.before);
+        const rankBefore = [...ids].sort((a, b) => mr.before[b] - mr.before[a]);
+        const rankAfter = [...ids].sort((a, b) => carPace(management.dev[b]) - carPace(management.dev[a]));
+        const nameOf = (id: string) => s.teamsData.find((t) => t.id === id)?.name ?? id;
+        const mine = s.playerTeamId;
+        megaStory = {
+          id: `${people.season}-mega`,
+          season: people.season,
+          round: 0,
+          kind: "rules",
+          title: `Nueva era en la F1: ${nameOf(rankAfter[0])} arranca ${people.season} con el auto más rápido`,
+          summary: mega.title,
+          body: [
+            mega.desc,
+            `Orden de los autos ${people.season}: ${rankAfter.map((id, i) => `${i + 1}. ${nameOf(id)}`).join(" · ")}.`,
+            `Antes del cambio: ${rankBefore.slice(0, 5).map((id, i) => `${i + 1}. ${nameOf(id)}`).join(" · ")}…`,
+            ...(mine ? [`Tu equipo pasa de P${rankBefore.indexOf(mine) + 1} a P${rankAfter.indexOf(mine) + 1} entre los autos${prep ? ` (invertiste ${prep} fase${prep > 1 ? "s" : ""} en el auto nuevo)` : ""}.`] : []),
+            "Todas las piezas desarrolladas quedaron obsoletas y la fiabilidad parte más baja: los primeros meses son clave.",
+          ],
+          teamIds: mine ? [mine] : [],
+          importance: 3,
+          chart: {
+            type: "bars",
+            title: `Ritmo del auto ${people.season}`,
+            unit: "",
+            rows: rankAfter.map((id) => ({
+              label: nameOf(id),
+              color: s.teamsData.find((t) => t.id === id)?.hex ?? "#888",
+              value: +carPace(management.dev[id]).toFixed(1),
+              mine: id === mine,
+            })),
+          },
+        };
+        if (mine) {
+          management = {
+            ...management,
+            inbox: [
+              ...management.inbox,
+              { race: 0, tone: rankAfter.indexOf(mine) <= rankBefore.indexOf(mine) ? ("good" as const) : ("bad" as const), text: `Nueva generación de autos: tu auto es el P${rankAfter.indexOf(mine) + 1} de la parrilla (antes P${rankBefore.indexOf(mine) + 1}).` },
+            ].slice(-60),
+          };
+        }
+      }
       const regNews: string[] = [];
-      if (effects.length || newCap) {
+      if (effects.length || newCap || mega) {
         const fmt = (d: Record<string, number | undefined>) =>
           Object.entries(d)
             .map(([a, v]) => `${AREA_INFO[a as "aero"].label} ${v! >= 0 ? "+" : ""}${v!.toFixed(1)}`)
@@ -1316,6 +1404,7 @@ export function useGameState() {
         seasonNews: [...regNews, ...news].filter((n) => n.startsWith("Tu equipo")),
         news: addNews(s.news, [
           ...seasonStories(s, people.season, summary, regImpactRows, news, proposals),
+          ...(megaStory ? [megaStory] : []),
           {
             id: `${people.season}-calendar`,
             season: people.season,
@@ -1399,5 +1488,8 @@ export function useGameState() {
     castVote,
     fireStaff,
     renewStaff,
+    hireReserve,
+    releaseReserve,
+    investMegaPrep,
   };
 }

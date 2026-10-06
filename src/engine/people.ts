@@ -16,6 +16,25 @@ export interface Contract {
 }
 
 export type DriverStatus = "active" | "free" | "junior" | "retired";
+export type Series = "F2" | "F3" | "Fórmula E" | "IndyCar" | "WEC" | "NASCAR" | "Super Formula";
+
+/** Other championships drivers go to when there's no F1 seat. */
+export const OTHER_SERIES: Record<Exclude<Series, "F2" | "F3">, string[]> = {
+  "Fórmula E": ["Jaguar", "Porsche", "Nissan", "DS Penske", "Mahindra", "Envision", "Andretti", "Maserati", "Lola Yamaha", "Cupra Kiro"],
+  IndyCar: ["Penske", "Chip Ganassi", "Andretti", "Arrow McLaren", "Rahal Letterman Lanigan", "Meyer Shank"],
+  WEC: ["Ferrari AF Corse", "Toyota Gazoo Racing", "Porsche Penske", "Cadillac", "BMW", "Alpine", "Peugeot", "Aston Martin"],
+  NASCAR: ["Hendrick Motorsports", "Joe Gibbs Racing", "Team Penske", "Trackhouse Racing", "23XI Racing"],
+  "Super Formula": ["Team Impul", "TOM'S", "Dandelion", "Nakajima Racing"],
+};
+
+/** Where a driver is right now, in one standard format. */
+export function whereIs(d: DriverRecord, teamName: (id: string) => string | undefined): string {
+  if (d.status === "retired") return "Retirado";
+  if (d.status === "active" && d.contract) return `F1 · ${teamName(d.contract.teamId) ?? d.contract.teamId}`;
+  if (d.reserveOf) return `Reserva F1 · ${teamName(d.reserveOf) ?? d.reserveOf}`;
+  if (d.series) return `${d.series}${d.juniorTeam ? ` · ${d.juniorTeam}` : ""}`;
+  return "Sin equipo";
+}
 
 export interface DriverRecord extends Driver {
   birthYear: number;
@@ -25,8 +44,11 @@ export interface DriverRecord extends Driver {
   status: DriverStatus;
   origin?: string;
   f1Seasons?: number; // seasons raced in F1
-  series?: "F2" | "F3"; // juniors: where they race now
-  juniorTeam?: string; // juniors: their F2/F3 team
+  series?: Series; // where they race when not in F1 (juniors: F2/F3)
+  juniorTeam?: string; // team in that series
+  reserveOf?: string | null; // F1 team they are reserve/test driver for
+  reserveSalary?: number;
+  reserveUntil?: number;
   seriesSeasons?: number; // juniors: seasons in the current series
   mods?: { stat: string; delta: number; label: string; season: number }[]; // recent changes from events
 }
@@ -41,6 +63,8 @@ export interface StaffRecord {
   salary: number;
   until?: number; // last season of the contract
   fictional?: boolean;
+  birthYear?: number;
+  retired?: boolean;
   /** Signed to replace someone: joins this team when the season ends. */
   signed?: { teamId: string; until: number; salary: number } | null;
 }
@@ -209,9 +233,25 @@ export function initPeople(teams: Team[], seed: number): PeopleState {
     };
   }
   seedFeeder(drivers, seed, FIRST_SEASON);
+  if (drivers.tsu) drivers.tsu = { ...drivers.tsu, reserveOf: "redbull", reserveSalary: reserveAsk(drivers.tsu, FIRST_SEASON), reserveUntil: FIRST_SEASON };
+  assignReserves(drivers, teams, FIRST_SEASON, null, createRng(seed ^ 0xbeef));
   const staff: Record<string, StaffRecord> = {};
-  for (const s of STAFF) staff[s.id] = { ...s, salary: staffSalary(s.role, s.rating), until: s.teamId ? s.until ?? FIRST_SEASON + 1 : undefined };
+  for (const s of STAFF) staff[s.id] = { ...s, salary: staffSalary(s.role, s.rating), until: s.teamId ? s.until ?? FIRST_SEASON + 1 : undefined, birthYear: staffBirth(s.id) };
   return { version: 1, season: FIRST_SEASON, drivers, staff, rngState: seed, nextJunior: 100 };
+}
+
+/** Staff ages (game values): between 38 and 64 in 2026. */
+const staffBirth = (id: string) => FIRST_SEASON - 38 - Math.floor(hash01(id + "age") * 27);
+
+/** Saves from before reserves, other series and staff ages. */
+export function migrateReserves(p: PeopleState, teams: Team[]): PeopleState {
+  const hasReserves = Object.values(p.drivers).some((d) => d.reserveOf);
+  const agesOk = Object.values(p.staff).every((s) => s.birthYear);
+  if (hasReserves && agesOk) return p;
+  const drivers = structuredClone(p.drivers);
+  if (!hasReserves) assignReserves(drivers, teams, p.season, null, createRng(p.rngState ^ 0xbeef));
+  const staff = Object.fromEntries(Object.entries(p.staff).map(([id, s]) => [id, s.birthYear ? s : { ...s, birthYear: staffBirth(id) }]));
+  return { ...p, drivers, staff };
 }
 
 /** Invented young drivers already racing in F3 and F2 when the game starts. */
@@ -244,6 +284,7 @@ export function migrateFeeder(p: PeopleState): PeopleState {
 /** Is a junior good enough for an F1 seat? Only proven F2 drivers are. */
 export function f1Ready(d: DriverRecord) {
   if (d.status !== "junior") return true;
+  if (d.series !== "F2" && d.series !== "F3") return true;
   if (d.series !== "F2") return false;
   return d.pace >= 77 || ((d.seriesSeasons ?? 0) >= 2 && d.pace >= 75);
 }
@@ -302,7 +343,13 @@ export function teamStaff(p: PeopleState, teamId: string): Record<StaffRole, Sta
   return Object.fromEntries(STAFF_ROLES.map((r) => [r, list.find((s) => s.role === r) ?? null])) as Record<StaffRole, StaffRecord | null>;
 }
 
-export type StaffRatings = Record<StaffRole, number>;
+export type StaffRatings = Record<StaffRole, number> & { reserve?: number };
+
+/** What a reserve driver asks: a fraction of a race seat. */
+export const reserveAsk = (d: DriverRecord, season: number) => Math.round(Math.max(0.3, marketValue(d, season) * 0.18 + 0.3) * 10) / 10;
+/** Simulator and test work: a good reserve speeds up development a little (up to +6%). */
+export const reserveBonus = (pace?: number) => (pace ? Math.max(0, Math.min(0.06, (pace - 74) * 0.006)) : 0);
+export const reserveOf = (p: PeopleState, teamId: string) => Object.values(p.drivers).find((d) => d.reserveOf === teamId && d.status !== "retired") ?? null;
 
 /** Ratings used by the management engine (an empty position counts as a weak one). */
 export function staffRatings(p: PeopleState): Record<string, StaffRatings> {
@@ -311,12 +358,13 @@ export function staffRatings(p: PeopleState): Record<string, StaffRatings> {
   for (const s of Object.values(p.staff)) if (s.teamId) teams.add(s.teamId);
   for (const t of teams) out[t] = Object.fromEntries(STAFF_ROLES.map((r) => [r, VACANT_RATING])) as StaffRatings;
   for (const s of Object.values(p.staff)) if (s.teamId) out[s.teamId][s.role] = s.rating;
+  for (const d of Object.values(p.drivers)) if (d.reserveOf && out[d.reserveOf] && d.status !== "retired") out[d.reserveOf].reserve = d.pace;
   return out;
 }
 
 /** Yearly payroll of a team (drivers + staff), M USD. */
 export function payroll(p: PeopleState, teamId: string) {
-  const drivers = lineup(p, teamId).reduce((a, id) => a + (p.drivers[id].contract?.salary ?? 0), 0);
+  const drivers = lineup(p, teamId).reduce((a, id) => a + (p.drivers[id].contract?.salary ?? 0), 0) + (reserveOf(p, teamId)?.reserveSalary ?? 0);
   const staff = Object.values(p.staff).filter((s) => s.teamId === teamId).reduce((a, s) => a + s.salary, 0);
   return { drivers, staff: +staff.toFixed(2) };
 }
@@ -404,6 +452,42 @@ export function offerDriverContract(
   };
 }
 
+/** Sign a reserve driver (replaces the current one, who is released). */
+export function hireReserve(p: PeopleState, driverId: string, teamId: string, years = 1): { ok: boolean; people: PeopleState; message: string } {
+  const d = p.drivers[driverId];
+  if (!d || d.status === "retired" || d.contract || d.nextContract) return { ok: false, people: p, message: "No disponible" };
+  if (d.reserveOf && d.reserveOf !== teamId) return { ok: false, people: p, message: `${d.name} ya es reserva de otro equipo` };
+  if (d.status === "junior" && !f1Ready(d)) return { ok: false, people: p, message: `${d.name} todavía no tiene nivel de F1` };
+  const drivers = { ...p.drivers };
+  const cur = reserveOf(p, teamId);
+  if (cur && cur.id !== driverId) drivers[cur.id] = { ...cur, reserveOf: null, reserveSalary: undefined, reserveUntil: undefined };
+  const salary = reserveAsk(d, p.season);
+  drivers[driverId] = { ...d, reserveOf: teamId, reserveSalary: salary, reserveUntil: p.season + years - 1 };
+  return { ok: true, people: { ...p, drivers }, message: `${d.name} es tu piloto de reserva hasta ${p.season + years - 1} (US$ ${salary.toFixed(1)} M/año)` };
+}
+
+export function releaseReserve(p: PeopleState, teamId: string): PeopleState {
+  const cur = reserveOf(p, teamId);
+  if (!cur) return p;
+  return { ...p, drivers: { ...p.drivers, [cur.id]: { ...cur, reserveOf: null, reserveSalary: undefined, reserveUntil: undefined } } };
+}
+
+/** AI teams without a reserve pick one: a cheap, experienced or promising driver without a seat. */
+function assignReserves(drivers: Record<string, DriverRecord>, teams: Team[], season: number, skip: string | null, rng: Rng, news?: string[]) {
+  for (const t of teams) {
+    if (t.id === skip) continue;
+    if (Object.values(drivers).some((d) => d.reserveOf === t.id && d.status !== "retired")) continue;
+    const pool = Object.values(drivers).filter(
+      (d) => (d.status === "free" || (d.status === "junior" && f1Ready(d))) && !d.reserveOf && !d.contract && !d.nextContract && d.series !== "NASCAR" && ageOf(d, season) <= 36,
+    );
+    if (!pool.length) continue;
+    const score = (d: DriverRecord) => d.pace + Math.min(d.f1Seasons ?? 0, 5) * 0.4 - reserveAsk(d, season) * 1.2 + rng.next();
+    const pick = pool.sort((a, b) => score(b) - score(a))[0];
+    drivers[pick.id] = { ...pick, reserveOf: t.id, reserveSalary: reserveAsk(pick, season), reserveUntil: season + rng.int(0, 1) };
+    news?.push(`${t.name} elige a ${pick.name} como piloto de reserva.`);
+  }
+}
+
 /** Let a driver go at the end of the season (no renewal). */
 export function releaseAtSeasonEnd(p: PeopleState, driverId: string): PeopleState {
   const d = p.drivers[driverId];
@@ -413,7 +497,7 @@ export function releaseAtSeasonEnd(p: PeopleState, driverId: string): PeopleStat
 
 export function hireStaff(p: PeopleState, staffId: string, teamId: string, years = 3, salary?: number): { people: PeopleState; cost: number; message: string } {
   const s = p.staff[staffId];
-  if (!s || s.teamId || s.signed) return { people: p, cost: 0, message: "No disponible" };
+  if (!s || s.teamId || s.signed || s.retired) return { people: p, cost: 0, message: "No disponible" };
   const current = Object.values(p.staff).find((x) => x.teamId === teamId && x.role === s.role);
   const pay = salary ?? s.salary;
   const cost = Math.round(pay * 0.5 * 10) / 10; // signing fee
@@ -455,7 +539,7 @@ export function offerStaffContract(
   round: number,
 ): { people: PeopleState; result: TalkResult; counter?: number; message: string; cost: number } {
   const s = p.staff[staffId];
-  if (!s || s.teamId || s.signed) return { people: p, result: "reject", message: "No disponible", cost: 0 };
+  if (!s || s.teamId || s.signed || s.retired) return { people: p, result: "reject", message: "No disponible", cost: 0 };
   const already = signedFor(p, teamId, s.role);
   if (already) return { people: p, result: "reject", message: `Ya firmaste a ${already.name} para ese puesto desde ${p.season + 1}.`, cost: 0 };
   const n = negotiate(p, `s:${staffId}`, { ask: s.salary, salary, years, name: s.name, round, star: s.rating >= 88 });
@@ -518,7 +602,8 @@ export function renewStaff(p: PeopleState, staffId: string, years = 2): { people
 }
 
 function newStaff(rng: Rng, role: StaffRole, season: number, n: number, used = new Set<string>()): StaffRecord {
-  const rating = Math.round(68 + rng.next() * 16);
+  const r = rng.next();
+  const rating = Math.round(r < 0.04 ? 86 + rng.next() * 5 : r < 0.35 ? 60 + rng.next() * 10 : 70 + rng.next() * 14);
   const flag = pickNationality(rng);
   return {
     id: `st${season}-${n}`,
@@ -526,6 +611,7 @@ function newStaff(rng: Rng, role: StaffRole, season: number, n: number, used = n
     role,
     rating,
     nationality: flag,
+    birthYear: season - rng.int(31, 52),
     teamId: null,
     salary: staffSalary(role, rating),
     fictional: true,
@@ -698,12 +784,14 @@ function newJunior(rng: Rng, season: number, n: number, existing: Record<string,
 }
 
 /** AI choice for an empty seat: top teams want pace, smaller teams value price and promise. */
-function aiPick(p: PeopleState, carRank: number, season: number, taken: Set<string>): DriverRecord | null {
+function aiPick(p: PeopleState, carRank: number, season: number, taken: Set<string>, teamId?: string): DriverRecord | null {
   const open = (d: DriverRecord) => (d.status === "free" || d.status === "junior") && !taken.has(d.id) && !d.nextContract && !d.contract;
   let pool = Object.values(p.drivers).filter((d) => open(d) && f1Ready(d));
   if (!pool.length) pool = Object.values(p.drivers).filter((d) => open(d) && d.series !== "F3");
   if (!pool.length) return null;
-  return pool.sort((a, b) => teamWants(b, carRank, season) - teamWants(a, carRank, season))[0];
+  // the team's own reserve knows the car: a head start
+  const want = (d: DriverRecord) => teamWants(d, carRank, season) + (teamId && d.reserveOf === teamId ? 4 : 0) - (d.reserveOf && d.reserveOf !== teamId ? 1.5 : 0);
+  return pool.sort((a, b) => want(b) - want(a))[0];
 }
 
 export interface SeasonChange {
@@ -740,7 +828,9 @@ export function advanceSeason(
     if (nextSeasonLineup(p0n, d.contract.teamId).length >= 2) continue;
     const age = ageOf(d, season);
     const teamPace = teams.find((t) => t.id === d.contract!.teamId)?.drivers.map((x) => x.pace) ?? [];
-    const keep = age <= 38 && d.pace >= Math.max(...teamPace, 0) - 5 && rng.chance(0.9);
+    const res = Object.values(drivers).find((x) => x.reserveOf === d.contract!.teamId && x.status !== "retired");
+    const promote = !!res && res.pace >= d.pace + 2.5 && rng.chance(0.7);
+    const keep = !promote && age <= 38 && d.pace >= Math.max(...teamPace, 0) - 5 && rng.chance(0.9);
     if (keep) {
       const years = contractYears(rng, age);
       d.nextContract = { teamId: d.contract.teamId, salary: capSalary(p0, marketValue(d, season)), until: season + years - 1 };
@@ -759,9 +849,11 @@ export function advanceSeason(
         news.push(`${d.name} se cambia a ${to}.`);
       }
       if (d.status === "junior") news.push(`${d.name} debuta en la Fórmula 1 con ${teams.find((t) => t.id === d.nextContract!.teamId)?.name}.`);
+      if (d.reserveOf === d.nextContract.teamId) news.push(`${d.name} pasa de piloto de reserva a titular en ${teams.find((t) => t.id === d.nextContract!.teamId)?.name}.`);
       d.contract = d.nextContract;
       d.nextContract = null;
       d.status = "active";
+      Object.assign(d, { reserveOf: null, reserveSalary: undefined, reserveUntil: undefined, series: undefined, juniorTeam: undefined });
     } else if (d.contract && d.contract.until < season) {
       d.contract = null;
       d.status = "free";
@@ -795,12 +887,13 @@ export function advanceSeason(
       news.push(`Tu equipo: tienes ${2 - current.length === 1 ? "un asiento libre" : "dos asientos libres"} para ${season}. Ficha un piloto antes del primer GP.`);
     }
     while (current.length < 2 && t.id !== playerTeamId) {
-      const pick = aiPick(p1, carRanks[t.id] ?? 6, season, taken);
+      const pick = aiPick(p1, carRanks[t.id] ?? 6, season, taken, t.id);
       if (!pick) break;
       taken.add(pick.id);
       const years = contractYears(rng, ageOf(pick, season));
       const salary = capSalary(p0, marketValue(pick, season));
-      drivers[pick.id] = { ...pick, status: "active", series: undefined, juniorTeam: undefined, contract: { teamId: t.id, salary, until: season + years - 1 } };
+      if (pick.reserveOf === t.id) news.push(`${pick.name} pasa de piloto de reserva a titular en ${t.name}.`);
+      drivers[pick.id] = { ...pick, status: "active", series: undefined, juniorTeam: undefined, reserveOf: null, reserveSalary: undefined, reserveUntil: undefined, contract: { teamId: t.id, salary, until: season + years - 1 } };
       const again = prevTeam.get(pick.id) === t.id;
       news.push(
         again
@@ -835,7 +928,7 @@ export function advanceSeason(
     }
     if (age >= 25) {
       // didn't reach F1 in time
-      if (d.pace >= 77) Object.assign(d, { status: "free", series: undefined, juniorTeam: undefined, origin: "Ex Fórmula 2" });
+      if (d.pace >= 74) Object.assign(d, { status: "free", series: undefined, juniorTeam: undefined, origin: "Ex Fórmula 2" });
       else d.status = "retired";
     }
   }
@@ -849,6 +942,49 @@ export function advanceSeason(
   }
   if (rookies.length) news.push(`Cantera: llegan a la Fórmula 3 promesas como ${rookies.slice(0, 3).join(", ")}.`);
 
+  // 5b) drivers without an F1 seat race elsewhere: Formula E, IndyCar, WEC, NASCAR, Super Formula
+  for (const d of Object.values(drivers)) {
+    if (d.status !== "free" || d.contract || d.nextContract) continue;
+    const age = ageOf(d, season);
+    if (d.series && d.series !== "F2" && d.series !== "F3") {
+      if (age >= 45 || (age >= 40 && rng.chance(0.3))) {
+        d.status = "retired";
+        Object.assign(d, { reserveOf: null });
+        continue;
+      }
+      if (rng.chance(0.12)) d.juniorTeam = rng.pick(OTHER_SERIES[d.series as keyof typeof OTHER_SERIES]);
+      continue;
+    }
+    if (d.reserveOf ? !rng.chance(0.25) : !rng.chance(0.7)) continue; // reserves usually stay focused on F1
+    const pickFrom: [keyof typeof OTHER_SERIES, number][] =
+      age <= 29 ? [["Fórmula E", 4], ["Super Formula", 1], ["IndyCar", 2], ["WEC", 2]]
+        : age <= 34 ? [["Fórmula E", 3], ["IndyCar", 2], ["WEC", 3]]
+          : [["WEC", 3], ["NASCAR", 3], ["IndyCar", 1]];
+    let r = rng.next() * pickFrom.reduce((a, x) => a + x[1], 0);
+    const series = pickFrom.find((x) => (r -= x[1]) <= 0)?.[0] ?? pickFrom[0][0];
+    d.series = series;
+    d.juniorTeam = rng.pick(OTHER_SERIES[series]);
+    if (d.pace >= 79 || (d.f1Seasons ?? 0) >= 3) news.push(`${d.name} correrá en ${series} con ${d.juniorTeam}.`);
+  }
+  // reserve contracts: AI teams keep or change their reserve; the player's expires
+  for (const d of Object.values(drivers)) {
+    if (!d.reserveOf) continue;
+    if (d.status === "retired" || d.status === "active") {
+      Object.assign(d, { reserveOf: null, reserveSalary: undefined, reserveUntil: undefined });
+      continue;
+    }
+    if ((d.reserveUntil ?? season) >= season) continue;
+    if (d.reserveOf === playerTeamId) {
+      news.push(`Tu equipo: terminó el contrato de ${d.name} como piloto de reserva.`);
+      Object.assign(d, { reserveOf: null, reserveSalary: undefined, reserveUntil: undefined });
+    } else if (rng.chance(0.6)) {
+      d.reserveUntil = season + rng.int(0, 1);
+    } else {
+      Object.assign(d, { reserveOf: null, reserveSalary: undefined, reserveUntil: undefined });
+    }
+  }
+  assignReserves(drivers, teams, season, playerTeamId, rng, news);
+
   // 6) staff contracts: AI teams renew most people, the rest go to the market; empty AI posts are filled
   const staff: Record<string, StaffRecord> = structuredClone(p0.staff);
   const replaced = (st: StaffRecord) => Object.values(staff).some((x) => x.signed?.teamId === st.teamId && x.role === st.role);
@@ -860,7 +996,7 @@ export function advanceSeason(
     } else if (st.teamId === playerTeamId) {
       news.push(`Tu equipo: terminó el contrato de ${st.name} (${STAFF_ROLE_INFO[st.role].label.toLowerCase()}); el puesto queda vacante.`);
       staff[st.id] = { ...st, teamId: null };
-    } else if (rng.chance(0.8)) {
+    } else if (rng.chance(season - (st.birthYear ?? season - 50) >= 63 ? 0.35 : 0.88)) {
       staff[st.id] = { ...st, until: season + rng.int(1, 3) - 1 };
     } else {
       news.push(`${st.name} deja ${teams.find((t) => t.id === st.teamId)?.name ?? st.teamId}.`);
@@ -876,16 +1012,35 @@ export function advanceSeason(
     news.push(`${st.name} se incorpora a ${tn} como ${STAFF_ROLE_INFO[st.role].label.toLowerCase()}.`);
     staff[st.id] = { ...st, teamId: st.signed.teamId, until: st.signed.until, salary: st.signed.salary, signed: null };
   }
-  let n = p0.nextJunior * 10;
-  for (const role of STAFF_ROLES) for (let i = 0; i < 1; i++) {
-    const x = newStaff(rng, role, season, n++, new Set(Object.values(staff).map((y) => y.name)));
-    if (rng.chance(0.5)) staff[x.id] = x;
+  // people get better or worse with the years, and the oldest retire
+  for (const st of Object.values(staff)) {
+    if (st.retired) continue;
+    const age = season - (st.birthYear ?? season - 50);
+    const dr = age < 45 ? rng.next() * 1.4 : age < 58 ? (rng.next() - 0.5) * 1 : -rng.next() * 1.5;
+    st.rating = Math.max(55, Math.min(97, Math.round(st.rating + dr)));
+    // people under contract see it through; the unemployed may call it a day
+    if (!st.teamId && !st.signed && age >= 60 && rng.chance((age - 59) * 0.15)) {
+      if (st.rating >= 84) news.push(`${st.name} se retira a los ${age} años.`);
+      staff[st.id] = { ...st, teamId: null, retired: true, until: undefined };
+    }
+  }
+  // new people: most are average, some are bad, a few are exceptional
+  let n = p0.nextJunior * 10 + season;
+  for (const role of STAFF_ROLES) {
+    for (let i = 0; i < 2; i++) {
+      const x = newStaff(rng, role, season, n++, new Set(Object.values(staff).map((y) => y.name)));
+      staff[x.id] = x;
+      if (x.rating >= 89) news.push(`Mercado de directivos: ${x.name} (${STAFF_ROLE_INFO[role].label.toLowerCase()}, valoración ${x.rating}) busca equipo.`);
+    }
+    // the market can't grow forever: the weakest unemployed leave the sport
+    const pool = Object.values(staff).filter((x) => !x.teamId && !x.signed && !x.retired && x.role === role).sort((a, b) => b.rating - a.rating);
+    for (const x of pool.slice(10)) staff[x.id] = { ...x, retired: true };
   }
   for (const t of teams) {
     if (t.id === playerTeamId) continue;
     for (const role of STAFF_ROLES) {
       if (Object.values(staff).some((x) => x.teamId === t.id && x.role === role)) continue;
-      const pool = Object.values(staff).filter((x) => !x.teamId && !x.signed && x.role === role).sort((a, b) => b.rating - a.rating);
+      const pool = Object.values(staff).filter((x) => !x.teamId && !x.signed && !x.retired && x.role === role).sort((a, b) => b.rating - a.rating);
       const pick = pool.length && rng.chance(0.7) ? pool[rng.int(0, Math.min(2, pool.length - 1))] : newStaff(rng, role, season, n++, new Set(Object.values(staff).map((y) => y.name)));
       staff[pick.id] = { ...pick, teamId: t.id, until: season + rng.int(1, 3) };
       news.push(`${t.name} contrata a ${pick.name} como ${STAFF_ROLE_INFO[role].label.toLowerCase()}.`);

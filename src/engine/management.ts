@@ -160,6 +160,7 @@ export interface PlayerEconomy {
   partLevels?: Record<string, number>; // upgrades completed per part
   salaryFund?: number; // M USD per season the owners put in for salaries
   failures?: Record<string, number>; // failed attempts per part (each retry is more likely to work)
+  megaPrep?: number; // investments in the next generation of cars (0..MEGA_PREP_MAX)
 }
 
 export interface DevSnapshot {
@@ -176,7 +177,7 @@ export interface ManagementState {
   rngState: number;
   nextUid: number;
   history: DevSnapshot[]; // development of every team, after each round
-  staffRatings?: Record<string, { tp: number; td: number; aero?: number; pu?: number; sport?: number; race?: number }>; // staff per team
+  staffRatings?: Record<string, { tp: number; td: number; aero?: number; pu?: number; sport?: number; race?: number; reserve?: number }>; // staff per team
   regs?: { budgetCap: number | null; puFreeze: boolean; flatPrize: boolean }; // regulations that affect development and money
   lastAiPackages?: { teamId: string; area: DevArea; gain: number }[]; // big upgrades of the last round
 }
@@ -201,6 +202,13 @@ export const tdMult = (td = 80) => 0.85 + (td - 70) * 0.012;
 export const tdSuccess = (td = 80) => (td - 80) * 0.005;
 /** Development multiplier of an area: technical director plus the specialist of that area. */
 export function areaMult(m: ManagementState, teamId: string, area: DevArea) {
+  return areaMultStaff(m, teamId, area) * (1 + reserveDevBonus(m.staffRatings?.[teamId]?.reserve));
+}
+
+/** A good reserve driver in the simulator: up to +6% on every upgrade. */
+export const reserveDevBonus = (pace?: number) => (pace ? Math.max(0, Math.min(0.06, (pace - 74) * 0.006)) : 0);
+
+function areaMultStaff(m: ManagementState, teamId: string, area: DevArea) {
   const r = m.staffRatings?.[teamId];
   const td = r?.td ?? 80;
   switch (area) {
@@ -872,4 +880,71 @@ export function autopilot(m: ManagementState, round: number): { m: ManagementSta
     x = { ...x, inbox: [...x.inbox, { race: round, tone: "info" as const, text: `Gestión automática: ${log.join(", ")}.` }].slice(-60) };
   }
   return { m: x, log };
+}
+
+// --- New generation of cars --------------------------------------------------------
+
+export const MEGA_PREP_COST = 5; // M USD per step
+export const MEGA_PREP_MAX = 4;
+
+export function canInvestMegaPrep(m: ManagementState): string | null {
+  const p = m.player;
+  if (!p) return "Sin equipo";
+  if ((p.megaPrep ?? 0) >= MEGA_PREP_MAX) return "Programa completo";
+  if (p.budget < MEGA_PREP_COST) return "Presupuesto insuficiente";
+  return capCheck(m, MEGA_PREP_COST);
+}
+
+/** Put money into next year's car instead of this one. */
+export function investMegaPrep(m: ManagementState, round: number, season: number): ManagementState {
+  if (canInvestMegaPrep(m)) return m;
+  const p = m.player!;
+  const step = (p.megaPrep ?? 0) + 1;
+  return {
+    ...m,
+    player: {
+      ...p,
+      megaPrep: step,
+      budget: +(p.budget - MEGA_PREP_COST).toFixed(2),
+      ledger: [...p.ledger, { race: round, concept: `I+D: auto ${season + 1} (fase ${step})`, amount: -MEGA_PREP_COST, category: "rnd" }],
+    },
+  };
+}
+
+/**
+ * A new generation of cars: every team starts from scratch. What counts is the
+ * technical staff, the facilities and the work done in advance; the old order barely matters.
+ */
+export function applyMegaRegulation(m: ManagementState, seed: number): { m: ManagementState; impact: RegImpact; before: Record<string, number> } {
+  const rng = createRng(seed);
+  const ids = Object.keys(m.dev);
+  const before = Object.fromEntries(ids.map((id) => [id, carPace(m.dev[id])]));
+  const dev: Record<string, CarDev> = {};
+  const impact: RegImpact = {};
+  const facilityOf: Record<string, FacilityKey> = { aero: "windTunnel", powerUnit: "dyno", chassis: "factory" };
+  const means = Object.fromEntries((["aero", "powerUnit", "chassis"] as const).map((a) => [a, ids.reduce((acc, id) => acc + m.dev[id][a], 0) / ids.length]));
+  for (const id of ids) {
+    const old = m.dev[id];
+    const r = m.staffRatings?.[id];
+    const isPlayer = id === m.player?.teamId;
+    const prep = isPlayer ? m.player!.megaPrep ?? 0 : Math.max(0, Math.min(MEGA_PREP_MAX, ((m.aiBudget[id] ?? 40) / 45 - 0.6) * 2.5 + rng.next() * 2));
+    const next: CarDev = { ...old };
+    for (const a of ["aero", "powerUnit", "chassis"] as const) {
+      const fac = isPlayer ? (m.player!.facilities[facilityOf[a]] - 3) * 0.5 : 0;
+      const v = 86 + (rng.next() - 0.5) * 9 + (areaMult(m, id, a) - 1) * 9 + prep * 0.9 + fac + (old[a] - means[a]) * 0.12;
+      next[a] = +Math.max(76, Math.min(96, v)).toFixed(2);
+      impact[id] ??= {};
+      impact[id][a] = +(next[a] - old[a]).toFixed(2);
+    }
+    // new technology is fragile at first
+    next.reliability = +Math.max(70, Math.min(95, 80 + rng.next() * 8 + ((r?.pu ?? 80) - 80) * 0.2)).toFixed(2);
+    dev[id] = next;
+  }
+  let player = m.player;
+  if (player) player = { ...player, partLevels: {}, failures: {}, megaPrep: 0 };
+  return {
+    m: { ...m, dev, player, history: [...(m.history ?? []).filter((h) => h.round < 0), { round: 0, dev: structuredClone(dev) }] },
+    impact,
+    before,
+  };
 }

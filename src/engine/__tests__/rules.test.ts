@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_RULES, generateProposals, resolveVote, rulesFor, tally, initManagement, canStartProject, type TeamContext } from "@/engine";
+import { DEFAULT_RULES, generateProposals, resolveVote, rulesFor, tally, initManagement, canStartProject, isMegaYear, MEGA_ANNOUNCE_ROUND, megaChange, applyMegaRegulation, carPace, type TeamContext } from "@/engine";
 import { teams } from "@/data/f1Data";
 
 const ctx = (): TeamContext[] => teams.map((t, i) => ({ teamId: t.id, carRank: i + 1, puRank: i + 1, driverPayroll: 40 - i * 3, teams: teams.length }));
@@ -33,7 +33,7 @@ describe("regulations", () => {
   });
 });
 
-import { applyRegulationImpact, carPace } from "@/engine";
+import { applyRegulationImpact } from "@/engine";
 describe("regulation impact on the cars", () => {
   it("a new aero rule shrinks the aero gaps and is recorded per team", () => {
     const m = initManagement(teams, "williams", 9);
@@ -93,5 +93,22 @@ describe("calendar changes", () => {
     expect(sw.find((r) => r.id === 29)?.date).toBe(base.find((r) => r.id === 9)?.date);
     const next = datesForSeason(sw, 2027);
     expect(next).toHaveLength(24);
+  });
+
+  it("a new generation of cars every five years reshuffles the field", () => {
+    expect(isMegaYear(2031)).toBe(true);
+    expect(isMegaYear(2030)).toBe(false);
+    const ann = generateProposals(2030, MEGA_ANNOUNCE_ROUND, DEFAULT_RULES, [], 1);
+    expect(ann[0]?.mega).toBe(true);
+    expect(megaChange(2031, ann)?.id).toBe(ann[0].id);
+    const m = initManagement(teams, "haas", 3);
+    const before = teams.map((t) => t.id).sort((a, b) => carPace(m.dev[b]) - carPace(m.dev[a]));
+    const prepped = { ...m, player: { ...m.player!, megaPrep: 4 } };
+    const r = applyMegaRegulation(prepped, 7);
+    const after = teams.map((t) => t.id).sort((a, b) => carPace(r.m.dev[b]) - carPace(r.m.dev[a]));
+    expect(after).not.toEqual(before);
+    // with a full programme the backmarker climbs
+    expect(after.indexOf("haas")).toBeLessThan(before.indexOf("haas"));
+    expect(r.m.player!.megaPrep).toBe(0);
   });
 });

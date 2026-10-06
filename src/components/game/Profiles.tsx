@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { Team } from "@/data/f1Data";
 import { DRIVER_HISTORY, TEAM_HISTORY } from "@/data/history";
 import { STAFF_ROLES, STAFF_ROLE_INFO } from "@/data/peopleData";
-import { ageOf, computeStandings, teamStaff, type ManagementState, type PeopleState, type StoredRaceResult } from "@/engine";
+import { ageOf, computeStandings, teamStaff, whereIs, reserveDevBonus, type ManagementState, type PeopleState, type StoredRaceResult } from "@/engine";
 import { TeamLogo } from "./visuals";
 import { cn } from "@/lib/utils";
 
@@ -201,20 +201,17 @@ function DriverProfile({
   const d = rec ?? fromGrid?.d;
   const lines = useMemo(() => driverLines(id, seasons), [id, seasons]);
   if (!d) return <DialogTitle>Piloto no encontrado</DialogTitle>;
-  const team = teams.find((t) => t.id === (rec?.contract?.teamId ?? fromGrid?.t.id));
+  const team = teams.find((t) => t.id === (rec?.contract?.teamId ?? rec?.reserveOf ?? fromGrid?.t.id));
   const color = team?.hex ?? "#9ca3af";
   const past = DRIVER_HISTORY[id];
   const titles = lines.filter((l) => l.champion).length + (past?.titles ?? 0);
   const wins = sum(lines, "wins") + (past?.wins ?? 0);
   const podiums = sum(lines, "podiums") + (past?.podiums ?? 0);
+  const nameOf = (tid: string) => teams.find((t) => t.id === tid)?.name;
   const status = rec
-    ? rec.status === "active"
-      ? `${team?.name ?? ""} · contrato hasta ${rec.contract?.until}`
-      : rec.status === "junior"
-        ? `${rec.series ?? "F2"}${rec.juniorTeam ? ` · ${rec.juniorTeam}` : ""}`
-        : rec.status === "retired"
-          ? "Retirado"
-          : "Sin equipo"
+    ? `${whereIs(rec, nameOf)}${rec.status === "active" && rec.contract ? ` · contrato hasta ${rec.contract.until}` : ""}${
+        rec.reserveOf && rec.series && rec.series !== "F2" && rec.series !== "F3" ? ` · también corre en ${rec.series}` : ""
+      }`
     : team?.name ?? "";
   return (
     <div className="space-y-5">
@@ -250,6 +247,11 @@ function DriverProfile({
         <Tile label="Abandonos" value={sum(lines, "dnfs")} sub="en el juego" />
         <Tile label="Mejor resultado" value={lines.some((l) => l.best) ? `P${Math.min(...lines.filter((l) => l.best).map((l) => l.best!))}` : "—"} />
       </div>
+      {rec?.reserveOf && (
+        <div className="rounded-lg border border-sky-500/40 bg-sky-500/10 p-3 text-xs text-sky-200 -mt-2">
+          Piloto de reserva de {nameOf(rec.reserveOf)} hasta {rec.reserveUntil}: aporta {Math.round(reserveDevBonus(rec.pace) * 100)}% extra al desarrollo con su trabajo en el simulador.
+        </div>
+      )}
       {past && <p className="text-[10px] text-muted-foreground -mt-3">Campeonatos, victorias y podios incluyen su carrera antes de 2026 (valores aproximados).</p>}
 
       <div className="space-y-2">
@@ -345,6 +347,24 @@ function TeamProfile({
               <span className="text-xs text-muted-foreground">ritmo {d.pace.toFixed(1)}</span>
             </button>
           ))}
+          {people &&
+            (() => {
+              const r = Object.values(people.drivers).find((d) => d.reserveOf === id && d.status !== "retired");
+              return r ? (
+                <button
+                  onClick={() => onOpen({ kind: "driver", id: r.id })}
+                  className="w-full flex items-center gap-2 rounded-lg border border-dashed border-white/15 px-3 py-2 text-left hover:bg-white/5"
+                >
+                  <span className="tv-label text-sky-300 w-9">RES</span>
+                  <span className="flex-1 text-sm">
+                    {r.nationality} {r.name}
+                  </span>
+                  <span className="text-xs text-muted-foreground">ritmo {r.pace.toFixed(1)}</span>
+                </button>
+              ) : (
+                <div className="text-xs text-muted-foreground">Sin piloto de reserva</div>
+              );
+            })()}
           {staff && (
             <>
               <div className="tv-label text-muted-foreground pt-2">Dirección</div>

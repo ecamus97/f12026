@@ -7,7 +7,7 @@ import { SectionTitle } from "./visuals";
 import { NegotiationDialog, type NegotiationAnswer } from "./NegotiationDialog";
 import {
   ageOf, askingSalary, availableForNextSeason, carRankOf, lineup, nextSeasonLineup, payroll, teamStaff,
-  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING, talkOf, renewalAsk, willRetire, seatOpenNow, signableNow, signedFor, f1Ready,
+  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING, talkOf, renewalAsk, willRetire, seatOpenNow, signableNow, signedFor, f1Ready, whereIs, reserveOf, reserveAsk, reserveDevBonus,
   type DriverRecord, type ManagementState, type PeopleState, type StaffRecord,
 } from "@/engine";
 import { TeamStripe } from "./common";
@@ -55,8 +55,11 @@ function Ratings({ d, season }: { d: DriverRecord; season?: number }) {
 type MarketFilter = "all" | "contract" | "free" | "junior";
 
 export function DriversPanel({
-  people, team, teams, management, onOffer, onRelease, round = 0,
+  people, team, teams, management, onOffer, onRelease, round = 0, onHireReserve, onReleaseReserve, onProfile,
 }: {
+  onHireReserve?: (driverId: string, years: number) => { ok: boolean; message: string };
+  onReleaseReserve?: () => void;
+  onProfile?: (driverId: string) => void;
   people: PeopleState;
   team: Team;
   teams: Team[];
@@ -117,9 +120,9 @@ export function DriversPanel({
           return (
             <div key={d.id} className="rounded-lg border border-border/60 p-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span className="text-sm font-medium">
+                <button className="text-sm font-medium hover:underline" onClick={() => onProfile?.(d.id)}>
                   {d.nationality} {d.name}
-                </span>
+                </button>
                 <span className="text-xs text-muted-foreground">{ageOf(d, season)} años · potencial {potentialLabel(d, season)}</span>
                 <span className="ml-auto text-xs">
                   {m1(d.contract?.salary ?? 0)}/año · hasta {d.contract?.until}
@@ -166,6 +169,15 @@ export function DriversPanel({
         </div>
       </div>
 
+      <ReservePanel
+        people={people}
+        team={team}
+        teams={teams}
+        onHire={onHireReserve}
+        onRelease={onReleaseReserve}
+        onProfile={onProfile}
+      />
+
       <div className="panel p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-display text-lg">Mercado de pilotos {openNow ? `· ${season} y ${next}` : `para ${next}`}</h3>
@@ -199,12 +211,11 @@ export function DriversPanel({
               <div key={d.id} className="py-2">
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                   {t ? <TeamStripe color={t.hex} /> : <span className="w-1" />}
-                  <span className="text-sm">
+                  <button className="text-sm hover:underline text-left" onClick={() => onProfile?.(d.id)}>
                     {d.nationality} {d.name}
-                  </span>
+                  </button>
                   <span className="text-[11px] text-muted-foreground">
-                    {ageOf(d, next)} años ·{" "}
-                    {t ? t.name : d.status === "junior" ? `${d.series ?? "F2"}${d.juniorTeam ? ` · ${d.juniorTeam}` : ""}` : d.origin ?? "Libre"}
+                    {ageOf(d, next)} años · {whereIs(d, (id) => teamName(id)?.name)}
                     {" · "}
                     {(d.f1Seasons ?? 0) > 0 ? `${d.f1Seasons} temp. en F1` : "sin experiencia en F1"}
                   </span>
@@ -255,6 +266,122 @@ export function DriversPanel({
   );
 }
 
+/** The reserve / test driver: cheap, works in the simulator and is the first option if a seat opens. */
+function ReservePanel({
+  people, team, teams, onHire, onRelease, onProfile,
+}: {
+  people: PeopleState;
+  team: Team;
+  teams: Team[];
+  onHire?: (driverId: string, years: number) => { ok: boolean; message: string };
+  onRelease?: () => void;
+  onProfile?: (driverId: string) => void;
+}) {
+  const season = people.season;
+  const cur = reserveOf(people, team.id);
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const teamName = (id: string) => teams.find((t) => t.id === id)?.name;
+  const candidates = useMemo(
+    () =>
+      Object.values(people.drivers)
+        .filter(
+          (d) =>
+            (d.status === "free" || (d.status === "junior" && f1Ready(d))) &&
+            !d.contract &&
+            !d.nextContract &&
+            (!d.reserveOf || d.reserveOf === team.id) &&
+            d.id !== cur?.id &&
+            d.series !== "NASCAR",
+        )
+        .sort((a, b) => b.pace - a.pace)
+        .slice(0, 10),
+    [people, team.id, cur?.id],
+  );
+  const pct = (pace?: number) => `+${Math.round(reserveDevBonus(pace) * 100)}%`;
+  return (
+    <div className="panel p-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-display text-lg">Piloto de reserva</h3>
+        <span className="text-[11px] text-muted-foreground">Trabaja en el simulador y en las pruebas: acelera el desarrollo. Es la primera opción si se libera un asiento.</span>
+      </div>
+      {cur ? (
+        <div className="rounded-lg border border-border/60 p-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <button className="text-sm font-medium hover:underline" onClick={() => onProfile?.(cur.id)}>
+            {cur.nationality} {cur.name}
+          </button>
+          <span className="text-xs text-muted-foreground">
+            {ageOf(cur, season)} años · ritmo {cur.pace.toFixed(1)} · {(cur.f1Seasons ?? 0) > 0 ? `${cur.f1Seasons} temp. en F1` : "sin experiencia en F1"}
+            {cur.series && cur.series !== "F2" && cur.series !== "F3" ? ` · también corre en ${cur.series}` : ""}
+          </span>
+          <span className="text-xs text-green-400">Desarrollo {pct(cur.pace)}</span>
+          <span className="ml-auto text-xs">
+            {m1(cur.reserveSalary ?? 0)}/año · hasta {cur.reserveUntil ?? season}
+          </span>
+          <div className="w-full flex gap-2">
+            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => setOpen((o) => !o)}>
+              Cambiar reserva
+            </Button>
+            {onHire && (cur.reserveUntil ?? season) <= season && (
+              <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setMsg(onHire(cur.id, 2).message)}>
+                Renovar 2 años · {m1(reserveAsk(cur, season))}/año
+              </Button>
+            )}
+            {onRelease && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground hover:text-destructive" onClick={onRelease}>
+                Liberar
+              </Button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 flex items-center gap-3 text-sm text-amber-200">
+          <AlertTriangle className="w-4 h-4" /> Sin piloto de reserva: el desarrollo pierde el trabajo de simulador.
+          <Button size="sm" variant="secondary" className="h-7 text-xs ml-auto" onClick={() => setOpen(true)}>
+            Elegir reserva
+          </Button>
+        </div>
+      )}
+      {msg && <div className="text-xs text-emerald-300">{msg}</div>}
+      {open && (
+        <div className="divide-y divide-border/40">
+          {candidates.map((d) => (
+            <div key={d.id} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button className="text-sm hover:underline" onClick={() => onProfile?.(d.id)}>
+                {d.nationality} {d.name}
+              </button>
+              <span className="text-[11px] text-muted-foreground">
+                {ageOf(d, season)} años · {whereIs(d, teamName)} · {(d.f1Seasons ?? 0) > 0 ? `${d.f1Seasons} temp. en F1` : "sin experiencia en F1"}
+              </span>
+              <span className="ml-auto flex items-center gap-3 text-xs tabular-nums">
+                <span>
+                  Ritmo <b>{d.pace.toFixed(0)}</b>
+                </span>
+                <span className="text-green-400">{pct(d.pace)}</span>
+                <span className="w-20 text-right">{m1(reserveAsk(d, season))}/año</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  disabled={!onHire}
+                  onClick={() => {
+                    const r = onHire!(d.id, 1);
+                    setMsg(r.message);
+                    if (r.ok) setOpen(false);
+                  }}
+                >
+                  Contratar
+                </Button>
+              </span>
+            </div>
+          ))}
+          {!candidates.length && <div className="py-2 text-sm text-muted-foreground">No hay pilotos disponibles.</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const ROLE_ICON: Record<StaffRole, string> = { tp: "🎧", td: "📐", aero: "🌀", pu: "⚡", sport: "🏁", race: "🛠️" };
 
 function staffEffect(role: StaffRole, r: number) {
@@ -294,7 +421,7 @@ export function StaffPanel({
   const [talking, setTalking] = useState<{ id: string; mode: "hire" | "renew" } | null>(null);
   const tStaff = talking ? people.staff[talking.id] : null;
   const free = Object.values(people.staff)
-    .filter((s) => !s.teamId && !s.signed && (role === "all" || s.role === role))
+    .filter((s) => !s.teamId && !s.signed && !s.retired && (role === "all" || s.role === role))
     .sort((a, b) => b.rating - a.rating);
   const budget = management.player?.budget ?? 0;
 

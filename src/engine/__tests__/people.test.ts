@@ -3,7 +3,7 @@ import { teams } from "@/data/f1Data";
 import {
   advanceSeason, applyLineups, askingSalary, carRankOf, initManagement, initPeople, lineup, offerDriverContract,
   hireStaff, payroll, startNewSeason, constructorsPrize, applyDevToTeams, staffRatings, nextSeasonLineup,
-  willRetire, signableNow, midSeasonMarket, fireStaff, ageOf, availableForNextSeason,
+  willRetire, signableNow, midSeasonMarket, fireStaff, ageOf, availableForNextSeason, reserveOf, reserveAsk, hireReserve,
 } from "@/engine";
 
 const ranks = () => Object.fromEntries(teams.map((t, i) => [t.id, i + 1]));
@@ -237,5 +237,33 @@ describe("negotiations", () => {
     const multi = lengths.filter((l) => l >= 2).length / lengths.length;
     expect(multi).toBeGreaterThan(0.5);
     expect(p.drivers.nor.f1Seasons).toBe(11);
+  });
+
+  it("reserves, other series and a rotating staff market", () => {
+    let p = initPeople(teams, 31);
+    for (const t of teams) expect(reserveOf(p, t.id)).toBeTruthy();
+    expect(p.drivers.tsu.reserveOf).toBe("redbull");
+    expect(staffRatings(p).redbull.reserve).toBe(p.drivers.tsu.pace);
+    // the reserve's salary is part of the payroll, and it's cheap
+    expect(reserveAsk(p.drivers.tsu, 2026)).toBeLessThan(3);
+    let ts = applyLineups(teams, p);
+    const series = new Set<string>();
+    const staffBefore = Object.keys(p.staff).length;
+    for (let y = 0; y < 6; y++) {
+      p = advanceSeason(p, ts, null, ranks()).people;
+      ts = applyLineups(ts, p);
+      for (const d of Object.values(p.drivers)) if (d.series && d.series !== "F2" && d.series !== "F3") series.add(d.series);
+      for (const t of teams) expect(lineup(p, t.id).length).toBe(2);
+    }
+    expect(series.size).toBeGreaterThanOrEqual(2);
+    expect(Object.keys(p.staff).length).toBeGreaterThan(staffBefore);
+    expect(Object.values(p.staff).some((s) => s.retired)).toBe(true);
+    const fresh = Object.values(p.staff).filter((s) => s.id.startsWith("st"));
+    expect(Math.max(...fresh.map((s) => s.rating)) - Math.min(...fresh.map((s) => s.rating))).toBeGreaterThan(15);
+    // a reserve can be signed by the player
+    const cand = Object.values(p.drivers).find((d) => d.status === "free" && !d.reserveOf && !d.contract)!;
+    const h = hireReserve(p, cand.id, "williams", 2);
+    expect(h.ok).toBe(true);
+    expect(reserveOf(h.people, "williams")?.id).toBe(cand.id);
   });
 });

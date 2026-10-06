@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
-import { Gavel, Landmark, Check, X, Minus, Scale } from "lucide-react";
+import { Gavel, Landmark, Check, X, Minus, Scale, Sparkles } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { Team } from "@/data/f1Data";
-import { describeRules, rulesFor, tally, type RuleProposal, type RuleSet, type Vote } from "@/engine";
+import { describeRules, rulesFor, tally, pendingMega, MEGA_PREP_COST, MEGA_PREP_MAX, type RuleProposal, type RuleSet, type Vote } from "@/engine";
 import { CircuitOutline, SectionTitle } from "./visuals";
 import { raceById } from "@/data/calendar";
 import { cn } from "@/lib/utils";
@@ -13,8 +14,11 @@ const VOTE_INFO: Record<Vote, { label: string; icon: typeof Check; cls: string; 
 };
 
 export function RulesView({
-  season, rules, proposals, teams, playerTeamId, onVote,
+  season, rules, proposals, teams, playerTeamId, onVote, megaPrep = 0, megaBlock = null, onInvestMega,
 }: {
+  megaPrep?: number;
+  megaBlock?: string | null; // why the player can't invest now
+  onInvestMega?: () => void;
   season: number;
   rules: RuleSet;
   proposals: RuleProposal[];
@@ -42,6 +46,43 @@ export function RulesView({
           de las rondas 6, 10 y 17.
         </p>
       </div>
+
+      {(() => {
+        const mega = pendingMega(season, proposals);
+        if (!mega) return null;
+        return (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="panel overflow-hidden border-amber-400/60 shadow-[0_0_60px_-20px_rgba(251,191,36,0.6)]">
+            <div className="bg-amber-400 text-black px-5 py-2 flex items-center gap-2 clip-slant w-fit pr-10">
+              <Sparkles className="w-4 h-4" />
+              <span className="tv-label">Nueva generación de autos · {mega.effective}</span>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <div className="font-display text-2xl md:text-3xl">{mega.title}</div>
+                <p className="text-sm text-muted-foreground mt-1">{mega.desc}</p>
+              </div>
+              <div className="grid md:grid-cols-[1fr_auto] gap-4 items-center">
+                <div className="space-y-2">
+                  <div className="tv-label text-muted-foreground">Programa auto {mega.effective}</div>
+                  <div className="flex gap-1.5">
+                    {Array.from({ length: MEGA_PREP_MAX }, (_, i) => (
+                      <span key={i} className={cn("h-3 flex-1 rounded-sm", i < megaPrep ? "bg-amber-400" : "bg-white/10")} />
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Cada fase cuesta US$ {MEGA_PREP_COST} M de I+D de esta temporada y mejora el punto de partida del auto nuevo en las tres áreas. Lo
+                    que gastes acá no va al auto actual: es una apuesta al futuro. Los rivales con más presupuesto también se preparan.
+                  </p>
+                </div>
+                <Button className="font-display" disabled={!!megaBlock || !onInvestMega} onClick={onInvestMega}>
+                  {megaPrep >= MEGA_PREP_MAX ? "Programa completo" : `Invertir fase ${megaPrep + 1} · US$ ${MEGA_PREP_COST} M`}
+                </Button>
+              </div>
+              {megaBlock && megaPrep < MEGA_PREP_MAX && <div className="text-xs text-amber-300">{megaBlock}</div>}
+            </div>
+          </motion.div>
+        );
+      })()}
 
       {pending.map((p) => (
         <motion.div

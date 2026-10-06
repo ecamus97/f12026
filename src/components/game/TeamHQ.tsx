@@ -33,6 +33,9 @@ interface Props {
   onHireStaff?: (staffId: string, salary: number, years: number) => NegotiationAnswer;
   onFireStaff?: (staffId: string) => void;
   onRenewStaff?: (staffId: string, salary: number, years: number) => NegotiationAnswer;
+  onHireReserve?: (driverId: string, years: number) => { ok: boolean; message: string };
+  onReleaseReserve?: () => void;
+  onProfile?: (driverId: string) => void;
   section?: "car" | "facilities" | "drivers" | "staff" | "finance"; // show a single section (no tab bar)
 }
 
@@ -41,7 +44,7 @@ export const money = (m: number) => `US$ ${m.toFixed(1)} M`;
 const AREAS: DevArea[] = ["aero", "powerUnit", "chassis", "reliability", "pitCrew"];
 
 export function TeamHQ({
-  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff, onFireStaff, onRenewStaff, section,
+  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff, onFireStaff, onRenewStaff, onHireReserve, onReleaseReserve, onProfile, section,
 }: Props) {
   const [metric, setMetric] = useState<Metric>("pace");
   const p = management.player!;
@@ -276,7 +279,18 @@ export function TeamHQ({
       {tab === "facilities" && <FacilitiesCampus management={management} teamColor={team.hex} onUpgrade={onUpgradeFacility} />}
 
       {tab === "drivers" && people && onOffer && onRelease && (
-        <DriversPanel people={people} team={team} teams={teams} management={management} onOffer={onOffer} onRelease={onRelease} round={round} />
+        <DriversPanel
+          people={people}
+          team={team}
+          teams={teams}
+          management={management}
+          onOffer={onOffer}
+          onRelease={onRelease}
+          round={round}
+          onHireReserve={onHireReserve}
+          onReleaseReserve={onReleaseReserve}
+          onProfile={onProfile}
+        />
       )}
       {tab === "staff" && people && onHireStaff && (
         <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} onFire={onFireStaff} onRenew={onRenewStaff} round={round} />

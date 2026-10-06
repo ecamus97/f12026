@@ -70,6 +70,7 @@ export interface RuleProposal {
   status: ProposalStatus;
   effect?: TechEffect; // one-off impact on every car when it comes into force
   calendar?: { op: "add" | "remove" | "swap"; add?: number; remove?: number }; // calendar change for next season
+  mega?: boolean; // a new generation of cars: the whole order is reshuffled
   votes?: Record<string, Vote>;
   playerVote?: Vote;
 }
@@ -318,7 +319,52 @@ export function calendarFor(season: number, races: Race[], proposals: RulePropos
   return sortByDate(cal);
 }
 
+/** Every five years the FIA brings a new generation of cars (2026 was the last one). */
+export const MEGA_EVERY = 5;
+export const isMegaYear = (season: number) => season > 2026 && (season - 2026) % MEGA_EVERY === 0;
+/** Round after which the next generation is announced (the season before). */
+export const MEGA_ANNOUNCE_ROUND = 3;
+
+const MEGA_CONCEPTS = [
+  {
+    title: "Nueva generación de autos: efecto suelo 2.0 y motores 100% sostenibles",
+    desc: "Autos nuevos desde cero: fondos con túneles Venturi más grandes, alerones simplificados y unidades de potencia con combustible totalmente sostenible y más energía eléctrica.",
+  },
+  {
+    title: "Nueva generación de autos: aerodinámica activa total y chasis más chico",
+    desc: "Alerones móviles en las rectas y en las curvas, autos 30 cm más cortos y 50 kg más livianos, y una nueva arquitectura de motor.",
+  },
+  {
+    title: "Nueva generación de autos: V8 híbridos y neumáticos más anchos",
+    desc: "Vuelven los motores V8 con un sistema híbrido más simple, neumáticos más anchos y un reglamento aerodinámico pensado para seguir de cerca.",
+  },
+];
+
+export function megaProposal(season: number): RuleProposal {
+  const effective = season + 1;
+  const c = MEGA_CONCEPTS[Math.floor((effective - 2026) / MEGA_EVERY - 1) % MEGA_CONCEPTS.length];
+  return {
+    id: `${season}-mega`,
+    season,
+    effective,
+    round: MEGA_ANNOUNCE_ROUND,
+    key: "megaRegs",
+    patch: {},
+    title: c.title,
+    desc: `${c.desc} Todo lo desarrollado queda obsoleto: el orden de la parrilla puede cambiar por completo. Los equipos que inviertan antes en el auto ${effective} parten con ventaja.`,
+    by: "fia",
+    status: "decreed",
+    mega: true,
+  };
+}
+
+/** The new generation coming into force in a season (if any). */
+export const megaChange = (season: number, proposals: RuleProposal[]) => proposals.find((p) => p.mega && p.effective === season) ?? null;
+/** Announced and not yet in force: teams can prepare. */
+export const pendingMega = (season: number, proposals: RuleProposal[]) => proposals.find((p) => p.mega && p.effective === season + 1) ?? null;
+
 export function generateProposals(season: number, round: number, rules: RuleSet, existing: RuleProposal[], seed: number, calIds?: number[]): RuleProposal[] {
+  if (round === MEGA_ANNOUNCE_ROUND && isMegaYear(season + 1) && !existing.some((p) => p.mega && p.effective === season + 1)) return [megaProposal(season)];
   const slots = PROPOSAL_ROUNDS.filter((s) => s.round === round);
   if (!slots.length) return [];
   const rng = createRng(seed ^ (season * 7919) ^ (round * 104729));

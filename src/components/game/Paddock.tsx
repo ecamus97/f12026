@@ -7,7 +7,7 @@ import { forecast, forecastIcon } from "@/engine";
 import { NewsFeed } from "./NewsCenter";
 import { AgendaCard } from "./AgendaCalendar";
 import type { Activity } from "@/engine";
-import { carRankOf, ageOf, teamStaff, signedFor, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
+import { carRankOf, ageOf, teamStaff, signedFor, pendingMega, MEGA_PREP_MAX, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
 import { STAFF_ROLES, STAFF_ROLE_INFO } from "@/data/peopleData";
 import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile, TeamLogo } from "./visuals";
 import { InboxList, money } from "./TeamHQ";
@@ -149,7 +149,7 @@ export function Paddock({
         </motion.div>
       </div>
 
-      <TeamTodos team={team} people={people} management={management} notices={round === 0 ? notices : []} onNavigate={onNavigate} />
+      <TeamTodos team={team} people={people} management={management} notices={round === 0 ? notices : []} onNavigate={onNavigate} proposals={proposals} season={season} />
 
       <AgendaCard activities={activities} season={season} nextRound={round + 1} onChoose={onChooseActivity} />
 
@@ -304,8 +304,10 @@ function MiniTable({ title, rows }: { title: string; rows: { id: string; name: s
 
 /** Agenda: what your team has to sort out (empty seats, vacant posts, sponsor slots) and off-season notices. */
 function TeamTodos({
-  team, people, management, notices, onNavigate,
+  team, people, management, notices, onNavigate, proposals, season,
 }: {
+  proposals: RuleProposal[];
+  season: number;
   team: Team;
   people: PeopleState | null;
   management: ManagementState | null;
@@ -336,6 +338,24 @@ function TeamTodos({
       });
     }
   }
+  if (people && !Object.values(people.drivers).some((d) => d.reserveOf === team.id && d.status !== "retired"))
+    items.push({
+      icon: <UserPlus className="w-5 h-5" />,
+      tone: "warn",
+      title: "Sin piloto de reserva",
+      text: "Un reserva trabaja en el simulador (más desarrollo) y cubre un asiento si hace falta.",
+      to: "drivers",
+    });
+  const mega = pendingMega(season, proposals);
+  const prep = management?.player?.megaPrep ?? 0;
+  if (mega && prep < MEGA_PREP_MAX)
+    items.push({
+      icon: <Gavel className="w-5 h-5" />,
+      tone: "warn",
+      title: `Nueva generación de autos ${mega.effective}`,
+      text: `Todo se reinicia el próximo año. Programa del auto nuevo: ${prep}/${MEGA_PREP_MAX} fases.`,
+      to: "rules",
+    });
   const sp = management?.player?.sponsors.length ?? 3;
   if (sp < 3)
     items.push({
