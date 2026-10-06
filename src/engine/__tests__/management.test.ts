@@ -15,7 +15,7 @@ function season(playerTeamId: string, policy: "idle" | "greedy", seed = 1) {
     for (const o of [...m.player!.offers]) if (!canSignSponsor(m, o.id)) m = signSponsor(m, o.id, i);
     if (policy === "greedy") {
       if (i === 0) m = upgradeFacility(m, "windTunnel", i);
-      for (const id of ["aero-l", "aero-s", "pu-s", "ch-s", "pu-l", "ch-l", "rel", "pit"]) {
+      for (const id of ["floor", "fw", "rw", "ice", "mguk", "weight", "diffuser", "turbo", "fsusp", "rsusp", "cooling", "guns"]) {
         if (!canStartProject(m, id)) m = startProject(m, id, i);
       }
     }
@@ -33,11 +33,12 @@ describe("management", () => {
   it("projects cost money and need capacity", () => {
     let m = initManagement(baseTeams, "williams", 1);
     const before = m.player!.budget;
-    m = startProject(m, "aero-s", 0);
-    expect(m.player!.budget).toBeCloseTo(before - PROJECTS.find((p) => p.id === "aero-s")!.cost);
-    m = startProject(m, "pu-s", 0);
-    m = startProject(m, "ch-s", 0); // Williams factory level 3 = 3 slots
-    expect(canStartProject(m, "rel")).toMatch(/capacidad/);
+    m = startProject(m, "fw", 0);
+    expect(m.player!.budget).toBeCloseTo(before - PROJECTS.find((p) => p.id === "fw")!.cost);
+    m = startProject(m, "turbo", 0);
+    m = startProject(m, "brakes", 0);
+    m = startProject(m, "guns", 0); // Williams factory level 3 = 4 slots
+    expect(canStartProject(m, "cooling")).toMatch(/capacidad/);
   });
 
   it("investing beats standing still over a season", () => {

@@ -47,15 +47,38 @@ export interface ProjectTemplate {
   success: number; // base probability of full success
 }
 
+// Each category has its own parts, with their own cost, lead time and risk.
+// Every upgrade of the same part gives a bit less (×0.85 per previous upgrade).
+const P = (id: string, area: DevArea, name: string, cost: number, races: number, gain: [number, number], success: number): ProjectTemplate =>
+  ({ id, area, name, cost, races, gain, success });
+
 export const PROJECTS: ProjectTemplate[] = [
-  { id: "aero-s", area: "aero", name: "Actualización de alerones", cost: 4, races: 2, gain: [1.5, 3], success: 0.85 },
-  { id: "aero-l", area: "aero", name: "Nuevo paquete aerodinámico", cost: 11, races: 4, gain: [3.5, 6], success: 0.7 },
-  { id: "pu-s", area: "powerUnit", name: "Mapas de motor y ERS", cost: 4, races: 2, gain: [1.5, 3], success: 0.85 },
-  { id: "pu-l", area: "powerUnit", name: "Evolución de la unidad de potencia", cost: 12, races: 5, gain: [4, 7], success: 0.65 },
-  { id: "ch-s", area: "chassis", name: "Ajustes de suspensión", cost: 3.5, races: 2, gain: [1.5, 3], success: 0.85 },
-  { id: "ch-l", area: "chassis", name: "Chasis aligerado", cost: 10, races: 4, gain: [3.5, 5.5], success: 0.7 },
-  { id: "rel", area: "reliability", name: "Programa de fiabilidad", cost: 3, races: 2, gain: [2, 4], success: 0.9 },
-  { id: "pit", area: "pitCrew", name: "Entrenamiento del pit crew", cost: 1.5, races: 1, gain: [1, 2.5], success: 0.9 },
+  // Aerodinámica
+  P("fw", "aero", "Alerón delantero", 3.5, 2, [1, 2.2], 0.85),
+  P("rw", "aero", "Alerón trasero", 3.5, 2, [1, 2.2], 0.85),
+  P("floor", "aero", "Fondo plano", 9, 4, [2.5, 4.5], 0.7),
+  P("sidepods", "aero", "Pontones y refrigeración", 6, 3, [1.8, 3.2], 0.75),
+  P("diffuser", "aero", "Difusor", 7, 3, [2, 3.6], 0.72),
+  // Unidad de potencia
+  P("ice", "powerUnit", "Motor de combustión (ICE)", 10, 5, [3, 5.5], 0.65),
+  P("mguk", "powerUnit", "MGU-K", 6, 3, [1.8, 3.2], 0.75),
+  P("es", "powerUnit", "Batería (almacenamiento de energía)", 5, 3, [1.5, 3], 0.78),
+  P("turbo", "powerUnit", "Turbo", 4.5, 2, [1.2, 2.4], 0.8),
+  P("pu-sw", "powerUnit", "Software de despliegue", 2.5, 1, [0.6, 1.4], 0.9),
+  // Chasis
+  P("fsusp", "chassis", "Suspensión delantera", 3.5, 2, [1, 2.2], 0.85),
+  P("rsusp", "chassis", "Suspensión trasera", 3.5, 2, [1, 2.2], 0.85),
+  P("weight", "chassis", "Reducción de peso", 8, 4, [2.2, 4], 0.7),
+  P("brakes", "chassis", "Frenos", 3, 2, [0.9, 1.8], 0.88),
+  P("gearbox", "chassis", "Caja de cambios", 5, 3, [1.5, 2.8], 0.78),
+  // Fiabilidad
+  P("cooling", "reliability", "Sistema de refrigeración", 2.5, 2, [1.5, 3], 0.9),
+  P("hydraulics", "reliability", "Hidráulica", 2, 1, [1, 2], 0.9),
+  P("electronics", "reliability", "Electrónica", 3, 2, [1.5, 3], 0.88),
+  // Pit crew
+  P("guns", "pitCrew", "Pistolas de rueda", 1.5, 1, [0.8, 1.6], 0.9),
+  P("jacks", "pitCrew", "Gatos y equipamiento", 1.2, 1, [0.6, 1.4], 0.9),
+  P("pit-training", "pitCrew", "Entrenamiento del pit crew", 1, 1, [0.8, 2], 0.85),
 ];
 
 export interface ActiveProject {
@@ -128,6 +151,7 @@ export interface PlayerEconomy {
   ledger: LedgerEntry[];
   sponsors: SponsorDeal[]; // signed contracts
   offers: SponsorDeal[]; // available on the market
+  partLevels?: Record<string, number>; // upgrades completed per part
 }
 
 export interface DevSnapshot {
@@ -144,7 +168,14 @@ export interface ManagementState {
   rngState: number;
   nextUid: number;
   history: DevSnapshot[]; // development of every team, after each round
+  staffRatings?: Record<string, { tp: number; td: number }>; // team principal / technical director per team
 }
+
+/** Technical director: better development results (0.85x .. 1.2x) and success chance. */
+export const tdMult = (td = 80) => 0.85 + (td - 70) * 0.012;
+export const tdSuccess = (td = 80) => (td - 80) * 0.005;
+/** Team principal: sponsors pay more with a well-known leader. */
+export const tpSponsorMult = (tp = 80) => 0.92 + (tp - 70) * 0.006;
 
 // --- Economy constants -------------------------------------------------------
 export const CRASH_REPAIR = 1.5; // M USD per accident
@@ -155,8 +186,10 @@ const EUROPE = new Set(["Monaco", "Spain", "Austria", "Great Britain", "Belgium"
 /** Logistics depend on where the race is: European rounds are cheaper than fly-aways. */
 export const logisticsCost = (round: number) => (EUROPE.has(races2026[round - 1]?.country ?? "") ? 0.8 : 1.4);
 export const raceRunningCost = (round: number) => logisticsCost(round) + STAFF_COST + PARTS_COST;
-export const facilityUpgradeCost = (level: number) => 6 + level * 5; // to go from level -> level+1
-export const FACILITY_BUILD_RACES = 3;
+export const facilityUpgradeCost = (level: number) => 8 + level * 6; // to go from level -> level+1
+/** Building takes a long time: 10 races for level 2, up to 16 races for level 5 (it continues across seasons). */
+export const facilityBuildRaces = (level: number) => 8 + level * 2;
+export const FACILITY_BUILD_RACES = facilityBuildRaces(1);
 
 /** Starting development budget (M USD) by car rating: big teams have more money. */
 export const startBudget = (pace: number) => Math.round(30 + (pace - 78) * 1.8);
@@ -167,7 +200,13 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
   const dev: Record<string, CarDev> = {};
   const aiBudget: Record<string, number> = {};
   for (const t of teams) {
-    dev[t.id] = { aero: t.pace, powerUnit: t.pace, chassis: t.pace, reliability: t.reliability, pitCrew: t.pitCrew };
+    dev[t.id] = {
+      aero: t.aero ?? t.pace,
+      powerUnit: t.powerUnit ?? t.pace,
+      chassis: t.chassis ?? t.pace,
+      reliability: t.reliability,
+      pitCrew: t.pitCrew,
+    };
     aiBudget[t.id] = startBudget(t.pace);
   }
   const pt = teams.find((t) => t.id === playerTeamId);
@@ -216,7 +255,15 @@ export function applyDevToTeams(teams: Team[], m: ManagementState): Team[] {
   return teams.map((t) => {
     const d = m.dev[t.id];
     if (!d) return t;
-    return { ...t, pace: carPace(d), reliability: +d.reliability.toFixed(1), pitCrew: +d.pitCrew.toFixed(1) };
+    return {
+      ...t,
+      pace: carPace(d),
+      aero: +d.aero.toFixed(2),
+      powerUnit: +d.powerUnit.toFixed(2),
+      chassis: +d.chassis.toFixed(2),
+      reliability: +d.reliability.toFixed(1),
+      pitCrew: +d.pitCrew.toFixed(1),
+    };
   });
 }
 
@@ -224,8 +271,11 @@ export function applyDevToTeams(teams: Team[], m: ManagementState): Team[] {
 const diminishing = (current: number) => Math.max(0.25, Math.min(1.2, (100 - current) / 15));
 
 export function maxProjects(p: PlayerEconomy) {
-  return 2 + (p.facilities.factory >= 3 ? 1 : 0);
+  return 3 + (p.facilities.factory >= 3 ? 1 : 0);
 }
+
+/** Extra multiplier for a part that has already been upgraded several times. */
+export const partMult = (p: PlayerEconomy, templateId: string) => 0.85 ** (p.partLevels?.[templateId] ?? 0);
 
 export function projectRaces(t: ProjectTemplate, p: PlayerEconomy) {
   return Math.max(1, t.races - (p.facilities.factory >= 5 ? 1 : 0));
@@ -238,8 +288,15 @@ export const facilityMult = (level: number) => 0.7 + level * 0.1;
 export function expectedGain(t: ProjectTemplate, m: ManagementState): [number, number] {
   const p = m.player!;
   const current = m.dev[p.teamId][t.area];
-  const k = facilityMult(p.facilities[AREA_INFO[t.area].facility]) * diminishing(current);
+  const k =
+    facilityMult(p.facilities[AREA_INFO[t.area].facility]) * diminishing(current) * partMult(p, t.id) * tdMult(m.staffRatings?.[p.teamId]?.td);
   return [+(t.gain[0] * k).toFixed(1), +(t.gain[1] * k).toFixed(1)];
+}
+
+/** Probability that a project delivers its full gain. */
+export function successChance(t: ProjectTemplate, m: ManagementState) {
+  const p = m.player!;
+  return Math.min(0.97, Math.max(0.3, t.success + (p.facilities[AREA_INFO[t.area].facility] - 3) * 0.04 + tdSuccess(m.staffRatings?.[p.teamId]?.td)));
 }
 
 export function canStartProject(m: ManagementState, templateId: string): string | null {
@@ -288,7 +345,7 @@ export function upgradeFacility(m: ManagementState, key: FacilityKey, round: num
     player: {
       ...p,
       budget: +(p.budget - cost).toFixed(2),
-      facilityWork: { key, racesLeft: FACILITY_BUILD_RACES },
+      facilityWork: { key, racesLeft: facilityBuildRaces(p.facilities[key]) },
       ledger: [...p.ledger, { race: round, concept: `Obra: ${FACILITY_INFO[key].label} nivel ${p.facilities[key] + 1}`, amount: -cost, category: "facilities" }],
     },
   };
@@ -353,7 +410,7 @@ function developAi(m: ManagementState, teams: Team[], rng: Rng): Record<string, 
     if (t.id === m.player?.teamId) continue;
     const d = dev[t.id];
     if (!d) continue;
-    const budgetFactor = (m.aiBudget[t.id] ?? 40) / 45;
+    const budgetFactor = ((m.aiBudget[t.id] ?? 40) / 45) * tdMult(m.staffRatings?.[t.id]?.td);
     let next = d;
     // ~1.6 projects' worth of gains per race spread over areas
     for (const area of ["aero", "powerUnit", "chassis"] as DevArea[]) {
@@ -404,7 +461,10 @@ export function processRaceWeekend(
     const expiredSlots = new Set<SponsorSlot>();
     for (const sp of player.sponsors) {
       const lines = sponsorPayout(sp, outcome);
-      lines.forEach((l) => ledger.push({ race: round, concept: l.concept, amount: l.amount, category: "sponsor" }));
+      const tpK = tpSponsorMult(m.staffRatings?.[player.teamId]?.tp);
+      lines.forEach((l, li) =>
+        ledger.push({ race: round, concept: l.concept, amount: li === 0 ? +(l.amount * tpK).toFixed(2) : l.amount, category: "sponsor" }),
+      );
       const paid = lines.reduce((a, l) => a + l.amount, 0);
       const left = sp.racesLeft - 1;
       if (left <= 0) {
@@ -433,8 +493,11 @@ export function processRaceWeekend(
         continue;
       }
       const t = PROJECTS.find((x) => x.id === pr.templateId)!;
-      const k = facilityMult(player.facilities[AREA_INFO[t.area].facility]) * diminishing(myDev[t.area]);
-      const success = rng.chance(Math.min(0.97, t.success + (player.facilities[AREA_INFO[t.area].facility] - 3) * 0.04));
+      const k =
+        facilityMult(player.facilities[AREA_INFO[t.area].facility]) * diminishing(myDev[t.area]) * partMult(player, t.id) *
+        tdMult(m.staffRatings?.[player.teamId]?.td);
+      const success = rng.chance(successChance(t, { ...m, player }));
+      player = { ...player, partLevels: { ...(player.partLevels ?? {}), [t.id]: (player.partLevels?.[t.id] ?? 0) + 1 } };
       const raw = t.gain[0] + rng.next() * (t.gain[1] - t.gain[0]);
       const gain = +(raw * k * (success ? 1 : 0.3)).toFixed(2);
       myDev = applyGain(myDev, t.area, gain);
