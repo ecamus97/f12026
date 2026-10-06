@@ -150,6 +150,7 @@ export interface GameState {
   weekend: Weekend | null;
   management: ManagementState | null; // budget, R&D, facilities (needs a chosen team)
   baseTeams: Team[] | null; // ratings when the career started (for "new game")
+  teamsVersion?: number; // version of the built-in team data the ratings come from
   season: number;
   people: PeopleState | null; // contracts, ages, staff
   pastSeasons: SeasonSummary[];
@@ -174,8 +175,12 @@ export function weekendWeather(s: Pick<GameState, "seed" | "season">, raceIndex:
   return generateWeather(race.track, race.track.laps, seed);
 }
 
+/** Bump when the built-in team ratings change, so saved games pick them up for a new career. */
+const TEAMS_VERSION = 2;
+
 const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = DEFAULT_SIM_CONFIG): GameState => ({
   version: 2,
+  teamsVersion: TEAMS_VERSION,
   playerTeamId: null,
   currentRaceIndex: 0,
   results: [],
@@ -278,6 +283,12 @@ function loadState(): GameState {
     const parsed = JSON.parse(raw) as GameState;
     if (parsed?.version !== 2 || !Array.isArray(parsed.teamsData)) return initialState();
     const state = { ...initialState(), ...parsed };
+    // a career not started yet uses the current built-in ratings
+    if (parsed.teamsVersion !== TEAMS_VERSION && !parsed.playerTeamId) {
+      state.teamsData = defaultTeams;
+      state.baseTeams = null;
+      state.teamsVersion = TEAMS_VERSION;
+    }
     state.rules = { ...DEFAULT_RULES, ...(parsed.rules ?? {}) };
     if (typeof parsed.seed !== "number") state.seed = randomSeed();
     if (!Array.isArray(parsed.calendar) || !parsed.calendar.length) state.calendar = races2026;
@@ -1426,7 +1437,8 @@ export function useGameState() {
   }, []);
 
   const resetSeason = useCallback(() => {
-    setGameState((s) => initialState(s.baseTeams ?? s.teamsData, s.simConfig));
+    // a new game starts from the current built-in ratings unless the teams were edited for this data version
+    setGameState((s) => initialState(s.teamsVersion === TEAMS_VERSION ? s.baseTeams ?? s.teamsData : defaultTeams, s.simConfig));
   }, []);
 
   const updateSimConfig = useCallback((simConfig: SimConfig) => {
