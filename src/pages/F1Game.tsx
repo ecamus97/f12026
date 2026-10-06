@@ -17,6 +17,7 @@ import { TeamStripe } from "@/components/game/common";
 import heroImage from "@/assets/f1-hero.jpg";
 import { Trophy, Users, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2 } from "lucide-react";
 import { TeamHQ, InboxList, money } from "@/components/game/TeamHQ";
+import { nextSeasonLineup } from "@/engine";
 
 type Screen = "home" | "calendar" | "weekend" | "standings" | "team";
 
@@ -59,7 +60,7 @@ export default function F1Game() {
         <div className="container mx-auto px-4 py-3 flex items-center justify-between gap-2">
           <button onClick={() => setScreen("home")} className="flex items-center gap-2">
             {playerTeam && <TeamStripe color={playerTeam.hex} className="h-6 w-1.5" />}
-            <span className="font-racing text-lg md:text-2xl text-gradient-primary whitespace-nowrap">F1 <span className="hidden sm:inline">MANAGER </span>2026</span>
+            <span className="font-racing text-lg md:text-2xl text-gradient-primary whitespace-nowrap">F1 <span className="hidden sm:inline">MANAGER </span>{gameState.season}</span>
           </button>
           <nav className="flex items-center gap-1">
             {navButton("home", Home, "Inicio")}
@@ -75,15 +76,15 @@ export default function F1Game() {
             />
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" title="Nueva temporada">
+                <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" title="Nueva partida">
                   <RotateCcw className="w-4 h-4" />
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>¿Empezar una nueva temporada?</AlertDialogTitle>
+                  <AlertDialogTitle>¿Empezar una partida nueva?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    Se borran los resultados, el campeonato y tu equipo elegido. La configuración y los ratings se mantienen.
+                    Se borra toda tu carrera: temporadas, resultados, contratos y tu equipo elegido. Vuelves a 2026. La configuración se mantiene.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -113,8 +114,8 @@ export default function F1Game() {
                   <div className="relative overflow-hidden rounded-xl py-10 text-center isolate">
                     <img src={heroImage} alt="" className="absolute inset-0 -z-10 w-full h-full object-cover opacity-25" />
                     <div className="absolute inset-0 -z-10 bg-gradient-to-t from-background via-background/70 to-transparent" />
-                    <h1 className="font-racing text-4xl md:text-5xl text-gradient-primary">Temporada 2026</h1>
-                    <p className="text-muted-foreground mt-2">24 carreras · 11 equipos · 22 pilotos</p>
+                    <h1 className="font-racing text-4xl md:text-5xl text-gradient-primary">Temporada {gameState.season}</h1>
+                    <p className="text-muted-foreground mt-2">24 carreras · 11 equipos · 22 pilotos · modo carrera año tras año</p>
                   </div>
                   <TeamSelect teams={gameState.teamsData} onChoose={game.chooseTeam} />
                 </>
@@ -130,7 +131,21 @@ export default function F1Game() {
                     teamPoints={standings.teams.find((t) => t.teamId === playerTeam.id)?.points ?? 0}
                     racesDone={gameState.results.length}
                     totalRaces={races.length}
+                    season={gameState.season}
                   />
+
+                  {gameState.currentRaceIndex === 0 && gameState.seasonNews.length > 0 && (
+                    <div className="rounded-xl border border-border bg-card p-4 space-y-2">
+                      <h3 className="font-racing text-sm">Mercado de fichajes · pretemporada {gameState.season}</h3>
+                      <ul className="grid md:grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground">
+                        {gameState.seasonNews.map((n, i) => (
+                          <li key={i} className={n.startsWith("Tu equipo") ? "text-primary" : ""}>
+                            • {n}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   {gameState.management?.player && (
                     <div className="grid md:grid-cols-[260px_1fr] gap-4">
@@ -178,16 +193,42 @@ export default function F1Game() {
                   )}
 
                   {seasonComplete && (
-                    <div className="rounded-xl border border-yellow-500/40 bg-card p-6 text-center space-y-3">
-                      <Trophy className="w-16 h-16 mx-auto text-yellow-400" />
-                      <h2 className="font-racing text-2xl text-gradient-primary">¡Temporada completa!</h2>
-                      <p className="text-muted-foreground">
-                        Campeón: <span className="text-foreground font-semibold">{standings.drivers[0]?.driverName}</span> ·
-                        Constructores: <span className="text-foreground font-semibold">{standings.teams[0]?.teamName}</span>
-                      </p>
-                      <Button onClick={game.resetSeason} className="font-racing">
-                        <RotateCcw className="w-4 h-4 mr-2" /> Nueva temporada
-                      </Button>
+                    <SeasonEnd
+                      season={gameState.season}
+                      champion={standings.drivers[0]?.driverName}
+                      constructor={standings.teams[0]?.teamName}
+                      teamPos={standings.teams.findIndex((t) => t.teamId === playerTeam.id) + 1}
+                      nextDrivers={
+                        gameState.people
+                          ? nextSeasonLineup(gameState.people, playerTeam.id).map((d) => d.name)
+                          : []
+                      }
+                      canContinue={!!gameState.people && !!gameState.management}
+                      onContinue={() => game.startNextSeason()}
+                      onReviewDrivers={() => setScreen("team")}
+                      onReset={game.resetSeason}
+                    />
+                  )}
+
+                  {gameState.pastSeasons.length > 0 && (
+                    <div className="rounded-xl border border-border bg-card p-4 space-y-2">
+                      <h3 className="font-racing text-sm flex items-center gap-2">
+                        <Trophy className="w-4 h-4 text-yellow-400" /> Historial
+                      </h3>
+                      <div className="space-y-1 text-xs">
+                        {[...gameState.pastSeasons].reverse().map((ps) => (
+                          <div key={ps.season} className="flex flex-wrap gap-x-4 gap-y-0.5">
+                            <span className="font-racing w-10">{ps.season}</span>
+                            <span>
+                              Campeón: <b>{ps.driverChampion.name}</b> <span className="text-muted-foreground">({ps.driverChampion.team})</span>
+                            </span>
+                            <span>Constructores: {ps.constructorChampion}</span>
+                            <span className="text-primary">
+                              Tu equipo: P{ps.playerPos} · {ps.playerPoints} pts{ps.playerWins ? ` · ${ps.playerWins} victorias` : ""}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
 
@@ -223,7 +264,7 @@ export default function F1Game() {
           {screen === "calendar" && (
             <motion.div key="calendar" {...fade} className="space-y-4">
               <div className="flex items-center justify-between">
-                <h2 className="font-racing text-2xl text-gradient-primary">Calendario 2026</h2>
+                <h2 className="font-racing text-2xl text-gradient-primary">Calendario {gameState.season}</h2>
                 <span className="text-sm text-muted-foreground">
                   {gameState.results.length} / {races.length}
                 </span>
@@ -288,6 +329,10 @@ export default function F1Game() {
                 onStartProject={game.startProject}
                 onUpgradeFacility={game.upgradeFacility}
                 onSignSponsor={game.signSponsor}
+                people={gameState.people}
+                onOffer={game.offerContract}
+                onRelease={game.releaseDriver}
+                onHireStaff={game.hireStaff}
               />
             </motion.div>
           )}
@@ -323,8 +368,62 @@ export default function F1Game() {
   );
 }
 
+function SeasonEnd({
+  season, champion, constructor, teamPos, nextDrivers, canContinue, onContinue, onReviewDrivers, onReset,
+}: {
+  season: number;
+  champion?: string;
+  constructor?: string;
+  teamPos: number;
+  nextDrivers: string[];
+  canContinue: boolean;
+  onContinue: () => void;
+  onReviewDrivers: () => void;
+  onReset: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-yellow-500/40 bg-card p-6 text-center space-y-3">
+      <Trophy className="w-16 h-16 mx-auto text-yellow-400" />
+      <h2 className="font-racing text-2xl text-gradient-primary">¡Temporada {season} completa!</h2>
+      <p className="text-muted-foreground">
+        Campeón: <span className="text-foreground font-semibold">{champion}</span> · Constructores:{" "}
+        <span className="text-foreground font-semibold">{constructor}</span> · Tu equipo terminó{" "}
+        <span className="text-foreground font-semibold">P{teamPos}</span>
+      </p>
+      {canContinue ? (
+        <>
+          <p className="text-sm">
+            Pilotos para {season + 1}: {nextDrivers.length ? nextDrivers.join(" y ") : "ninguno confirmado"}
+            {nextDrivers.length < 2 && (
+              <span className="text-yellow-300"> · faltan {2 - nextDrivers.length}: puedes ficharlos ahora o se contratará automáticamente</span>
+            )}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Al continuar: premio por tu posición en constructores, los pilotos envejecen y evolucionan, algunos se retiran, los equipos
+            fichan y llegan nuevos juveniles de la F2. Tus proyectos, obras y patrocinadores continúan.
+          </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {nextDrivers.length < 2 && (
+              <Button variant="outline" onClick={onReviewDrivers} className="font-racing">
+                Revisar pilotos
+              </Button>
+            )}
+            <Button onClick={onContinue} className="font-racing">
+              Comenzar temporada {season + 1} <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        </>
+      ) : (
+        <Button onClick={onReset} className="font-racing">
+          <RotateCcw className="w-4 h-4 mr-2" /> Nueva partida
+        </Button>
+      )}
+    </div>
+  );
+}
+
 function TeamOverview({
-  teamName, hex, drivers, teamPos, teamPoints, racesDone, totalRaces,
+  teamName, hex, drivers, teamPos, teamPoints, racesDone, totalRaces, season,
 }: {
   teamName: string;
   hex: string;
@@ -333,13 +432,14 @@ function TeamOverview({
   teamPoints: number;
   racesDone: number;
   totalRaces: number;
+  season: number;
 }) {
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
       <div className="h-1.5" style={{ backgroundColor: hex }} />
       <div className="p-5 grid md:grid-cols-[1fr_auto] gap-4 items-center">
         <div>
-          <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu escudería</p>
+          <p className="text-xs uppercase tracking-widest text-muted-foreground">Tu escudería · temporada {season}</p>
           <h2 className="font-racing text-2xl">{teamName}</h2>
           <p className="text-sm text-muted-foreground">
             P{teamPos} en constructores · {teamPoints} pts · {racesDone} de {totalRaces} carreras disputadas

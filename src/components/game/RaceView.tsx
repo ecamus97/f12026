@@ -454,7 +454,7 @@ function PitWallCard({
   onApply: (fn: (s: RaceState) => RaceState) => void;
 }) {
   const dnf = car.status === "dnf";
-  const preRace = state.lap === 0;
+  const preRace = state.lap === 0 && !state.strategyConfirmed;
   const life = tyreLife(car.compound, state.track, car.entry.driver.tyreMgmt, state.weather?.trackTemp[state.lap]);
   const lapsLeft = state.totalLaps - state.lap;
   const fuelMargin = (car.fuel ?? lapsLeft + 0.4) - lapsLeft;

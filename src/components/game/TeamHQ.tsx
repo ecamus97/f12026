@@ -1,16 +1,18 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Building2, FlaskConical, Wallet, Inbox, Hammer, TrendingUp, TrendingDown, Clock, CheckCircle2 } from "lucide-react";
+import { Building2, FlaskConical, Wallet, Inbox, Hammer, Users, Briefcase, TrendingUp, TrendingDown, Clock, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { races2026, type Team } from "@/data/f1Data";
 import {
   AREA_INFO, CATEGORY_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, SLOT_INFO, STYLE_INFO,
   areaRanks, baseRaceBalance, isInvestment, ledgerCategory, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
-  expectedPerRace, facilityUpgradeCost, maxProjects, projectRaces, FACILITY_BUILD_RACES,
+  expectedPerRace, facilityUpgradeCost, facilityBuildRaces, maxProjects, projectRaces, successChance, payroll,
+  type PeopleState,
   type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot,
 } from "@/engine";
 import { PerformanceChart, type Metric } from "./PerformanceChart";
 import { TeamStripe } from "./common";
+import { DriversPanel, StaffPanel } from "./PeoplePanels";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -21,18 +23,25 @@ interface Props {
   onStartProject: (id: string) => void;
   onUpgradeFacility: (key: FacilityKey) => void;
   onSignSponsor: (offerId: string) => void;
+  people?: PeopleState | null;
+  onOffer?: (driverId: string, salary: number, years: number) => { ok: boolean; message: string };
+  onRelease?: (driverId: string) => void;
+  onHireStaff?: (staffId: string) => void;
 }
 
 export const money = (m: number) => `US$ ${m.toFixed(1)} M`;
 
 const AREAS: DevArea[] = ["aero", "powerUnit", "chassis", "reliability", "pitCrew"];
 
-export function TeamHQ({ team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor }: Props) {
+export function TeamHQ({
+  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff,
+}: Props) {
   const [metric, setMetric] = useState<Metric>("pace");
   const p = management.player!;
   const myDev = management.dev[team.id];
   const ranks = areaRanks(management, team.id);
-  const [tab, setTab] = useState<"dev" | "facilities" | "finance">("dev");
+  const [tab, setTab] = useState<"dev" | "facilities" | "drivers" | "staff" | "finance">("dev");
+  const pay = people ? payroll(people, team.id) : null;
 
   const fieldBest = useMemo(() => {
     const ds = Object.values(management.dev);
@@ -46,7 +55,7 @@ export function TeamHQ({ team, teams, round, management, onStartProject, onUpgra
     };
   }, [management.dev]);
 
-  const bal = baseRaceBalance(management, round + 1);
+  const bal = baseRaceBalance(management, round + 1, pay ? pay.drivers + pay.staff : 0);
   const perRace = bal.income - bal.costs;
   const missingSponsors = (Object.keys(SLOT_INFO) as SponsorSlot[]).reduce(
     (a, slot) => a + SLOT_INFO[slot].count - p.sponsors.filter((s) => s.slot === slot).length,
@@ -73,7 +82,7 @@ export function TeamHQ({ team, teams, round, management, onStartProject, onUpgra
             icon={perRace >= 0 ? TrendingUp : TrendingDown}
             label="Balance base por carrera"
             value={`${perRace >= 0 ? "+" : ""}${perRace.toFixed(1)} M`}
-            hint={`Ingresos fijos ${bal.income.toFixed(1)} M − costos ${bal.costs.toFixed(1)} M. Sin contar bonos ni premios.${
+            hint={`Ingresos fijos ${bal.income.toFixed(1)} M − costos ${bal.costs.toFixed(1)} M (incluye sueldos). Sin contar bonos ni premios.${
               missingSponsors ? ` Tienes ${missingSponsors} espacio(s) de patrocinio libre(s).` : ""
             }`}
           />
@@ -110,17 +119,18 @@ export function TeamHQ({ team, teams, round, management, onStartProject, onUpgra
         {[
           { k: "dev", label: "Desarrollo", icon: FlaskConical },
           { k: "facilities", label: "Instalaciones", icon: Building2 },
+          ...(people ? [{ k: "drivers", label: "Pilotos", icon: Users }, { k: "staff", label: "Dirección", icon: Briefcase }] : []),
           { k: "finance", label: "Finanzas", icon: Wallet },
         ].map(({ k, label, icon: Icon }) => (
           <button
             key={k}
             onClick={() => setTab(k as typeof tab)}
             className={cn(
-              "flex-1 flex items-center justify-center gap-1.5 rounded-md py-2 text-xs font-racing",
+              "flex-1 flex items-center justify-center gap-1.5 rounded-md py-2 text-[11px] sm:text-xs font-racing",
               tab === k ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground",
             )}
           >
-            <Icon className="w-3.5 h-3.5" /> {label}
+            <Icon className="w-3.5 h-3.5 hidden sm:block" /> {label}
           </button>
         ))}
       </div>
@@ -160,45 +170,58 @@ export function TeamHQ({ team, teams, round, management, onStartProject, onUpgra
             )}
           </div>
 
-          <div className="grid md:grid-cols-2 gap-3">
-            {PROJECTS.map((t) => {
-              const blocked = canStartProject(management, t.id);
-              const [g0, g1] = expectedGain(t, management);
-              const facLvl = p.facilities[AREA_INFO[t.area].facility];
-              const success = Math.min(0.97, t.success + (facLvl - 3) * 0.04);
-              return (
-                <div key={t.id} className="rounded-xl border border-border bg-card p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-medium">{t.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{AREA_INFO[t.area].label}</div>
+          {AREAS.map((area) => (
+            <div key={area} className="space-y-2">
+              <div className="flex items-baseline justify-between">
+                <h4 className="font-racing text-sm">{AREA_INFO[area].label}</h4>
+                <span className="text-xs text-muted-foreground">
+                  {myDev[area].toFixed(1)} · P{ranks[area]} · {FACILITY_INFO[AREA_INFO[area].facility].label} nivel {p.facilities[AREA_INFO[area].facility]}
+                </span>
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {PROJECTS.filter((t) => t.area === area).map((t) => {
+                  const blocked = canStartProject(management, t.id);
+                  const [g0, g1] = expectedGain(t, management);
+                  const level = p.partLevels?.[t.id] ?? 0;
+                  return (
+                    <div key={t.id} className="rounded-lg border border-border bg-card p-2.5 space-y-1.5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="text-sm font-medium leading-tight">
+                          {t.name}
+                          {level > 0 && <span className="ml-1.5 text-[10px] rounded bg-primary/20 text-primary px-1">Nv. {level}</span>}
+                        </div>
+                        <div className="text-right text-xs shrink-0">
+                          <div className="font-racing">{money(t.cost)}</div>
+                          <div className="text-muted-foreground">
+                            {projectRaces(t, p)} carrera{projectRaces(t, p) === 1 ? "" : "s"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span>
+                          Mejora: <span className="text-green-400">+{g0}–{g1}</span>
+                        </span>
+                        <span className="text-muted-foreground">Éxito {Math.round(successChance(t, management) * 100)}%</span>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant={blocked ? "outline" : "default"}
+                        disabled={!!blocked}
+                        onClick={() => onStartProject(t.id)}
+                        className="w-full h-7 text-xs"
+                      >
+                        {blocked ?? "Desarrollar"}
+                      </Button>
                     </div>
-                    <div className="text-right text-xs">
-                      <div className="font-racing">{money(t.cost)}</div>
-                      <div className="text-muted-foreground">{projectRaces(t, p)} carrera{projectRaces(t, p) === 1 ? "" : "s"}</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-between text-xs">
-                    <span>
-                      Mejora esperada: <span className="text-green-400">+{g0}–{g1}</span>
-                    </span>
-                    <span className="text-muted-foreground">Éxito {Math.round(success * 100)}%</span>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant={blocked ? "outline" : "default"}
-                    disabled={!!blocked}
-                    onClick={() => onStartProject(t.id)}
-                    className="w-full text-xs"
-                  >
-                    {blocked ?? "Iniciar proyecto"}
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
           <p className="text-[11px] text-muted-foreground">
-            Si un proyecto falla entrega solo ~30% de la mejora. Mientras mejor es un área, más cuesta seguir mejorándola.
+            Si un proyecto falla entrega solo ~30% de la mejora. Mientras mejor es un área, más cuesta seguir mejorándola, y cada
+            nueva versión de la misma pieza rinde un 15% menos. El director técnico multiplica las mejoras. Aerodinámica pesa más en
+            circuitos de alta carga (Mónaco, Hungría, Singapur), el motor en los rápidos (Monza, Spa, Las Vegas).
           </p>
         </div>
       )}
@@ -236,7 +259,7 @@ export function TeamHQ({ team, teams, round, management, onStartProject, onUpgra
                   >
                     {lvl >= MAX_FACILITY_LEVEL
                       ? "Nivel máximo"
-                      : blocked ?? `Mejorar a nivel ${lvl + 1} · ${money(facilityUpgradeCost(lvl))} · ${FACILITY_BUILD_RACES} carreras`}
+                      : blocked ?? `Mejorar a nivel ${lvl + 1} · ${money(facilityUpgradeCost(lvl))} · ${facilityBuildRaces(lvl)} carreras`}
                   </Button>
                 </div>
               );
@@ -244,8 +267,16 @@ export function TeamHQ({ team, teams, round, management, onStartProject, onUpgra
           </div>
           <p className="text-[11px] text-muted-foreground">
             Cada nivel multiplica la mejora de los proyectos de su área (nivel 1 = ×0,8 … nivel 5 = ×1,2) y sube su probabilidad de éxito.
+            Las obras son largas (10 a 16 carreras) y continúan en la temporada siguiente; solo puede haber una a la vez.
           </p>
         </div>
+      )}
+
+      {tab === "drivers" && people && onOffer && onRelease && (
+        <DriversPanel people={people} team={team} teams={teams} management={management} onOffer={onOffer} onRelease={onRelease} />
+      )}
+      {tab === "staff" && people && onHireStaff && (
+        <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} />
       )}
 
       {tab === "finance" && <Finance management={management} onSignSponsor={onSignSponsor} />}
@@ -304,7 +335,7 @@ const groupOf = (cat: LedgerCategory): Group | null =>
 const GROUP_LABEL: Record<Group, string> = {
   income: "Ingresos",
   running: "Gastos de carrera",
-  invest: "Inversiones (I+D e instalaciones)",
+  invest: "Inversiones (I+D, instalaciones y fichajes)",
 };
 
 const fmt = (x: number, sign = true) => `${sign && x > 0 ? "+" : ""}${x.toFixed(1)} M`;
