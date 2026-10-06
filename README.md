@@ -30,6 +30,8 @@ Funciones puras y deterministas (PRNG con semilla), separadas de la UI:
 - `weather.ts` – clima por vuelta (lluvia, humedad de pista, temperatura) y pronóstico con incertidumbre.
 - `people.ts` – pilotos y directivos: contratos, mercado, sueldos, desarrollo por edad, retiros, juveniles y cambio de temporada (datos en `src/data/peopleData.ts`).
 - `rules.ts` – reglamento, propuestas de la FIA y votaciones de los equipos.
+- `activities.ts` – agenda entre carreras (eventos de patrocinadores, medios, fábrica…) con tres opciones y sus efectos.
+- `news.ts` – noticias del paddock generadas con lo que pasa en cada carrera y temporada.
 - `championship.ts` – standings calculados siempre desde los resultados (con desempate por countback).
 
 Los ratings de autos/pilotos y los datos de cada circuito están en `src/data/f1Data.ts` (también editables desde **Config** en el juego). Son valores de juego, no datos oficiales.

@@ -290,7 +290,6 @@ export function StaffPanel({
                   <>
                     <div className="font-display text-xl leading-tight">
                       {st.nationality} {st.name}
-                      {st.fictional && <span className="ml-1 text-[10px] font-sans normal-case not-italic text-muted-foreground">(ficticio)</span>}
                     </div>
                     <div className="text-xs text-green-400">{staffEffect(r, st.rating)}</div>
                     <div className="text-[11px] text-muted-foreground">
@@ -359,7 +358,6 @@ export function StaffPanel({
               <div key={s.id} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="text-sm">
                   {s.nationality} {s.name}
-                  {s.fictional && <span className="ml-1 text-[10px] text-muted-foreground">(ficticio)</span>}
                 </span>
                 <span className="text-[11px] text-muted-foreground">
                   {ROLE_ICON[s.role]} {STAFF_ROLE_INFO[s.role].label}

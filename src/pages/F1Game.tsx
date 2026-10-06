@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useGameState, weekendWeather } from "@/hooks/useGameState";
 import { NewsScreen } from "@/components/game/NewsCenter";
+import { SeasonCalendar } from "@/components/game/AgendaCalendar";
 import { RaceCard } from "@/components/RaceCard";
 import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
 import { ConfigDialog } from "@/components/ConfigDialog";
@@ -310,6 +311,8 @@ export default function F1Game() {
                   onNavigate={(t: NavTarget) => go(t)}
                   news={gameState.news}
                   teams={gameState.teamsData}
+                  activities={gameState.activities}
+                  onChooseActivity={game.chooseActivity}
                   weather={seasonComplete ? null : weekend?.weather ?? weekendWeather(gameState, gameState.currentRaceIndex)}
                 />
 
@@ -347,23 +350,19 @@ export default function F1Game() {
             {screen === "calendar" && (
               <motion.div key="calendar" {...fade} className="space-y-4">
                 <SectionTitle right={`${gameState.results.length} / ${races.length}`}>Calendario {gameState.season}</SectionTitle>
-                <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
-                  {races.map((race, i) => {
-                    const result = gameState.results.find((r) => r.raceId === race.id);
-                    const isCurrent = i === gameState.currentRaceIndex;
-                    const winnerId = result?.rows[0]?.driverId;
-                    const winner = winnerId ? entryMap.get(winnerId)?.driver.name : undefined;
-                    return (
-                      <RaceCard
-                        key={race.id}
-                        race={race}
-                        status={result ? "completed" : isCurrent ? "current" : "upcoming"}
-                        winner={winner}
-                        onClick={isCurrent ? () => go("weekend") : undefined}
-                      />
-                    );
-                  })}
-                </div>
+                <SeasonCalendar
+                  races={races}
+                  season={gameState.season}
+                  results={gameState.results}
+                  currentRaceIndex={gameState.currentRaceIndex}
+                  activities={gameState.activities}
+                  winnerOf={(id) => {
+                    const w = gameState.results.find((r) => r.raceId === id)?.rows[0]?.driverId;
+                    return w ? entryMap.get(w)?.driver.name : undefined;
+                  }}
+                  onRace={() => go("weekend")}
+                  onChoose={game.chooseActivity}
+                />
               </motion.div>
             )}
 

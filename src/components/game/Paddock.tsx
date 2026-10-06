@@ -5,6 +5,8 @@ import type { Race, Team } from "@/data/f1Data";
 import type { DriverStanding, TeamStanding, NewsItem, WeatherTimeline } from "@/engine";
 import { forecast, forecastIcon } from "@/engine";
 import { NewsFeed } from "./NewsCenter";
+import { AgendaCard } from "./AgendaCalendar";
+import type { Activity } from "@/engine";
 import { carRankOf, ageOf, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
 import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile } from "./visuals";
 import { InboxList, money } from "./TeamHQ";
@@ -13,7 +15,7 @@ import { cn } from "@/lib/utils";
 export type NavTarget = "weekend" | "car" | "drivers" | "finance" | "rules" | "standings" | "calendar" | "news";
 
 export function Paddock({
-  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather,
+  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, activities, onChooseActivity,
 }: {
   team: Team;
   season: number;
@@ -33,6 +35,8 @@ export function Paddock({
   news: NewsItem[];
   teams: Team[];
   weather: WeatherTimeline | null;
+  activities: Activity[];
+  onChooseActivity: (id: string, idx: number) => void;
 }) {
   const fc = weather ? forecast(weather, 0, Math.max(3, Math.round(weather.rain.length / 10))) : [];
   const raceChance = fc.reduce((a, f) => Math.max(a, f.chance), 0);
@@ -130,6 +134,8 @@ export function Paddock({
           </div>
         </motion.div>
       </div>
+
+      <AgendaCard activities={activities} season={season} nextRound={round + 1} onChoose={onChooseActivity} />
 
       {pending.length > 0 && (
         <button onClick={() => onNavigate("rules")} className="panel panel-hover w-full text-left p-4 flex items-center gap-4 border-primary/50">

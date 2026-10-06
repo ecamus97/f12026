@@ -53,6 +53,10 @@ import {
   type TeamContext,
   type Vote,
   techChanges,
+  generateActivities,
+  weekendDates,
+  createRng,
+  type Activity,
   raceNews,
   developmentNews,
   carPace,
@@ -98,6 +102,8 @@ export interface GameState {
   rules: RuleSet; // regulations in force this season
   proposals: RuleProposal[]; // FIA decrees and votes (all seasons)
   news: NewsItem[]; // paddock news, newest last
+  activities: Activity[]; // agenda between races (sponsor events, media, factory...)
+  agendaRounds: string[]; // "season-round" whose agenda was already planned
   seed: number; // career seed: makes each weekend's weather fixed (paddock, qualifying and race agree)
 }
 
@@ -126,6 +132,8 @@ const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = D
   rules: DEFAULT_RULES,
   proposals: [],
   news: [],
+  activities: [],
+  agendaRounds: [],
   seed: randomSeed(),
 });
 
@@ -211,6 +219,8 @@ function loadState(): GameState {
     state.rules = { ...DEFAULT_RULES, ...(parsed.rules ?? {}) };
     if (typeof parsed.seed !== "number") state.seed = randomSeed();
     if (!Array.isArray(parsed.news)) state.news = [];
+    if (!Array.isArray(parsed.activities)) state.activities = [];
+    if (!Array.isArray(parsed.agendaRounds)) state.agendaRounds = [];
     // saves from before team management existed
     if (state.playerTeamId && !state.management) {
       state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
@@ -244,7 +254,7 @@ function loadState(): GameState {
         m.player.offers = fresh.player?.offers ?? [];
       }
     }
-    return state;
+    return withAgenda(state);
   } catch {
     return initialState();
   }
@@ -318,10 +328,108 @@ function seasonStories(
   return out;
 }
 
-function openWeekend(s: GameState): GameState {
-  const race = races2026[s.currentRaceIndex];
-  if (!race) return s;
-  if (s.weekend?.raceIndex === s.currentRaceIndex) return s; // resume
+/** Plan the agenda before the next race (once per round). */
+function withAgenda(s: GameState): GameState {
+  const p = s.management?.player;
+  const team = s.teamsData.find((t) => t.id === s.playerTeamId);
+  const r = s.currentRaceIndex;
+  const race = races2026[r];
+  if (!p || !team || !race) return s;
+  const key = `${s.season}-${r + 1}`;
+  if (s.agendaRounds.includes(key)) return s;
+  const from = r === 0 ? new Date(s.season, 1, 12) : weekendDates(races2026[r - 1].date, s.season).end;
+  const to = weekendDates(race.date, s.season).start;
+  const items = generateActivities({
+    season: s.season,
+    beforeRound: r + 1,
+    from,
+    to,
+    team: team.name,
+    drivers: [team.drivers[0]?.name ?? "tu piloto", team.drivers[1]?.name ?? "tu otro piloto"],
+    sponsors: p.sponsors,
+    seed: s.seed,
+    taken: s.activities.slice(-6).map((a) => a.tpl ?? ""),
+  });
+  return { ...s, activities: [...s.activities, ...items].slice(-120), agendaRounds: [...s.agendaRounds, key].slice(-60) };
+}
+
+/** Apply the choice of an agenda item (with its possible risk). */
+function applyActivity(s: GameState, id: string, idx: number, auto = false): GameState {
+  const a = s.activities.find((x) => x.id === id);
+  if (!a || a.chosen !== undefined || !s.management?.player) return s;
+  const c = a.choices[idx];
+  if (!c) return s;
+  const rng = createRng((s.seed ^ id.length * 7919 ^ idx * 104729 ^ a.beforeRound * 31) >>> 0);
+  const risky = c.risk && rng.chance(c.risk.chance);
+  const effects = [c.effect, ...(risky ? [c.risk!.effect] : [])];
+  let m = s.management;
+  let people = s.people;
+  let teamsData = s.teamsData;
+  const team = teamsData.find((t) => t.id === s.playerTeamId)!;
+  for (const e of effects) {
+    if (e.budget) m = chargePlayer(m, s.currentRaceIndex, `Agenda: ${a.title}`, e.budget, e.budget > 0 ? "eventsIn" : "eventsOut");
+    if (e.sponsorRaces && a.sponsorId && m.player) {
+      m = {
+        ...m,
+        player: {
+          ...m.player,
+          sponsors: m.player.sponsors.map((sp) =>
+            sp.id === a.sponsorId ? { ...sp, racesLeft: Math.max(1, sp.racesLeft + e.sponsorRaces!), duration: Math.max(1, sp.duration + e.sponsorRaces!) } : sp,
+          ),
+        },
+      };
+    }
+    if (e.project && m.player?.projects.length) {
+      const longest = [...m.player.projects].sort((x, y) => y.racesLeft - x.racesLeft)[0];
+      m = {
+        ...m,
+        player: {
+          ...m.player,
+          projects: m.player.projects.map((pr) =>
+            pr.uid === longest.uid
+              ? { ...pr, racesLeft: Math.max(1, pr.racesLeft - e.project!), totalRaces: Math.max(pr.totalRaces, pr.racesLeft - e.project!) }
+              : pr,
+          ),
+        },
+      };
+    }
+    if (e.area) {
+      const d = m.dev[team.id];
+      m = { ...m, dev: { ...m.dev, [team.id]: { ...d, [e.area.area]: Math.min(99.5, +(d[e.area.area] + e.area.delta).toFixed(2)) } } };
+    }
+    if (e.drivers) {
+      const ids = team.drivers.map((d) => d.id).filter((_, i) => e.drivers!.which === "both" || (e.drivers!.which === "first" ? i === 0 : i === 1));
+      const bump = (x: number) => Math.max(50, Math.min(99, +(x + e.drivers!.delta).toFixed(1)));
+      teamsData = teamsData.map((t) =>
+        t.id === team.id ? { ...t, drivers: t.drivers.map((d) => (ids.includes(d.id) ? { ...d, [e.drivers!.stat]: bump(d[e.drivers!.stat]) } : d)) } : t,
+      );
+      if (people) {
+        const drivers = { ...people.drivers };
+        for (const did of ids) if (drivers[did]) drivers[did] = { ...drivers[did], [e.drivers.stat]: bump(drivers[did][e.drivers.stat]) };
+        people = { ...people, drivers };
+      }
+    }
+  }
+  const outcome = `${auto ? "Sin decisión a tiempo: " : ""}${c.label}.${risky ? ` ${c.risk!.text}` : ""}`;
+  m = { ...m, inbox: [...m.inbox, { race: s.currentRaceIndex, tone: risky ? ("bad" as const) : ("info" as const), text: `${a.icon} ${a.title}: ${outcome}` }].slice(-60) };
+  return {
+    ...s,
+    management: m,
+    people,
+    teamsData: applyDevToTeams(teamsData, m),
+    activities: s.activities.map((x) => (x.id === id ? { ...x, chosen: idx, outcome } : x)),
+  };
+}
+
+function openWeekend(s0: GameState): GameState {
+  const race = races2026[s0.currentRaceIndex];
+  if (!race) return s0;
+  if (s0.weekend?.raceIndex === s0.currentRaceIndex) return s0; // resume
+  // agenda items still open are settled with the most conservative option
+  let s = s0;
+  for (const a of s0.activities) {
+    if (a.season === s0.season && a.beforeRound <= s0.currentRaceIndex + 1 && a.chosen === undefined) s = applyActivity(s, a.id, a.choices.length - 1, true);
+  }
   const weather = weekendWeather(s, s.currentRaceIndex)!;
   const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet);
   return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather } };
@@ -377,7 +485,7 @@ export function useGameState() {
       const people = initPeople(s.teamsData, randomSeed());
       let management = { ...withStaff(initManagement(s.teamsData, teamId, randomSeed()), people), regs: regsOf(s.rules) };
       if (management.player) management = { ...management, player: { ...management.player, salaryFund: totalPayroll(people, teamId) } };
-      return {
+      return withAgenda({
         ...s,
         playerTeamId: teamId,
         management,
@@ -385,7 +493,7 @@ export function useGameState() {
         season: FIRST_SEASON,
         baseTeams: s.teamsData,
         teamsData: applyLineups(applyDevToTeams(s.teamsData, management), people),
-      };
+      });
     });
   }, []);
 
@@ -472,6 +580,8 @@ export function useGameState() {
   // --- Race weekend ------------------------------------------------------------
 
   const startWeekend = useCallback(() => setGameState(openWeekend), []);
+
+  const chooseActivity = useCallback((id: string, idx: number) => setGameState((s) => applyActivity(s, id, idx)), []);
 
   /** Quick weekend: qualifying and race simulated at once with the engineers' strategy. */
   const quickSimWeekend = useCallback(() => {
@@ -586,7 +696,7 @@ export function useGameState() {
       }
       const resolvedNow = proposals.filter((p) => p.status !== "pending" && s.proposals.find((q) => q.id === p.id)?.status === "pending");
       news = [...news, ...resolvedNow.map((p) => ruleNews(p, round, s)), ...fresh.map((p) => ruleNews(p, round, s))];
-      return {
+      return withAgenda({
         ...s,
         proposals,
         news: addNews(s.news, news),
@@ -595,7 +705,7 @@ export function useGameState() {
         weekend: null,
         management,
         teamsData: management ? applyDevToTeams(s.teamsData, management) : s.teamsData,
-      };
+      });
     });
   }, []);
 
@@ -675,7 +785,7 @@ export function useGameState() {
         playerPoints: myTeam?.points ?? 0,
         playerWins: myTeam?.wins ?? 0,
       };
-      return {
+      return withAgenda({
         ...s,
         season: people.season,
         people,
@@ -689,7 +799,7 @@ export function useGameState() {
         proposals,
         seasonNews: [...regNews, ...news],
         news: addNews(s.news, seasonStories(s, people.season, summary, regImpactRows, news, proposals)),
-      };
+      });
     });
   }, []);
 
@@ -735,6 +845,7 @@ export function useGameState() {
     chooseTeam,
     startWeekend,
     quickSimWeekend,
+    chooseActivity,
     revealSession,
     startRace,
     updateRace,

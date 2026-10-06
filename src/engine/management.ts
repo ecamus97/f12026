@@ -96,7 +96,7 @@ export interface FacilityWork {
 }
 
 export type LedgerCategory =
-  | "initial" | "tv" | "sponsor" | "prize" | "owners" | "logistics" | "staff" | "parts" | "operations" | "repairs" | "salaries" | "transfers" | "rnd" | "facilities";
+  | "initial" | "tv" | "sponsor" | "prize" | "owners" | "logistics" | "staff" | "parts" | "operations" | "repairs" | "salaries" | "transfers" | "rnd" | "facilities" | "eventsIn" | "eventsOut";
 
 export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "income" | "expense" }> = {
   initial: { label: "Presupuesto inicial", kind: "income" },
@@ -111,6 +111,8 @@ export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "incom
   repairs: { label: "Reparaciones", kind: "expense" },
   salaries: { label: "Sueldos de pilotos y dirección", kind: "expense" },
   transfers: { label: "Fichajes e indemnizaciones", kind: "expense" },
+  eventsIn: { label: "Agenda: ingresos de eventos", kind: "income" },
+  eventsOut: { label: "Agenda: gastos de eventos", kind: "expense" },
   rnd: { label: "Investigación y desarrollo", kind: "expense" },
   facilities: { label: "Instalaciones", kind: "expense" },
 };
