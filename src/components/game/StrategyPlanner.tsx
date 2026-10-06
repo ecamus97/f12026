@@ -19,7 +19,7 @@ export function StrategyPlanner({ state, cars, onApply }: Props) {
   return (
     <div className="rounded-xl border border-primary/40 bg-card p-4 space-y-4">
       <div>
-        <h3 className="font-racing text-sm uppercase tracking-wider">Estrategia de carrera</h3>
+        <h3 className="font-display text-xl">Estrategia de carrera</h3>
         <p className="text-xs text-muted-foreground">
           Define con qué neumático sale cada piloto y en qué vuelta para. Durante la carrera puedes cambiarla desde el muro de boxes.
         </p>

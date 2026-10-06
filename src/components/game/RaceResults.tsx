@@ -24,7 +24,7 @@ export function RaceResults({ race, state, playerTeamId, onConfirm }: Props) {
     <motion.div className="space-y-5" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <div className="text-center space-y-1">
         <Trophy className="w-12 h-12 mx-auto text-yellow-400" />
-        <h2 className="font-racing text-2xl text-gradient-primary">Bandera a cuadros</h2>
+        <h2 className="font-display text-4xl md:text-5xl">🏁 Bandera a cuadros</h2>
         <p className="text-muted-foreground text-sm">
           {race.flag} {race.name}
         </p>

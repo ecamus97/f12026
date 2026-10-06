@@ -186,22 +186,26 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h2 className="font-racing text-lg md:text-xl">
-              {race.flag} {race.name}
-            </h2>
-            <p className="text-xs text-muted-foreground">{race.circuit}</p>
-          </div>
-          <div className="text-right">
-            <div className="font-racing text-2xl tabular-nums">
-              {state.lap}
-              <span className="text-muted-foreground text-base">/{state.totalLaps}</span>
+      <div className="panel overflow-hidden">
+        <div className="flex items-stretch">
+          <div className="bg-primary text-primary-foreground px-4 md:px-6 py-3 clip-slant pr-8 md:pr-12 flex items-center gap-3">
+            <span className="text-3xl">{race.flag}</span>
+            <div>
+              <div className="tv-label opacity-80">Ronda {race.id} · {race.circuit}</div>
+              <h2 className="font-display text-xl md:text-3xl">{race.name}</h2>
             </div>
-            <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Vuelta</div>
+          </div>
+          <div className="ml-auto flex items-center gap-4 px-4 md:px-6">
+            <div className="text-right">
+              <div className="tv-label text-muted-foreground">Vuelta</div>
+              <div className="font-display text-3xl md:text-4xl tabular-nums leading-none">
+                {state.lap}
+                <span className="text-muted-foreground text-lg md:text-xl">/{state.totalLaps}</span>
+              </div>
+            </div>
           </div>
         </div>
+        <div className="p-4 pt-3 space-y-3">
         <div className="h-1.5 rounded-full bg-muted overflow-hidden">
           <div className={cn("h-full transition-all", sc ? "bg-yellow-400" : "bg-primary")} style={{ width: `${raceProgress}%` }} />
         </div>
@@ -270,6 +274,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
             <FastForward className="w-4 h-4 mr-1" /> Al final
           </Button>
         </div>
+        </div>
       </div>
 
       {state.weather && <WeatherWidget weather={state.weather} lap={state.lap} title="Clima en pista" />}
@@ -280,8 +285,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
 
       <div className="grid lg:grid-cols-[1fr_340px] lg:grid-rows-[auto_1fr] gap-4 items-start">
         {myCars.length > 0 && (state.lap > 0 || anim) && (
-          <div className="rounded-xl border border-border bg-card p-3 space-y-3 lg:col-start-2">
-            <div className="font-racing text-xs text-muted-foreground uppercase tracking-wider">Muro de boxes</div>
+          <div className="panel p-3 space-y-3 lg:col-start-2">
+            <div className="tv-label bg-primary text-primary-foreground w-fit px-3 py-1 clip-slant pr-6">Muro de boxes</div>
             {myCars.map((car) => (
               <PitWallCard
                 key={car.id}
@@ -295,8 +300,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
         )}
 
         {/* Timing tower */}
-        <div className="rounded-xl border border-border bg-card overflow-hidden lg:col-start-1 lg:row-start-1 lg:row-span-2">
-          <div className="flex items-center gap-2 px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground border-b border-border">
+        <div className="panel overflow-hidden lg:col-start-1 lg:row-start-1 lg:row-span-2">
+          <div className="flex items-center gap-2 px-3 py-2 tv-label text-muted-foreground border-b border-white/10 bg-black/40">
             <span className="w-6">Pos</span>
             <span className="w-4" />
             <span className="flex-1">Piloto</span>
@@ -327,9 +332,9 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           </div>
         </div>
 
-          <div className="rounded-xl border border-border bg-card lg:col-start-2">
+          <div className="panel lg:col-start-2">
             <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-              <span className="font-racing text-xs uppercase tracking-wider text-muted-foreground">Dirección de carrera</span>
+              <span className="tv-label bg-white/10 px-3 py-1 clip-slant pr-6">Dirección de carrera</span>
               {playerTeamId && (
                 <div className="flex text-[10px] rounded border border-border overflow-hidden">
                   {(["all", "mine"] as const).map((f) => (
@@ -403,12 +408,19 @@ function TowerRow({
       layout
       transition={{ type: "spring", stiffness: 500, damping: 40 }}
       className={cn(
-        "flex items-center gap-2 px-3 py-1.5 text-sm border-b border-border/30 last:border-0",
+        "flex items-center gap-2 px-3 py-1.5 text-sm border-b border-white/[0.04] last:border-0 odd:bg-white/[0.015]",
         dnf && "opacity-40",
       )}
       style={mine ? mineStyle(car.entry.team.hex) : undefined}
     >
-      <span className="w-6 font-racing text-xs tabular-nums">{dnf ? "—" : pos}</span>
+      <span
+        className={cn(
+          "w-6 h-5 grid place-items-center font-display text-sm tabular-nums rounded-sm",
+          dnf ? "text-muted-foreground" : pos <= 3 ? "bg-white text-black" : "bg-white/10",
+        )}
+      >
+        {dnf ? "—" : pos}
+      </span>
       <span className="w-4 flex justify-center">
         {dnf ? null : change > 0 ? (
           <ChevronUp className="w-3.5 h-3.5 text-green-400" />
@@ -420,7 +432,7 @@ function TowerRow({
       </span>
       <TeamStripe color={car.entry.team.hex} />
       <span className="flex-1 min-w-0 flex items-center gap-1.5">
-        <span className="font-racing text-xs">{car.entry.driver.shortName}</span>
+        <span className="font-display text-base tracking-wide">{car.entry.driver.shortName}</span>
         {mine && <Star className="w-3 h-3 text-primary fill-primary" />}
         {fastest && lap > 1 && <span className="text-[9px] px-1 rounded bg-purple-600 text-white">VR</span>}
         {inPit ? (

@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
 
 @layer base {
   :root {
@@ -85,14 +85,107 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: 'Orbitron', sans-serif;
+    font-family: 'Titillium Web', sans-serif;
+    font-weight: 700;
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(1200px 500px at 20% -10%, hsl(var(--primary) / 0.16), transparent 60%),
+      radial-gradient(900px 400px at 110% 10%, hsl(var(--primary) / 0.08), transparent 60%),
+      repeating-linear-gradient(45deg, hsl(0 0% 100% / 0.012) 0 2px, transparent 2px 6px),
+      repeating-linear-gradient(-45deg, hsl(0 0% 100% / 0.012) 0 2px, transparent 2px 6px);
+    background-attachment: fixed;
+  }
+
+  .game-bg {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(1200px 520px at 15% -10%, hsl(var(--primary) / 0.18), transparent 60%),
+      radial-gradient(900px 420px at 110% 0%, hsl(var(--primary) / 0.09), transparent 60%),
+      repeating-linear-gradient(45deg, hsl(0 0% 100% / 0.014) 0 2px, transparent 2px 6px),
+      repeating-linear-gradient(-45deg, hsl(0 0% 100% / 0.014) 0 2px, transparent 2px 6px);
+    background-attachment: fixed;
+  }
+
+  .font-mono, code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
   }
 }
 
 @layer utilities {
   .font-racing {
-    font-family: 'Orbitron', sans-serif;
+    font-family: 'Titillium Web', sans-serif;
+    font-weight: 700;
+    letter-spacing: 0.02em;
   }
+
+  .font-display {
+    font-family: 'Titillium Web', sans-serif;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+    line-height: 1;
+  }
+
+  /* glossy game panel */
+  .panel {
+    position: relative;
+    border-radius: 14px;
+    border: 1px solid hsl(0 0% 100% / 0.07);
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.045), hsl(0 0% 100% / 0.01) 40%, transparent),
+      linear-gradient(160deg, hsl(220 18% 11% / 0.92), hsl(222 22% 7% / 0.92));
+    box-shadow: 0 1px 0 hsl(0 0% 100% / 0.05) inset, 0 18px 40px -18px hsl(0 0% 0% / 0.8);
+    backdrop-filter: blur(6px);
+  }
+  .panel-accent::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    border-radius: 14px 14px 0 0;
+    background: linear-gradient(90deg, hsl(var(--primary)), hsl(var(--primary) / 0));
+  }
+  .panel-hover {
+    transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+  }
+  .panel-hover:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--primary) / 0.5);
+    box-shadow: 0 0 0 1px hsl(var(--primary) / 0.25), 0 20px 40px -18px hsl(var(--primary) / 0.45);
+  }
+
+  /* TV-graphics slanted shapes */
+  .clip-slant {
+    clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+  }
+  .clip-slant-both {
+    clip-path: polygon(14px 0, 100% 0, calc(100% - 14px) 100%, 0 100%);
+  }
+  .tv-label {
+    font-family: 'Titillium Web', sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    font-size: 10px;
+  }
+  .glow-text {
+    text-shadow: 0 0 24px hsl(var(--primary) / 0.6);
+  }
+  .shine {
+    background-image: linear-gradient(110deg, transparent 30%, hsl(0 0% 100% / 0.08) 45%, transparent 60%);
+    background-size: 250% 100%;
+    animation: shine 4s linear infinite;
+  }
+  @keyframes shine {
+    from { background-position: 150% 0; }
+    to { background-position: -100% 0; }
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(0 0% 100% / 0.12); border-radius: 6px; }
 
   .text-gradient-primary {
     background: var(--gradient-primary);

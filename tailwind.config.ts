@@ -14,7 +14,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        racing: ['Orbitron', 'sans-serif'],
+        racing: ['Titillium Web', 'sans-serif'],
+        display: ['Titillium Web', 'sans-serif'],
+        mono: ['JetBrains Mono', 'ui-monospace', 'monospace'],
         body: ['Inter', 'sans-serif'],
       },
       colors: {

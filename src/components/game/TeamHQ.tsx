@@ -13,6 +13,7 @@ import {
 import { PerformanceChart, type Metric } from "./PerformanceChart";
 import { TeamStripe } from "./common";
 import { DriversPanel, StaffPanel } from "./PeoplePanels";
+import { SectionTitle } from "./visuals";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -27,6 +28,7 @@ interface Props {
   onOffer?: (driverId: string, salary: number, years: number) => { ok: boolean; message: string };
   onRelease?: (driverId: string) => void;
   onHireStaff?: (staffId: string) => void;
+  section?: "car" | "facilities" | "drivers" | "staff" | "finance"; // show a single section (no tab bar)
 }
 
 export const money = (m: number) => `US$ ${m.toFixed(1)} M`;
@@ -34,13 +36,15 @@ export const money = (m: number) => `US$ ${m.toFixed(1)} M`;
 const AREAS: DevArea[] = ["aero", "powerUnit", "chassis", "reliability", "pitCrew"];
 
 export function TeamHQ({
-  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff,
+  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff, section,
 }: Props) {
   const [metric, setMetric] = useState<Metric>("pace");
   const p = management.player!;
   const myDev = management.dev[team.id];
   const ranks = areaRanks(management, team.id);
-  const [tab, setTab] = useState<"dev" | "facilities" | "drivers" | "staff" | "finance">("dev");
+  const [tabState, setTab] = useState<"dev" | "facilities" | "drivers" | "staff" | "finance">("dev");
+  const tab = section ? (section === "car" ? "dev" : section) : tabState;
+  const showOverview = !section || section === "car";
   const pay = people ? payroll(people, team.id) : null;
 
   const fieldBest = useMemo(() => {
@@ -64,8 +68,11 @@ export function TeamHQ({
 
   return (
     <div className="space-y-5">
-      {/* Header */}
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
+      {showOverview && (
+        <>
+      {!section && (
+<>      {/* Header */}
+      <div className="panel overflow-hidden">
         <div className="h-1.5" style={{ backgroundColor: team.hex }} />
         <div className="p-5 grid gap-4 md:grid-cols-3">
           <div className="md:col-span-1">
@@ -89,9 +96,11 @@ export function TeamHQ({
         </div>
       </div>
 
+</>
+      )}
       {/* Car ratings */}
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <h3 className="font-racing text-sm uppercase tracking-wider text-muted-foreground">Rendimiento del auto</h3>
+      <div className="panel p-4 space-y-3">
+        <SectionTitle right={`Auto P${ranks.pace} de ${Object.keys(management.dev).length} · ritmo ${carPace(myDev).toFixed(1)}`}>Rendimiento del auto</SectionTitle>
         <div className="grid sm:grid-cols-2 lg:grid-cols-5 gap-3">
           {AREAS.map((a) => (
             <RatingCard
@@ -114,8 +123,11 @@ export function TeamHQ({
 
       <PerformanceChart management={management} teams={teams} playerTeamId={team.id} metric={metric} onMetric={setMetric} />
 
+        </>
+      )}
+
       {/* Tabs */}
-      <div className="flex gap-1 rounded-lg bg-muted/40 p-1">
+      {!section && <div className="flex gap-1 rounded-lg bg-muted/40 p-1">
         {[
           { k: "dev", label: "Desarrollo", icon: FlaskConical },
           { k: "facilities", label: "Instalaciones", icon: Building2 },
@@ -133,13 +145,13 @@ export function TeamHQ({
             <Icon className="w-3.5 h-3.5 hidden sm:block" /> {label}
           </button>
         ))}
-      </div>
+      </div>}
 
       {tab === "dev" && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+          <div className="panel p-4 space-y-3">
             <div className="flex items-center justify-between">
-              <h3 className="font-racing text-sm">En desarrollo</h3>
+              <h3 className="font-display text-lg">En desarrollo</h3>
               <span className="text-xs text-muted-foreground">
                 {p.projects.length}/{maxProjects(p)} proyectos simultáneos
               </span>
@@ -173,7 +185,7 @@ export function TeamHQ({
           {AREAS.map((area) => (
             <div key={area} className="space-y-2">
               <div className="flex items-baseline justify-between">
-                <h4 className="font-racing text-sm">{AREA_INFO[area].label}</h4>
+                <h4 className="font-display text-lg">{AREA_INFO[area].label}</h4>
                 <span className="text-xs text-muted-foreground">
                   {myDev[area].toFixed(1)} · P{ranks[area]} · {FACILITY_INFO[AREA_INFO[area].facility].label} nivel {p.facilities[AREA_INFO[area].facility]}
                 </span>
@@ -240,7 +252,7 @@ export function TeamHQ({
               const lvl = p.facilities[k];
               const blocked = canUpgradeFacility(management, k);
               return (
-                <div key={k} className="rounded-xl border border-border bg-card p-3 space-y-2">
+                <div key={k} className="panel p-3 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="text-sm font-medium">{FACILITY_INFO[k].label}</div>
                     <div className="flex gap-1">
@@ -281,7 +293,7 @@ export function TeamHQ({
 
       {tab === "finance" && <Finance management={management} onSignSponsor={onSignSponsor} />}
 
-      <InboxList management={management} />
+      {!section && <InboxList management={management} />}
     </div>
   );
 }
@@ -318,7 +330,7 @@ function RatingCard({
         <span className="text-muted-foreground">{label}</span>
         <span className="font-racing">P{rank}</span>
       </div>
-      <div className="font-racing text-lg">{value.toFixed(1)}</div>
+      <div className="font-display text-3xl">{value.toFixed(1)}</div>
       <div className="relative h-1.5 rounded-full bg-muted">
         <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: color }} />
         <div className="absolute -top-1 w-0.5 h-3.5 bg-foreground/60" style={{ left: `${bestPct}%` }} title={`Mejor del grid: ${best.toFixed(1)}`} />
@@ -372,8 +384,8 @@ function Finance({ management, onSignSponsor }: { management: ManagementState; o
   return (
     <div className="space-y-4">
       {/* Statement: how the available budget is reached */}
-      <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-        <h3 className="font-racing text-sm">Estado de cuenta de la temporada</h3>
+      <div className="panel p-4 space-y-2">
+        <h3 className="font-display text-lg">Estado de cuenta de la temporada</h3>
         <StatementLine label="Presupuesto inicial" value={initial} strong={false} sign={false} />
         {(["income", "running", "invest"] as Group[]).map((g) => (
           <details key={g} className="group">
@@ -483,9 +495,9 @@ const TYPICAL = { points: 6, podiums: 0, wins: 0, pole: false, dnfs: 0.2 };
 function Sponsors({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
   const p = management.player!;
   return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+    <div className="panel p-4 space-y-4">
       <div>
-        <h3 className="font-racing text-sm">Patrocinadores</h3>
+        <h3 className="font-display text-lg">Patrocinadores</h3>
         <p className="text-[11px] text-muted-foreground">
           1 principal y 2 secundarios. Cada contrato tiene un estilo distinto: pago fijo, bonos por resultado, prima de firma o
           exigencias de rendimiento. Llegan ofertas nuevas cada 6 carreras o cuando termina un contrato.
@@ -572,8 +584,8 @@ export function InboxList({ management, limit = 8 }: { management: ManagementSta
   const items = [...management.inbox].reverse().slice(0, limit);
   if (!items.length) return null;
   return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-      <h3 className="font-racing text-sm flex items-center gap-2">
+    <div className="panel p-4 space-y-2">
+      <h3 className="font-display text-lg flex items-center gap-2">
         <Inbox className="w-4 h-4" /> Novedades del equipo
       </h3>
       {items.map((m, i) => (

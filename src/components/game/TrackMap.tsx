@@ -209,7 +209,7 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
   const lineLen = 26;
 
   return (
-    <div className="relative rounded-xl border border-border bg-card overflow-hidden">
+    <div className="relative panel overflow-hidden">
       <svg viewBox={vb} className="w-full h-[260px] sm:h-[340px] lg:h-[400px]" preserveAspectRatio="xMidYMid meet">
         <path d={pathD} fill="none" stroke={sc ? "#facc15" : "hsl(var(--muted))"} strokeOpacity={sc ? 0.35 : 1} strokeWidth={34} strokeLinejoin="round" />
         <path d={pathD} fill="none" stroke="#2a2f3a" strokeWidth={22} strokeLinejoin="round" />
@@ -226,7 +226,7 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
         />
         {/* pit lane */}
         <path d={laneD} fill="none" stroke="#3b4252" strokeWidth={12} strokeLinecap="round" strokeLinejoin="round" />
-        <text x={box[0] + 16} y={box[1] + 30} fontSize={20} fontFamily="Orbitron, sans-serif" fill="#94a3b8">
+        <text x={box[0] + 16} y={box[1] + 30} fontSize={20} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="#94a3b8">
           BOXES
         </text>
         {/* sector boundaries */}
@@ -235,13 +235,13 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
           return (
             <g key={f} transform={`translate(${x},${y})`}>
               <circle r={9} fill="#facc15" />
-              <text x={14} y={-12} fontSize={22} fontFamily="Orbitron, sans-serif" fill="#facc15">
+              <text x={14} y={-12} fontSize={22} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="#facc15">
                 S{i + 2}
               </text>
             </g>
           );
         })}
-        <text x={sx + 14} y={sy - 30} fontSize={22} fontFamily="Orbitron, sans-serif" fill="white">
+        <text x={sx + 14} y={sy - 30} fontSize={22} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="white">
           S1
         </text>
         {markers.map(({ car, frac, pos, inPit }) => {
@@ -255,7 +255,7 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
               {showLabel && (
                 <g transform="translate(24,-22)">
                   <rect x={0} y={-24} width={pos >= 10 ? 112 : 98} height={34} rx={8} fill="#0b0d12" fillOpacity={0.85} />
-                  <text x={10} y={1} fontSize={24} fontFamily="Orbitron, sans-serif" fill={mine ? "white" : "#cbd5e1"}>
+                  <text x={10} y={1} fontSize={24} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill={mine ? "white" : "#cbd5e1"}>
                     {pos} {car.entry.driver.shortName}
                   </text>
                 </g>

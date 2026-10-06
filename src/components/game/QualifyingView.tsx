@@ -87,7 +87,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
     <div className="space-y-5">
       <div className="text-center space-y-1">
         <p className="text-xs uppercase tracking-widest text-muted-foreground">Clasificación</p>
-        <h2 className="font-racing text-2xl text-gradient-primary">
+        <h2 className="font-display text-4xl md:text-5xl">
           {race.flag} {race.name}
         </h2>
         <p className="text-xs text-muted-foreground">{race.circuit}</p>
@@ -291,7 +291,7 @@ function LiveSession({
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-border bg-card p-3 flex flex-wrap items-center gap-3 justify-between">
+      <div className="panel p-3 flex flex-wrap items-center gap-3 justify-between">
         <div>
           <div className="font-racing text-sm">{info.name}</div>
           <div className="text-xs text-muted-foreground">{info.text}</div>

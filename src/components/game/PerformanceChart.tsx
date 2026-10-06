@@ -51,10 +51,10 @@ export function PerformanceChart({ management, teams, playerTeamId, metric, onMe
   const nameOf = (id: string) => teams.find((t) => t.id === id)?.name ?? id;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+    <div className="panel p-4 space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="font-racing text-sm">{METRIC_LABEL[metric]}</h3>
+          <h3 className="font-display text-lg">{METRIC_LABEL[metric]}</h3>
           <p className="text-[11px] text-muted-foreground">Evolución de todas las escuderías carrera a carrera</p>
         </div>
         <div className="flex flex-wrap gap-1">

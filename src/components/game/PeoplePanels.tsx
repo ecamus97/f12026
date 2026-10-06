@@ -113,9 +113,9 @@ export function DriversPanel({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <div className="panel p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-racing text-sm">Tus pilotos · {season}</h3>
+          <h3 className="font-display text-lg">Tus pilotos · {season}</h3>
           <span className="text-xs text-muted-foreground">Sueldos de pilotos: {m1(pay.drivers)}/año</span>
         </div>
         {mine.map((d) => {
@@ -170,9 +170,9 @@ export function DriversPanel({
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <div className="panel p-4 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-racing text-sm">Mercado de pilotos para {next}</h3>
+          <h3 className="font-display text-lg">Mercado de pilotos para {next}</h3>
           <div className="flex text-[11px] rounded border border-border overflow-hidden">
             {(
               [
@@ -267,8 +267,8 @@ export function StaffPanel({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-        <h3 className="font-racing text-sm flex items-center gap-2">
+      <div className="panel p-4 space-y-3">
+        <h3 className="font-display text-lg flex items-center gap-2">
           <Briefcase className="w-4 h-4" /> Dirección de {team.name}
         </h3>
         <div className="grid md:grid-cols-2 gap-3">
@@ -277,8 +277,8 @@ export function StaffPanel({
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-        <h3 className="font-racing text-sm">Disponibles para contratar</h3>
+      <div className="panel p-4 space-y-2">
+        <h3 className="font-display text-lg">Disponibles para contratar</h3>
         <p className="text-[11px] text-muted-foreground">
           Contratar cuesta medio año de sueldo como prima, más medio año de indemnización para quien deja el cargo. El efecto es inmediato.
         </p>
@@ -308,8 +308,8 @@ export function StaffPanel({
         </div>
       </div>
 
-      <div className="rounded-xl border border-border bg-card p-4 space-y-2">
-        <h3 className="font-racing text-sm">Directivos de la parrilla</h3>
+      <div className="panel p-4 space-y-2">
+        <h3 className="font-display text-lg">Directivos de la parrilla</h3>
         <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
           {teams.map((t) => {
             const st = teamStaff(people, t.id);
