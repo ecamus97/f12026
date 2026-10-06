@@ -26,6 +26,8 @@ export interface Team {
   aero?: number;
   powerUnit?: number;
   chassis?: number;
+  /** Size of the team (initial budget and facilities), when it differs from what the car suggests. */
+  budgetBase?: number;
   drivers: Driver[];
 }
 
@@ -98,8 +100,9 @@ export const teams: Team[] = [
   },
   {
     id: "williams", name: "Williams Racing", shortName: "WIL", hex: "#64C4FF",
-    pace: 87, reliability: 90, pitCrew: 88,
-    aero: 86, powerUnit: 88.5, chassis: 87,
+    pace: 86, reliability: 89, pitCrew: 92,
+    aero: 86, powerUnit: 84.5, chassis: 87.5,
+    budgetBase: 87,
     drivers: [
       d("alb", "Alex Albon", "ALB", 23, "🇹🇭", 87, 86, 87, 89, 88),
       d("sai", "Carlos Sainz", "SAI", 55, "🇪🇸", 89, 88, 89, 90, 89),
@@ -107,8 +110,9 @@ export const teams: Team[] = [
   },
   {
     id: "aston-martin", name: "Aston Martin F1 Team", shortName: "AMR", hex: "#229971",
-    pace: 86, reliability: 86, pitCrew: 90,
-    aero: 87.5, powerUnit: 84.5, chassis: 86,
+    pace: 84, reliability: 88, pitCrew: 86,
+    aero: 84, powerUnit: 85.5, chassis: 82.5,
+    budgetBase: 86,
     drivers: [
       d("alo", "Fernando Alonso", "ALO", 14, "🇪🇸", 90, 95, 95, 93, 92),
       d("str", "Lance Stroll", "STR", 18, "🇨🇦", 80, 82, 80, 80, 80),
@@ -116,8 +120,9 @@ export const teams: Team[] = [
   },
   {
     id: "racing-bulls", name: "Racing Bulls", shortName: "RCB", hex: "#6692FF",
-    pace: 86, reliability: 89, pitCrew: 92,
-    aero: 86, powerUnit: 84.5, chassis: 87.5,
+    pace: 87, reliability: 90, pitCrew: 88,
+    aero: 86, powerUnit: 88.5, chassis: 87,
+    budgetBase: 86,
     drivers: [
       d("law", "Liam Lawson", "LAW", 30, "🇳🇿", 83, 84, 82, 80, 80),
       d("lin", "Arvid Lindblad", "LIN", 41, "🇬🇧", 81, 80, 77, 78, 78),
@@ -134,8 +139,9 @@ export const teams: Team[] = [
   },
   {
     id: "alpine", name: "Alpine F1 Team", shortName: "ALP", hex: "#0093CC",
-    pace: 84, reliability: 88, pitCrew: 86,
-    aero: 84, powerUnit: 85.5, chassis: 82.5,
+    pace: 86, reliability: 86, pitCrew: 90,
+    aero: 87.5, powerUnit: 84.5, chassis: 86,
+    budgetBase: 84,
     drivers: [
       d("gas", "Pierre Gasly", "GAS", 10, "🇫🇷", 86, 85, 84, 87, 85),
       d("col", "Franco Colapinto", "COL", 43, "🇦🇷", 80, 82, 78, 76, 78),

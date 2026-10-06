@@ -260,10 +260,10 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
       reliability: t.reliability,
       pitCrew: t.pitCrew,
     };
-    aiBudget[t.id] = startBudget(t.pace);
+    aiBudget[t.id] = startBudget(t.budgetBase ?? t.pace);
   }
   const pt = teams.find((t) => t.id === playerTeamId);
-  const lvl = pt ? startFacility(pt.pace) : 2;
+  const lvl = pt ? startFacility(pt.budgetBase ?? pt.pace) : 2;
   const carRank = pt ? 1 + teams.filter((t) => t.pace > pt.pace).length : 11;
   const used = new Set<string>();
   const offers = pt
@@ -279,18 +279,18 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
     player: pt
       ? {
           teamId: pt.id,
-          budget: startBudget(pt.pace),
+          budget: startBudget(pt.budgetBase ?? pt.pace),
           facilities: { windTunnel: lvl, dyno: lvl, factory: lvl, reliabilityLab: lvl, pitTraining: lvl },
           facilityWork: null,
           projects: [],
-          ledger: [{ race: 0, concept: "Presupuesto de desarrollo inicial", amount: startBudget(pt.pace), category: "initial" }],
+          ledger: [{ race: 0, concept: "Presupuesto de desarrollo inicial", amount: startBudget(pt.budgetBase ?? pt.pace), category: "initial" }],
           sponsors: [],
           offers,
         }
       : null,
     inbox: pt
       ? [
-          { race: 0, tone: "info", text: `Bienvenido a ${pt.name}. Tienes US$ ${startBudget(pt.pace)} M para desarrollar el auto esta temporada.` },
+          { race: 0, tone: "info", text: `Bienvenido a ${pt.name}. Tienes US$ ${startBudget(pt.budgetBase ?? pt.pace)} M para desarrollar el auto esta temporada.` },
           { race: 0, tone: "info", text: "Hay ofertas de patrocinio esperando: revísalas en Equipo → Finanzas." },
         ]
       : [],

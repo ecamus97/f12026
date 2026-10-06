@@ -55,7 +55,7 @@ export function TeamSelect({ teams, onChoose }: { teams: Team[]; onChoose: (team
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">
-                  Presupuesto inicial <b className="text-foreground">US$ {startBudget(team.pace)} M</b>
+                  Presupuesto inicial <b className="text-foreground">US$ {startBudget(team.budgetBase ?? team.pace)} M</b>
                 </span>
                 <span className="font-display text-sm px-3 py-1 clip-slant-both transition-colors" style={{ backgroundColor: team.hex, color: "#0b0d12" }}>
                   Dirigir
