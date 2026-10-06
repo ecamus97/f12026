@@ -51,6 +51,8 @@ export function describeRules(r: RuleSet): { label: string; value: string; chang
 // --- Proposals ---------------------------------------------------------------
 
 export type Vote = "for" | "against" | "abstain";
+/** Technical regulation changes that reshuffle one area of every car. */
+export type TechEffect = "aero" | "powerUnit" | "chassis";
 export type ProposalStatus = "pending" | "approved" | "rejected" | "decreed";
 
 export interface RuleProposal {
@@ -64,6 +66,7 @@ export interface RuleProposal {
   desc: string;
   by: "fia" | "vote";
   status: ProposalStatus;
+  effect?: TechEffect; // one-off impact on every car when it comes into force
   votes?: Record<string, Vote>;
   playerVote?: Vote;
 }
@@ -73,6 +76,8 @@ export interface TeamContext {
   teamId: string;
   carRank: number; // 1 = best car
   puRank: number;
+  aeroRank?: number;
+  chassisRank?: number;
   driverPayroll: number; // M USD
   teams: number;
 }
@@ -82,7 +87,7 @@ interface Template {
   fiaOk: boolean; // can be imposed by the FIA
   voteOk: boolean;
   available: (r: RuleSet) => boolean;
-  make: (r: RuleSet) => { patch: Partial<RuleSet>; title: string; desc: string };
+  make: (r: RuleSet) => { patch: Partial<RuleSet>; title: string; desc: string; effect?: TechEffect };
   /** >0 the team likes it, <0 it doesn't (roughly -1..1). */
   interest: (c: TeamContext, p: Partial<RuleSet>) => number;
 }
@@ -91,7 +96,49 @@ const mid = (c: TeamContext) => (c.teams + 1) / 2;
 /** +1 for the backmarkers, -1 for the front-runners. */
 const underdog = (c: TeamContext) => Math.max(-1, Math.min(1, (c.carRank - mid(c)) / (mid(c) - 1)));
 
+/** +1 for teams that are behind in an area (they want a reset), -1 for the leaders. */
+const behindIn = (c: TeamContext, rank?: number) => Math.max(-1, Math.min(1, ((rank ?? mid(c)) - mid(c)) / (mid(c) - 1)));
+
 const TEMPLATES: Template[] = [
+  {
+    key: "aeroRegs",
+    fiaOk: true,
+    voteOk: true,
+    available: () => true,
+    make: () => ({
+      patch: {},
+      effect: "aero",
+      title: "Nuevo reglamento aerodinámico",
+      desc: "Cambian las reglas de alerones y fondo: las diferencias de aerodinámica se reducen a menos de la mitad y el orden puede cambiar. Las piezas aerodinámicas desarrolladas quedan obsoletas.",
+    }),
+    interest: (c) => behindIn(c, c.aeroRank),
+  },
+  {
+    key: "puRegs",
+    fiaOk: true,
+    voteOk: true,
+    available: () => true,
+    make: () => ({
+      patch: {},
+      effect: "powerUnit",
+      title: "Nueva fórmula de motores",
+      desc: "Más energía eléctrica y nuevo combustible: las diferencias entre motores se reducen a menos de la mitad y el orden puede cambiar. Las mejoras de motor quedan obsoletas.",
+    }),
+    interest: (c) => behindIn(c, c.puRank),
+  },
+  {
+    key: "chassisRegs",
+    fiaOk: true,
+    voteOk: true,
+    available: () => true,
+    make: () => ({
+      patch: {},
+      effect: "chassis",
+      title: "Autos más cortos y livianos",
+      desc: "Nuevas medidas y peso mínimo: las diferencias de chasis se reducen a menos de la mitad y el orden puede cambiar. Las mejoras de chasis quedan obsoletas.",
+    }),
+    interest: (c) => behindIn(c, c.chassisRank),
+  },
   {
     key: "budgetCap",
     fiaOk: true,
@@ -102,14 +149,14 @@ const TEMPLATES: Template[] = [
         return {
           patch: { budgetCap: 60 },
           title: "Límite presupuestario de US$ 60 M",
-          desc: "Cada equipo podrá gastar como máximo US$ 60 M por temporada en I+D e instalaciones. Frena a los equipos grandes.",
+          desc: "Cada equipo podrá gastar como máximo US$ 60 M por temporada en I+D e instalaciones. Al entrar en vigor, los autos por encima del promedio pierden parte de su ventaja.",
         };
       }
       if (r.budgetCap > 40) {
         return {
           patch: { budgetCap: r.budgetCap - 10 },
           title: `Bajar el límite presupuestario a US$ ${r.budgetCap - 10} M`,
-          desc: "Un límite más estricto acerca a los equipos, pero hace más lento el desarrollo de todos.",
+          desc: "Un límite más estricto acerca a los equipos (los de adelante pierden parte de su ventaja al entrar en vigor) y hace más lento el desarrollo de todos.",
         };
       }
       return { patch: { budgetCap: null }, title: "Eliminar el límite presupuestario", desc: "Cada equipo vuelve a gastar lo que pueda. Favorece a los ricos." };
@@ -267,6 +314,13 @@ export function resolveVote(p: RuleProposal, contexts: TeamContext[], playerTeam
 export function tally(votes: Record<string, Vote> = {}) {
   const v = Object.values(votes);
   return { for: v.filter((x) => x === "for").length, against: v.filter((x) => x === "against").length, abstain: v.filter((x) => x === "abstain").length };
+}
+
+/** Technical changes that come into force in a season. */
+export function techChanges(season: number, proposals: RuleProposal[]): TechEffect[] {
+  return proposals
+    .filter((p) => p.effective === season && p.effect && (p.status === "approved" || p.status === "decreed"))
+    .map((p) => p.effect!);
 }
 
 /** Rules for next season: current rules + decreed/approved changes. */

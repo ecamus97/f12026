@@ -47,6 +47,9 @@ import {
   type RuleProposal,
   type TeamContext,
   type Vote,
+  techChanges,
+  applyRegulationImpact,
+  AREA_INFO,
 } from "@/engine";
 
 const STORAGE_KEY = "f1-manager-2026-v2";
@@ -114,6 +117,8 @@ function teamContexts(s: GameState): TeamContext[] {
     teamId: t.id,
     carRank: carRankOf(m, t.id),
     puRank: areaRanks(m, t.id).powerUnit,
+    aeroRank: areaRanks(m, t.id).aero,
+    chassisRank: areaRanks(m, t.id).chassis,
     driverPayroll: s.people ? payroll(s.people, t.id).drivers : 30,
     teams: s.teamsData.length,
   }));
@@ -162,7 +167,7 @@ function loadState(): GameState {
         const fallback = hist.find((h) => h.round >= r) ?? hist[hist.length - 1];
         filled.push(exact ?? { round: r, dev: fallback.dev });
       }
-      m.history = filled;
+      m.history = [...hist.filter((h) => h.round < 0), ...filled];
       if (m.player && !m.player.sponsors) {
         const fresh = initManagement(state.teamsData, state.playerTeamId, randomSeed());
         m.player.sponsors = [];
@@ -406,13 +411,39 @@ export function useGameState() {
           drivers: Object.fromEntries(Object.entries(people.drivers).map(([id, d]) => [id, { ...d, contract: clip(d.contract), nextContract: clip(d.nextContract) }])),
         };
       }
-      let management = { ...withStaff(startNewSeason(s.management, s.teamsData, order, people.season), people), regs: regsOf(rules) };
+      let management: ManagementState = { ...withStaff(startNewSeason(s.management, s.teamsData, order, people.season), people), regs: regsOf(rules) };
       const changes = proposals.filter((p) => p.effective === people.season && (p.status === "approved" || p.status === "decreed"));
       if (changes.length) {
         management = {
           ...management,
           inbox: [...management.inbox, { race: 0, tone: "info" as const, text: `Reglamento ${people.season}: ${changes.map((p) => p.title).join(" · ")}.` }].slice(-60),
         };
+      }
+      // technical rules and a new budget cap change the cars right away
+      const effects = techChanges(people.season, proposals);
+      const newCap = !!rules.budgetCap && (s.rules.budgetCap === null || rules.budgetCap < s.rules.budgetCap);
+      const reg = applyRegulationImpact(management, effects, newCap, randomSeed());
+      management = reg.m;
+      const regNews: string[] = [];
+      if (effects.length || newCap) {
+        const fmt = (d: Record<string, number | undefined>) =>
+          Object.entries(d)
+            .map(([a, v]) => `${AREA_INFO[a as "aero"].label} ${v! >= 0 ? "+" : ""}${v!.toFixed(1)}`)
+            .join(" · ");
+        const nameOf = (id: string) => s.teamsData.find((t) => t.id === id)?.name ?? id;
+        const total = (id: string) => Object.values(reg.impact[id] ?? {}).reduce((a, v) => a + (v ?? 0), 0);
+        const ranked = Object.keys(reg.impact).sort((a, b) => total(b) - total(a));
+        if (s.playerTeamId && reg.impact[s.playerTeamId]) {
+          const text = `Impacto del nuevo reglamento en tu auto: ${fmt(reg.impact[s.playerTeamId])}.`;
+          regNews.push(`Tu equipo: ${text}`);
+          management = {
+            ...management,
+            inbox: [...management.inbox, { race: 0, tone: total(s.playerTeamId) >= 0 ? ("good" as const) : ("bad" as const), text }].slice(-60),
+          };
+        }
+        if (ranked.length) {
+          regNews.push(`Nuevo reglamento: ${nameOf(ranked[0])} es quien más gana (${total(ranked[0]) >= 0 ? "+" : ""}${total(ranked[0]).toFixed(1)}) y ${nameOf(ranked[ranked.length - 1])} quien más pierde (${total(ranked[ranked.length - 1]).toFixed(1)}).`);
+        }
       }
       const mine = news.filter((n) => n.startsWith("Tu equipo"));
       if (mine.length) {
@@ -440,7 +471,7 @@ export function useGameState() {
         pastSeasons: [...s.pastSeasons, summary],
         rules,
         proposals,
-        seasonNews: news,
+        seasonNews: [...regNews, ...news],
       };
     });
   }, []);

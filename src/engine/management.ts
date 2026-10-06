@@ -658,7 +658,7 @@ export function startNewSeason(m: ManagementState, teams: Team[], constructorsOr
     for (const slot of ["principal", "secundario"] as SponsorSlot[]) player = refreshSlotOffers(nm, player, slot, 0, rng, applyDevToTeams(teams, nm));
     inbox.push({ race: 0, tone: "info", text: `Temporada ${season - 1}: ingresos US$ ${fin.income} M, gastos US$ ${fin.expenses} M, inversión US$ ${fin.investments} M.` });
   }
-  return { ...nm, player, inbox: [...m.inbox, ...inbox].slice(-60), rngState: rng.state(), history: [{ round: 0, dev: structuredClone(dev) }] };
+  return { ...nm, player, inbox: [...m.inbox, ...inbox].slice(-60), rngState: rng.state(), history: [{ round: -1, dev: structuredClone(m.dev) }, { round: 0, dev: structuredClone(dev) }] };
 }
 
 /** Field ranking (1 = best) of a team in each area. */
@@ -673,4 +673,62 @@ export function areaRanks(m: ManagementState, teamId: string): Record<DevArea | 
     reliability: rank((d) => d.reliability),
     pitCrew: rank((d) => d.pitCrew),
   };
+}
+
+// --- Regulation impact ---------------------------------------------------------
+
+export type RegImpact = Record<string, Partial<Record<"aero" | "powerUnit" | "chassis", number>>>;
+
+/**
+ * New technical rules reshuffle an area of every car: the gaps shrink to ~45% and
+ * each team lands a bit higher or lower depending on luck, its technical director and
+ * (for the player) the facility of that area. A new budget cap trims the front-runners.
+ * Returns the new state and the change of each team per area.
+ */
+export function applyRegulationImpact(
+  m: ManagementState,
+  effects: ("aero" | "powerUnit" | "chassis")[],
+  newBudgetCap: boolean,
+  seed: number,
+): { m: ManagementState; impact: RegImpact } {
+  if (!effects.length && !newBudgetCap) return { m, impact: {} };
+  const rng = createRng(seed);
+  const ids = Object.keys(m.dev);
+  const dev: Record<string, CarDev> = Object.fromEntries(ids.map((id) => [id, { ...m.dev[id] }]));
+  const impact: RegImpact = {};
+  const note = (id: string, a: "aero" | "powerUnit" | "chassis", d: number) => {
+    impact[id] ??= {};
+    impact[id][a] = +((impact[id][a] ?? 0) + d).toFixed(2);
+  };
+  const facilityOf: Record<string, FacilityKey> = { aero: "windTunnel", powerUnit: "dyno", chassis: "factory" };
+  for (const a of effects) {
+    const mean = ids.reduce((acc, id) => acc + dev[id][a], 0) / ids.length;
+    for (const id of ids) {
+      const td = m.staffRatings?.[id]?.td ?? 80;
+      const fac = id === m.player?.teamId ? (m.player.facilities[facilityOf[a]] - 3) * 0.6 : 0;
+      const v = mean + (dev[id][a] - mean) * 0.45 + (rng.next() - 0.5) * 4 + (tdMult(td) - 1) * 6 + fac;
+      const nv = Math.max(70, Math.min(99, +v.toFixed(2)));
+      note(id, a, nv - dev[id][a]);
+      dev[id][a] = nv;
+    }
+  }
+  if (newBudgetCap) {
+    for (const a of ["aero", "powerUnit", "chassis"] as const) {
+      const mean = ids.reduce((acc, id) => acc + dev[id][a], 0) / ids.length;
+      for (const id of ids) {
+        if (dev[id][a] <= mean) continue;
+        const d = -(dev[id][a] - mean) * 0.2;
+        note(id, a, d);
+        dev[id][a] = +(dev[id][a] + d).toFixed(2);
+      }
+    }
+  }
+  // parts of a reshuffled area are obsolete
+  let player = m.player;
+  if (player && effects.length) {
+    const levels = { ...(player.partLevels ?? {}) };
+    for (const t of PROJECTS) if ((effects as string[]).includes(t.area)) delete levels[t.id];
+    player = { ...player, partLevels: levels };
+  }
+  return { m: { ...m, dev, player, history: [...(m.history ?? []).filter((h) => h.round < 0), { round: 0, dev: structuredClone(dev) }] }, impact };
 }

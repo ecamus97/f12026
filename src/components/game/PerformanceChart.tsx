@@ -32,8 +32,10 @@ export function PerformanceChart({ management, teams, playerTeamId, metric, onMe
   // the whole season is always on the x-axis; future rounds stay empty
   const data = useMemo(() => {
     const byRound = new Map(history.map((h) => [h.round, h]));
-    return Array.from({ length: races2026.length + 1 }, (_, r) => {
-      const row: Record<string, number | string> = { label: r === 0 ? "Inicio" : `R${r}` };
+    const first = byRound.has(-1) ? -1 : 0;
+    return Array.from({ length: races2026.length + 1 - first }, (_, i) => {
+      const r = i + first;
+      const row: Record<string, number | string> = { label: r === -1 ? "Año ant." : r === 0 ? "Inicio" : `R${r}` };
       const h = byRound.get(r);
       if (h) for (const t of teams) if (h.dev[t.id]) row[t.id] = +value(h.dev[t.id], metric).toFixed(2);
       return row;

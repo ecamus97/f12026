@@ -76,7 +76,7 @@ describe("people and seasons", () => {
       return Math.max(...ps) - Math.min(...ps);
     };
     expect(spread(n)).toBeLessThan(spread(m));
-    expect(n.history).toHaveLength(1);
+    expect(n.history.map((h) => h.round)).toEqual([-1, 0]);
     expect(carRankOf(n, "williams")).toBeGreaterThan(0);
   });
 });

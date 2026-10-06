@@ -32,3 +32,28 @@ describe("regulations", () => {
     expect(canStartProject(m, "fw")).toBeNull();
   });
 });
+
+import { applyRegulationImpact, carPace } from "@/engine";
+describe("regulation impact on the cars", () => {
+  it("a new aero rule shrinks the aero gaps and is recorded per team", () => {
+    const m = initManagement(teams, "williams", 9);
+    const spread = (x: typeof m) => {
+      const v = Object.values(x.dev).map((d) => d.aero);
+      return Math.max(...v) - Math.min(...v);
+    };
+    const r = applyRegulationImpact({ ...m, player: { ...m.player!, partLevels: { fw: 2, ice: 1 } } }, ["aero"], false, 4);
+    expect(spread(r.m)).toBeLessThan(spread(m) * 0.8);
+    expect(Object.keys(r.impact)).toHaveLength(teams.length);
+    expect(r.impact.williams.aero).toBeDefined();
+    expect(r.impact.williams.powerUnit).toBeUndefined();
+    expect(r.m.player!.partLevels).toEqual({ ice: 1 }); // aero parts obsolete
+    expect(r.m.history.at(-1)!.round).toBe(0);
+  });
+  it("a new budget cap trims only the teams above average", () => {
+    const m = initManagement(teams, "williams", 9);
+    const r = applyRegulationImpact(m, [], true, 4);
+    const best = teams[0].id;
+    expect(carPace(r.m.dev[best])).toBeLessThan(carPace(m.dev[best]));
+    expect(carPace(r.m.dev.cadillac)).toBe(carPace(m.dev.cadillac));
+  });
+});

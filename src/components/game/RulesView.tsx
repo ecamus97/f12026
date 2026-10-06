@@ -37,7 +37,7 @@ export function RulesView({
         <h1 className="font-display text-4xl md:text-5xl mt-1">Reglamento {season}</h1>
         <p className="text-sm text-muted-foreground mt-2 max-w-2xl">
           Durante la temporada la FIA impone cambios y los 11 jefes de equipo votan propuestas. Todo lo aprobado entra en vigor la temporada
-          siguiente. Una propuesta se aprueba si tiene más votos a favor que en contra; cada equipo vota según le conviene. Hay anuncios después
+          siguiente; los cambios técnicos modifican el rendimiento de los autos (se ve en el gráfico de desarrollo). Una propuesta se aprueba si tiene más votos a favor que en contra; cada equipo vota según le conviene. Hay anuncios después
           de las rondas 6, 10 y 17.
         </p>
       </div>
@@ -57,6 +57,7 @@ export function RulesView({
             <div>
               <div className="font-display text-2xl md:text-3xl">{p.title}</div>
               <p className="text-sm text-muted-foreground mt-1">{p.desc}</p>
+              <ImpactChip p={p} />
               <p className="text-xs text-muted-foreground mt-1">
                 Aplica desde {p.effective}. Si no votas antes de la próxima carrera, tu voto cuenta como abstención.
               </p>
@@ -109,6 +110,19 @@ export function RulesView({
   );
 }
 
+const EFFECT_LABEL = { aero: "Aerodinámica", powerUnit: "Unidad de potencia", chassis: "Chasis" } as const;
+
+/** Rules that change the cars' ratings when they come into force. */
+function ImpactChip({ p }: { p: RuleProposal }) {
+  const label = p.effect ? EFFECT_LABEL[p.effect] : p.key === "budgetCap" && p.patch.budgetCap ? "Aero, motor y chasis de los equipos de adelante" : null;
+  if (!label) return null;
+  return (
+    <span className="inline-flex mt-2 items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[11px] text-amber-200">
+      ⚙️ Cambia el rendimiento de los autos en {p.effective}: {label}
+    </span>
+  );
+}
+
 function RulesTable({ title, rows, compare }: { title: string; rows: ReturnType<typeof describeRules>; compare?: ReturnType<typeof describeRules> }) {
   return (
     <div className="panel p-4 space-y-2">
@@ -148,6 +162,7 @@ function ProposalCard({ p, teams, playerTeamId, compact }: { p: RuleProposal; te
         <div className="flex-1 min-w-[200px]">
           <div className="font-display text-xl">{p.title}</div>
           {!compact && <p className="text-xs text-muted-foreground mt-0.5">{p.desc}</p>}
+          {!compact && <ImpactChip p={p} />}
         </div>
         <span
           className={cn(
