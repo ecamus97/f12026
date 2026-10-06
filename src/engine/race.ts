@@ -317,7 +317,7 @@ export function simulateLap(prev: RaceState): RaceState {
         const ersBonus =
           (behind.ersMode === "deploy" && (behind.battery ?? 0) > 10 ? 0.6 : 0) -
           (ahead.ersMode === "deploy" && (ahead.battery ?? 0) > 10 ? 0.4 : 0);
-        const p = overtakeChance({ delta, attacker: behind.entry, defender: ahead.entry, track, bonus: bonus + ersBonus });
+        const p = overtakeChance({ delta, attacker: behind.entry, defender: ahead.entry, track, bonus: bonus + ersBonus + (state.rules?.overtakeAid ? 0.6 : 0) });
         if (rng.chance(p)) {
           order[j] = ahead;
           order[j - 1] = behind;
@@ -420,7 +420,7 @@ export function simulateLap(prev: RaceState): RaceState {
   if (lap >= state.totalLaps) {
     // Dry-race rule: at least two different compounds
     for (const c of order) {
-      if (c.usedCompounds.length < 2 && !c.usedCompounds.some(isWetTyre)) {
+      if (state.rules?.twoCompound !== false && c.usedCompounds.length < 2 && !c.usedCompounds.some(isWetTyre)) {
         c.total += 30;
         events.push({ lap, type: "mistake", text: `${name(c)} penalizado con 30s: no usó dos compuestos`, drivers: [c.id] });
       }
@@ -543,7 +543,10 @@ export function classify(state: RaceState): ClassifiedRow[] {
       grid: c.grid,
       status: finished ? "finished" : "dnf",
       gap: !finished ? `DNF (V${c.dnfLap})` : i === 0 ? "Ganador" : gapToLeader(state, c, leader),
-      points: finished ? pointsSystem[position] ?? 0 : 0,
+      points: !finished
+        ? 0
+        : (state.rules?.points ? state.rules.points[position - 1] ?? 0 : pointsSystem[position] ?? 0) +
+          (state.rules?.fastestLapPoint && position <= 10 && state.fastest?.driverId === c.id ? 1 : 0),
       stops: c.stops,
       bestLap: c.bestLap,
       dnfReason: c.dnfReason,

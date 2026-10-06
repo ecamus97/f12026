@@ -81,6 +81,7 @@ export interface RaceState {
   strategyConfirmed?: boolean; // player has reviewed the pre-race plan
   bestSectors?: ({ time: number; driverId: string } | null)[]; // overall best per sector
   weather?: import("./weather").WeatherTimeline;
+  rules?: { twoCompound: boolean; overtakeAid: boolean; points?: number[]; fastestLapPoint?: boolean };
 }
 
 export interface ClassifiedRow {

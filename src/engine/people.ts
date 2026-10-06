@@ -42,6 +42,7 @@ export interface PeopleState {
   staff: Record<string, StaffRecord>;
   rngState: number;
   nextJunior: number;
+  salaryCap?: number | null; // regulation: max salary per driver
 }
 
 export const ageOf = (d: { birthYear: number }, season: number) => season - d.birthYear;
@@ -55,9 +56,10 @@ export function marketValue(d: DriverRecord, season: number) {
 }
 
 /** Salary a driver asks a given team: weaker cars must pay more, a known team principal helps. */
-export function askingSalary(d: DriverRecord, season: number, carRank: number, tpRating = 80) {
+export function askingSalary(d: DriverRecord, season: number, carRank: number, tpRating = 80, cap?: number | null) {
   const k = (1 + (carRank - 5) * 0.04) * (1.08 - (tpRating - 70) * 0.006);
-  return Math.max(0.3, Math.round(marketValue(d, season) * k * 10) / 10);
+  const ask = Math.max(0.3, Math.round(marketValue(d, season) * k * 10) / 10);
+  return cap ? Math.min(cap, ask) : ask;
 }
 
 export const staffSalary = (role: StaffRole, rating: number) =>
@@ -158,7 +160,8 @@ export function offerDriverContract(
   if (!availableForNextSeason(p, d)) return { ok: false, message: `${d.name} tiene contrato para la próxima temporada`, people: p };
   const seats = nextSeasonLineup(p, teamId).filter((x) => x.id !== driverId).length;
   if (seats >= 2) return { ok: false, message: "Ya tienes dos pilotos para la próxima temporada", people: p };
-  const ask = askingSalary(d, p.season + 1, carRank, tpRating);
+  const ask = askingSalary(d, p.season + 1, carRank, tpRating, p.salaryCap);
+  if (p.salaryCap && salary > p.salaryCap + 1e-6) return { ok: false, message: `El tope salarial es US$ ${p.salaryCap} M por piloto`, people: p };
   const age = ageOf(d, p.season + 1);
   if (age >= 38 && years > 1) return { ok: false, message: `${d.name} solo acepta contratos de 1 año a su edad`, people: p };
   if (salary < ask * 0.97) return { ok: false, message: `${d.name} rechaza la oferta: pide al menos US$ ${ask.toFixed(1)} M por año`, people: p };
@@ -198,6 +201,8 @@ export function hireStaff(p: PeopleState, staffId: string, teamId: string): { pe
 }
 
 // --- Season change -------------------------------------------------------------
+
+const capSalary = (p: PeopleState, s: number) => (p.salaryCap ? Math.min(p.salaryCap, s) : s);
 
 const clamp = (x: number, lo = 50, hi = 99) => Math.max(lo, Math.min(hi, x));
 
@@ -298,7 +303,7 @@ export function advanceSeason(
     const keep = age <= 38 && d.pace >= Math.max(...teamPace, 0) - 4 && rng.chance(0.8);
     if (keep) {
       const years = age >= 35 ? 1 : rng.int(1, 3);
-      d.nextContract = { teamId: d.contract.teamId, salary: marketValue(d, season), until: season + years - 1 };
+      d.nextContract = { teamId: d.contract.teamId, salary: capSalary(p0, marketValue(d, season)), until: season + years - 1 };
     }
   }
 
@@ -349,7 +354,7 @@ export function advanceSeason(
       if (!pick) break;
       taken.add(pick.id);
       const years = ageOf(pick, season) <= 24 ? 2 : 1;
-      const salary = marketValue(pick, season);
+      const salary = capSalary(p0, marketValue(pick, season));
       drivers[pick.id] = { ...pick, status: "active", contract: { teamId: t.id, salary, until: season + years - 1 } };
       const again = prevTeam.get(pick.id) === t.id;
       news.push(

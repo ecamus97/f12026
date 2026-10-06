@@ -37,6 +37,16 @@ import {
   teamStaff,
   lineup,
   type PeopleState,
+  DEFAULT_RULES,
+  POINTS_TABLES,
+  generateProposals,
+  resolveVote,
+  rulesFor,
+  areaRanks,
+  type RuleSet,
+  type RuleProposal,
+  type TeamContext,
+  type Vote,
 } from "@/engine";
 
 const STORAGE_KEY = "f1-manager-2026-v2";
@@ -72,6 +82,8 @@ export interface GameState {
   people: PeopleState | null; // contracts, ages, staff
   pastSeasons: SeasonSummary[];
   seasonNews: string[]; // what happened in the last off-season
+  rules: RuleSet; // regulations in force this season
+  proposals: RuleProposal[]; // FIA decrees and votes (all seasons)
 }
 
 const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = DEFAULT_SIM_CONFIG): GameState => ({
@@ -88,7 +100,24 @@ const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = D
   people: null,
   pastSeasons: [],
   seasonNews: [],
+  rules: DEFAULT_RULES,
+  proposals: [],
 });
+
+const regsOf = (r: RuleSet) => ({ budgetCap: r.budgetCap, puFreeze: r.puFreeze, flatPrize: r.flatPrize });
+
+/** How each team sees itself when it votes. */
+function teamContexts(s: GameState): TeamContext[] {
+  const m = s.management;
+  if (!m) return [];
+  return s.teamsData.map((t) => ({
+    teamId: t.id,
+    carRank: carRankOf(m, t.id),
+    puRank: areaRanks(m, t.id).powerUnit,
+    driverPayroll: s.people ? payroll(s.people, t.id).drivers : 30,
+    teams: s.teamsData.length,
+  }));
+}
 
 const totalPayroll = (p: PeopleState, teamId: string) => {
   const x = payroll(p, teamId);
@@ -107,6 +136,7 @@ function loadState(): GameState {
     const parsed = JSON.parse(raw) as GameState;
     if (parsed?.version !== 2 || !Array.isArray(parsed.teamsData)) return initialState();
     const state = { ...initialState(), ...parsed };
+    state.rules = { ...DEFAULT_RULES, ...(parsed.rules ?? {}) };
     // saves from before team management existed
     if (state.playerTeamId && !state.management) {
       state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
@@ -180,7 +210,7 @@ export function useGameState() {
   const chooseTeam = useCallback((teamId: string) => {
     setGameState((s) => {
       const people = initPeople(s.teamsData, randomSeed());
-      let management = withStaff(initManagement(s.teamsData, teamId, randomSeed()), people);
+      let management = { ...withStaff(initManagement(s.teamsData, teamId, randomSeed()), people), regs: regsOf(s.rules) };
       if (management.player) management = { ...management, player: { ...management.player, salaryFund: totalPayroll(people, teamId) } };
       return {
         ...s,
@@ -242,6 +272,15 @@ export function useGameState() {
     });
   }, []);
 
+  const castVote = useCallback((proposalId: string, vote: Vote) => {
+    setGameState((s) => ({
+      ...s,
+      proposals: s.proposals.map((p) =>
+        p.id === proposalId && p.status === "pending" ? resolveVote(p, teamContexts(s), s.playerTeamId, vote, randomSeed()) : p,
+      ),
+    }));
+  }, []);
+
   // --- Race weekend ------------------------------------------------------------
 
   const startWeekend = useCallback(() => {
@@ -270,7 +309,11 @@ export function useGameState() {
       const race = races2026[w.raceIndex];
       const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
       const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
-      return { ...s, weekend: { ...w, race: createRace(race, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather) } };
+      const r = s.rules;
+      const raceForRules = r.highDegTyres ? { ...race, track: { ...race.track, deg: +(race.track.deg * 1.2).toFixed(2) } } : race;
+      const rs = createRace(raceForRules, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather);
+      rs.rules = { twoCompound: r.twoCompound, overtakeAid: r.overtakeAid, points: POINTS_TABLES[r.points], fastestLapPoint: r.fastestLapPoint };
+      return { ...s, weekend: { ...w, race: rs } };
     });
   }, []);
 
@@ -310,8 +353,28 @@ export function useGameState() {
           };
         }
       }
+      // regulations: votes not cast in time count as abstentions, new proposals are announced
+      let proposals = s.proposals.map((p) =>
+        p.status === "pending" && p.round < round ? resolveVote(p, teamContexts(s), s.playerTeamId, "abstain", randomSeed()) : p,
+      );
+      const fresh = generateProposals(s.season, round, rulesFor(s.season + 1, s.rules, proposals), proposals, randomSeed());
+      proposals = [...proposals, ...fresh];
+      if (management && fresh.length) {
+        management = {
+          ...management,
+          inbox: [
+            ...management.inbox,
+            ...fresh.map((p) => ({
+              race: round,
+              tone: "info" as const,
+              text: p.by === "fia" ? `La FIA decreta para ${p.effective}: ${p.title}.` : `Votación de reglamento para ${p.effective}: ${p.title}. Vota en Reglamento.`,
+            })),
+          ].slice(-60),
+        };
+      }
       return {
         ...s,
+        proposals,
         results: [...s.results.filter((r) => r.raceId !== result.raceId), result],
         currentRaceIndex: round,
         weekend: null,
@@ -328,8 +391,29 @@ export function useGameState() {
       const st = computeStandings(s.teamsData, s.results);
       const order = st.teams.map((t) => t.teamId);
       const carRanks = Object.fromEntries(Object.keys(s.management.dev).map((id) => [id, carRankOf(s.management!, id)]));
-      const { people, news } = advanceSeason(s.people, s.teamsData, s.playerTeamId, carRanks);
-      let management = withStaff(startNewSeason(s.management, s.teamsData, order, people.season), people);
+      const proposals = s.proposals.map((p) =>
+        p.status === "pending" ? resolveVote(p, teamContexts(s), s.playerTeamId, "abstain", randomSeed()) : p,
+      );
+      const rules = rulesFor(s.season + 1, s.rules, proposals);
+      const adv = advanceSeason({ ...s.people, salaryCap: rules.salaryCap }, s.teamsData, s.playerTeamId, carRanks);
+      const news = adv.news;
+      let people = adv.people;
+      if (rules.salaryCap) {
+        const cap = rules.salaryCap;
+        const clip = (c: typeof people.drivers[string]["contract"]) => (c && c.salary > cap ? { ...c, salary: cap } : c);
+        people = {
+          ...people,
+          drivers: Object.fromEntries(Object.entries(people.drivers).map(([id, d]) => [id, { ...d, contract: clip(d.contract), nextContract: clip(d.nextContract) }])),
+        };
+      }
+      let management = { ...withStaff(startNewSeason(s.management, s.teamsData, order, people.season), people), regs: regsOf(rules) };
+      const changes = proposals.filter((p) => p.effective === people.season && (p.status === "approved" || p.status === "decreed"));
+      if (changes.length) {
+        management = {
+          ...management,
+          inbox: [...management.inbox, { race: 0, tone: "info" as const, text: `Reglamento ${people.season}: ${changes.map((p) => p.title).join(" · ")}.` }].slice(-60),
+        };
+      }
       const mine = news.filter((n) => n.startsWith("Tu equipo"));
       if (mine.length) {
         management = { ...management, inbox: [...management.inbox, ...mine.map((text) => ({ race: 0, tone: "info" as const, text }))].slice(-60) };
@@ -354,6 +438,8 @@ export function useGameState() {
         currentRaceIndex: 0,
         weekend: null,
         pastSeasons: [...s.pastSeasons, summary],
+        rules,
+        proposals,
         seasonNews: news,
       };
     });
@@ -414,5 +500,6 @@ export function useGameState() {
     offerContract,
     releaseDriver,
     hireStaff,
+    castVote,
   };
 }

@@ -173,6 +173,22 @@ export interface ManagementState {
   nextUid: number;
   history: DevSnapshot[]; // development of every team, after each round
   staffRatings?: Record<string, { tp: number; td: number }>; // team principal / technical director per team
+  regs?: { budgetCap: number | null; puFreeze: boolean; flatPrize: boolean }; // regulations that affect development and money
+}
+
+/** R&D + facilities spent this season (the ledger restarts every season). */
+export function seasonInvestment(p: PlayerEconomy) {
+  return p.ledger.filter((l) => {
+    const c = ledgerCategory(l);
+    return (c === "rnd" || c === "facilities") && l.amount < 0;
+  }).reduce((a, l) => a - l.amount, 0);
+}
+
+function capCheck(m: ManagementState, cost: number): string | null {
+  const cap = m.regs?.budgetCap;
+  if (!cap || !m.player) return null;
+  const spent = seasonInvestment(m.player);
+  return spent + cost > cap + 1e-6 ? `Límite presupuestario: quedan US$ ${Math.max(0, cap - spent).toFixed(1)} M esta temporada` : null;
 }
 
 /** Technical director: better development results (0.85x .. 1.2x) and success chance. */
@@ -309,8 +325,9 @@ export function canStartProject(m: ManagementState, templateId: string): string 
   if (!p || !t) return "Proyecto no disponible";
   if (p.projects.length >= maxProjects(p)) return "No hay capacidad: espera que termine un proyecto";
   if (p.projects.some((x) => x.templateId === t.id)) return "Ya está en desarrollo";
+  if (t.area === "powerUnit" && m.regs?.puFreeze) return "Motores congelados por reglamento";
   if (p.budget < t.cost) return "Presupuesto insuficiente";
-  return null;
+  return capCheck(m, t.cost);
 }
 
 export function startProject(m: ManagementState, templateId: string, round: number): ManagementState {
@@ -337,7 +354,7 @@ export function canUpgradeFacility(m: ManagementState, key: FacilityKey): string
   if (lvl >= MAX_FACILITY_LEVEL) return "Nivel máximo";
   if (p.facilityWork) return "Ya hay una obra en curso";
   if (p.budget < facilityUpgradeCost(lvl)) return "Presupuesto insuficiente";
-  return null;
+  return capCheck(m, facilityUpgradeCost(lvl));
 }
 
 export function upgradeFacility(m: ManagementState, key: FacilityKey, round: number): ManagementState {
@@ -414,11 +431,13 @@ function developAi(m: ManagementState, teams: Team[], rng: Rng): Record<string, 
     if (t.id === m.player?.teamId) continue;
     const d = dev[t.id];
     if (!d) continue;
-    const budgetFactor = ((m.aiBudget[t.id] ?? 40) / 45) * tdMult(m.staffRatings?.[t.id]?.td);
+    const cap = m.regs?.budgetCap;
+    const budget = Math.min(m.aiBudget[t.id] ?? 40, cap ? cap * 0.8 : Infinity);
+    const budgetFactor = (budget / 45) * tdMult(m.staffRatings?.[t.id]?.td);
     let next = d;
     // ~1.6 projects' worth of gains per race spread over areas
     for (const area of ["aero", "powerUnit", "chassis"] as DevArea[]) {
-      if (rng.chance(0.42)) {
+      if (rng.chance(0.42) && !(area === "powerUnit" && m.regs?.puFreeze)) {
         const g = (0.6 + rng.next() * 1.2) * budgetFactor * diminishing(next[area]) * 0.28;
         next = applyGain(next, area, g);
       }
@@ -576,7 +595,8 @@ export function chargePlayer(m: ManagementState, round: number, concept: string,
 // --- Seasons -----------------------------------------------------------------
 
 /** Prize money from the constructors' championship, paid when the next season starts. */
-export const constructorsPrize = (pos: number) => Math.round(10 + (11 - Math.min(11, pos)) * 2.5);
+export const constructorsPrize = (pos: number, flat = false) =>
+  Math.round(flat ? 18 + (11 - Math.min(11, pos)) * 1.25 : 10 + (11 - Math.min(11, pos)) * 2.5);
 
 export interface SeasonFinance {
   income: number;
@@ -617,13 +637,13 @@ export function startNewSeason(m: ManagementState, teams: Team[], constructorsOr
     return i < 0 ? 11 : i + 1;
   };
   const aiBudget: Record<string, number> = {};
-  for (const id of ids) aiBudget[id] = startBudget(carPace(dev[id])) + Math.round(constructorsPrize(posOf(id)) * 0.3);
+  for (const id of ids) aiBudget[id] = startBudget(carPace(dev[id])) + Math.round(constructorsPrize(posOf(id), m.regs?.flatPrize) * 0.3);
   let player = m.player;
   const inbox: InboxMessage[] = [{ race: 0, tone: "info", text: `Comienza la temporada ${season}. Las diferencias entre autos se reducen un poco con la estabilidad del reglamento.` }];
   let nm: ManagementState = { ...m, dev, aiBudget, nextUid: m.nextUid + 1000 };
   if (player) {
     const pos = posOf(player.teamId);
-    const prize = constructorsPrize(pos);
+    const prize = constructorsPrize(pos, m.regs?.flatPrize);
     const fin = seasonFinance(player);
     inbox.push({ race: 0, tone: "good", text: `Premio del campeonato de constructores ${season - 1} (P${pos}): US$ ${prize} M.` });
     player = {
