@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -80,6 +80,17 @@ export default function F1Game() {
   const [moreOpen, setMoreOpen] = useState(false);
 
   const playerTeam = gameState.teamsData.find((t) => t.id === gameState.playerTeamId) ?? null;
+  // dialogs render outside the app wrapper: paint the whole document with the team colours
+  useEffect(() => {
+    const root = document.documentElement;
+    const vars = playerTeam ? teamThemeVars(playerTeam.hex) : {};
+    const keys = Object.keys(teamThemeVars("#e10600"));
+    for (const k of keys) {
+      const v = (vars as Record<string, string>)[k];
+      if (v) root.style.setProperty(k, v);
+      else root.style.removeProperty(k);
+    }
+  }, [playerTeam?.hex]);
   const weekend = gameState.weekend;
   const weekendRace = weekend ? races[weekend.raceIndex] : null;
   const pendingVotes = gameState.proposals.filter((p) => p.status === "pending" && p.season === gameState.season).length;
@@ -180,7 +191,7 @@ export default function F1Game() {
     );
   };
 
-  const focusMode = screen === "weekend"; // the race uses the whole width
+  const focusMode = false; // the sidebar keeps its size on every screen
   const sideW = focusMode ? "lg:w-[68px]" : "lg:w-60";
   const padL = focusMode ? "lg:pl-[68px]" : "lg:pl-60";
 
@@ -259,7 +270,7 @@ export default function F1Game() {
           </div>
         </header>
 
-        <main className={cn("px-4 md:px-8 py-6 pb-28 lg:pb-10 mx-auto", focusMode ? "max-w-[1500px]" : "max-w-7xl")}>
+        <main className={cn("px-4 md:px-8 py-6 pb-28 lg:pb-10 mx-auto", screen === "weekend" ? "max-w-[1500px]" : "max-w-7xl")}>
           <AnimatePresence mode="wait">
             {screen === "home" && (
               <motion.div key="home" {...fade} className="space-y-6">

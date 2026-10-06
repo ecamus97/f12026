@@ -80,3 +80,30 @@ describe("people and seasons", () => {
     expect(carRankOf(n, "williams")).toBeGreaterThan(0);
   });
 });
+
+import { negotiate, talkOf, talkLocked } from "@/engine";
+describe("negotiations", () => {
+  it("counters, accepts the counter and walks out after bad offers", () => {
+    const p = initPeople(teams, 3);
+    const o = { ask: 10, years: 2, age: 28, name: "X", round: 3 };
+    const a = negotiate(p, "d:test", { ...o, salary: 8 });
+    expect(["counter", "accept"]).toContain(a.result);
+    if (a.result === "counter") {
+      expect(a.counter!).toBeLessThanOrEqual(10.1);
+      expect(negotiate(a.people, "d:test", { ...o, salary: a.counter! }).result).toBe("accept");
+    }
+    let q = p;
+    let last = "";
+    for (let i = 0; i < 6; i++) {
+      const r = negotiate(q, "d:cheap", { ...o, salary: 3 });
+      q = r.people;
+      last = r.result;
+      if (r.result === "walkout") break;
+    }
+    expect(last).toBe("walkout");
+    expect(talkLocked(talkOf(q, "d:cheap"), p.season, 4)).toBe(true);
+    expect(negotiate(q, "d:cheap", { ...o, salary: 50, round: 4 }).result).toBe("locked");
+    expect(negotiate(q, "d:cheap", { ...o, salary: 50, round: 8 }).result).toBe("accept");
+    expect(negotiate(p, "d:fair", { ...o, salary: 10 }).result).toBe("accept");
+  });
+});

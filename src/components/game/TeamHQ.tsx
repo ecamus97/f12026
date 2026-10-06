@@ -15,6 +15,7 @@ import { TeamStripe } from "./common";
 import { DriversPanel, StaffPanel } from "./PeoplePanels";
 import { SectionTitle } from "./visuals";
 import { FacilitiesCampus } from "./FacilitiesCampus";
+import type { NegotiationAnswer } from "./NegotiationDialog";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -26,11 +27,11 @@ interface Props {
   onUpgradeFacility: (key: FacilityKey) => void;
   onSignSponsor: (offerId: string) => void;
   people?: PeopleState | null;
-  onOffer?: (driverId: string, salary: number, years: number) => { ok: boolean; message: string };
+  onOffer?: (driverId: string, salary: number, years: number) => NegotiationAnswer;
   onRelease?: (driverId: string) => void;
-  onHireStaff?: (staffId: string) => void;
+  onHireStaff?: (staffId: string, salary: number, years: number) => NegotiationAnswer;
   onFireStaff?: (staffId: string) => void;
-  onRenewStaff?: (staffId: string) => void;
+  onRenewStaff?: (staffId: string, salary: number, years: number) => NegotiationAnswer;
   section?: "car" | "facilities" | "drivers" | "staff" | "finance"; // show a single section (no tab bar)
 }
 
@@ -274,10 +275,10 @@ export function TeamHQ({
       {tab === "facilities" && <FacilitiesCampus management={management} teamColor={team.hex} onUpgrade={onUpgradeFacility} />}
 
       {tab === "drivers" && people && onOffer && onRelease && (
-        <DriversPanel people={people} team={team} teams={teams} management={management} onOffer={onOffer} onRelease={onRelease} />
+        <DriversPanel people={people} team={team} teams={teams} management={management} onOffer={onOffer} onRelease={onRelease} round={round} />
       )}
       {tab === "staff" && people && onHireStaff && (
-        <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} onFire={onFireStaff} onRenew={onRenewStaff} />
+        <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} onFire={onFireStaff} onRenew={onRenewStaff} round={round} />
       )}
 
       {tab === "finance" && <Finance management={management} onSignSponsor={onSignSponsor} />}

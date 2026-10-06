@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import type { Team } from "@/data/f1Data";
 import { STAFF_ROLE_INFO, STAFF_ROLES, type StaffRole } from "@/data/peopleData";
 import { SectionTitle } from "./visuals";
+import { NegotiationDialog, type NegotiationAnswer } from "./NegotiationDialog";
 import {
   ageOf, askingSalary, availableForNextSeason, carRankOf, lineup, nextSeasonLineup, payroll, teamStaff,
-  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING,
+  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING, talkOf, renewalAsk,
   type DriverRecord, type ManagementState, type PeopleState, type StaffRecord,
 } from "@/engine";
 import { TeamStripe } from "./common";
@@ -35,14 +36,15 @@ function Ratings({ d }: { d: DriverRecord }) {
 type MarketFilter = "all" | "contract" | "free" | "junior";
 
 export function DriversPanel({
-  people, team, teams, management, onOffer, onRelease,
+  people, team, teams, management, onOffer, onRelease, round = 0,
 }: {
   people: PeopleState;
   team: Team;
   teams: Team[];
   management: ManagementState;
-  onOffer: (driverId: string, salary: number, years: number) => { ok: boolean; message: string };
+  onOffer: (driverId: string, salary: number, years: number) => NegotiationAnswer;
   onRelease: (driverId: string) => void;
+  round?: number;
 }) {
   const season = people.season;
   const next = season + 1;
@@ -53,9 +55,6 @@ export function DriversPanel({
   const pay = payroll(people, team.id);
   const [filter, setFilter] = useState<MarketFilter>("all");
   const [offering, setOffering] = useState<string | null>(null);
-  const [salary, setSalary] = useState(0);
-  const [years, setYears] = useState(2);
-  const [answer, setAnswer] = useState<{ ok: boolean; message: string } | null>(null);
   const teamName = (id?: string | null) => teams.find((t) => t.id === id);
 
   const market = useMemo(
@@ -69,48 +68,9 @@ export function DriversPanel({
     [people, filter, team.id],
   );
 
-  const openOffer = (d: DriverRecord) => {
-    setOffering(d.id);
-    setSalary(askingSalary(d, next, carRank, tp));
-    setYears(ageOf(d, next) >= 38 ? 1 : 2);
-    setAnswer(null);
-  };
-
-  const offerForm = (d: DriverRecord) =>
-    offering === d.id && (
-      <div className="mt-2 rounded-md border border-primary/40 bg-primary/5 p-2 space-y-2">
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          <label className="flex items-center gap-1">
-            Sueldo (US$ M/año)
-            <input
-              type="number"
-              step={0.1}
-              min={0.3}
-              value={salary}
-              onChange={(e) => setSalary(Number(e.target.value))}
-              className="w-20 rounded border border-border bg-background px-1.5 py-1"
-            />
-          </label>
-          <div className="flex rounded border border-border overflow-hidden">
-            {[1, 2, 3].map((y) => (
-              <button key={y} onClick={() => setYears(y)} className={cn("px-2 py-1", years === y ? "bg-primary text-primary-foreground" : "hover:bg-muted")}>
-                {y} año{y > 1 ? "s" : ""}
-              </button>
-            ))}
-          </div>
-          <span className="text-muted-foreground">Pide ~{m1(askingSalary(d, next, carRank, tp))}/año</span>
-        </div>
-        <div className="flex gap-2">
-          <Button size="sm" className="text-xs" onClick={() => setAnswer(onOffer(d.id, salary, years))}>
-            Enviar oferta
-          </Button>
-          <Button size="sm" variant="ghost" className="text-xs" onClick={() => setOffering(null)}>
-            Cancelar
-          </Button>
-        </div>
-        {answer && <div className={cn("text-xs", answer.ok ? "text-green-400" : "text-orange-300")}>{answer.message}</div>}
-      </div>
-    );
+  const openOffer = (d: DriverRecord) => setOffering(d.id);
+  const offerFor = offering ? people.drivers[offering] : null;
+  const offerForm = (_d: DriverRecord) => null;
 
   return (
     <div className="space-y-4">
@@ -224,6 +184,23 @@ export function DriversPanel({
           {!market.length && <div className="py-3 text-sm text-muted-foreground">No hay pilotos en esta categoría.</div>}
         </div>
       </div>
+      {offerFor && (
+        <NegotiationDialog
+          open={!!offerFor}
+          onClose={() => setOffering(null)}
+          title={offerFor.name}
+          subtitle={`${offerFor.nationality} ${ageOf(offerFor, next)} años · ritmo ${offerFor.pace.toFixed(0)} · potencial ${potentialLabel(offerFor, season)} · contrato desde ${next}`}
+          avatar={<span className="font-display text-5xl w-16 text-center" style={{ color: team.hex }}>{offerFor.number}</span>}
+          ask={askingSalary(offerFor, next, carRank, tp, people.salaryCap)}
+          maxYears={ageOf(offerFor, next) >= 38 ? 1 : 3}
+          defaultYears={ageOf(offerFor, next) >= 33 ? 1 : 2}
+          talk={talkOf(people, `d:${offerFor.id}`, offerFor.pace >= 92)}
+          season={season}
+          round={round + 1}
+          cap={people.salaryCap}
+          onOffer={(salary, years) => onOffer(offerFor.id, salary, years)}
+        />
+      )}
     </div>
   );
 }
@@ -249,20 +226,23 @@ function staffEffect(role: StaffRole, r: number) {
 }
 
 export function StaffPanel({
-  people, team, teams, management, onHire, onFire, onRenew,
+  people, team, teams, management, onHire, onFire, onRenew, round = 0,
 }: {
   people: PeopleState;
   team: Team;
   teams: Team[];
   management: ManagementState;
-  onHire: (staffId: string) => void;
+  onHire: (staffId: string, salary: number, years: number) => NegotiationAnswer;
   onFire?: (staffId: string) => void;
-  onRenew?: (staffId: string) => void;
+  onRenew?: (staffId: string, salary: number, years: number) => NegotiationAnswer;
+  round?: number;
 }) {
   const season = people.season;
   const mine = teamStaff(people, team.id);
   const [role, setRole] = useState<StaffRole | "all">("all");
   const [confirmFire, setConfirmFire] = useState<string | null>(null);
+  const [talking, setTalking] = useState<{ id: string; mode: "hire" | "renew" } | null>(null);
+  const tStaff = talking ? people.staff[talking.id] : null;
   const free = Object.values(people.staff)
     .filter((s) => !s.teamId && (role === "all" || s.role === role))
     .sort((a, b) => b.rating - a.rating);
@@ -297,8 +277,8 @@ export function StaffPanel({
                     </div>
                     <div className="flex flex-wrap gap-2 pt-1">
                       {ends && onRenew && (
-                        <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => onRenew(st.id)}>
-                          Renovar 2 años (+10%)
+                        <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => setTalking({ id: st.id, mode: "renew" })}>
+                          Negociar renovación
                         </Button>
                       )}
                       {onFire &&
@@ -346,8 +326,8 @@ export function StaffPanel({
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Contratar cuesta medio año de sueldo como prima (contrato de 3 años). Si el puesto está ocupado, se paga la indemnización de quien sale
-          (la mitad de lo que le queda de contrato). El efecto es inmediato.
+          Cada candidato tiene un sueldo estimado; puedes ofrecer más o menos. Al firmar se paga medio año del sueldo acordado como prima y, si el
+          puesto está ocupado, la indemnización de quien sale (la mitad de lo que le queda de contrato). El efecto es inmediato.
         </p>
         <div className="divide-y divide-border/40">
           {free.map((s) => {
@@ -369,8 +349,8 @@ export function StaffPanel({
                     {current && <span className="text-[10px] text-muted-foreground"> vs {current.rating}</span>}
                   </span>
                   <span className="text-muted-foreground">{m1(s.salary)}/año</span>
-                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={budget < cost} onClick={() => onHire(s.id)}>
-                    Contratar · {m1(cost)}
+                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={budget < cost * 0.6} onClick={() => setTalking({ id: s.id, mode: "hire" })}>
+                    Negociar
                   </Button>
                 </span>
               </div>
@@ -417,6 +397,26 @@ export function StaffPanel({
           </tbody>
         </table>
       </div>
+      {tStaff && talking && (
+        <NegotiationDialog
+          open
+          onClose={() => setTalking(null)}
+          title={tStaff.name}
+          subtitle={`${tStaff.nationality} ${STAFF_ROLE_INFO[tStaff.role].label} · valoración ${tStaff.rating} · ${talking.mode === "renew" ? `contrato actual hasta ${tStaff.until ?? season}` : "disponible"}`}
+          avatar={<span className="text-5xl w-16 text-center">{ROLE_ICON[tStaff.role]}</span>}
+          ask={talking.mode === "renew" ? renewalAsk(tStaff) : tStaff.salary}
+          defaultYears={talking.mode === "renew" ? 2 : 3}
+          talk={talkOf(people, `${talking.mode === "renew" ? "r" : "s"}:${tStaff.id}`, tStaff.rating >= 88)}
+          season={season}
+          round={round + 1}
+          onOffer={(salary, years) => (talking.mode === "renew" ? onRenew!(tStaff.id, salary, years) : onHire(tStaff.id, salary, years))}
+          costNote={(salary) => {
+            if (talking.mode === "renew") return `Renovación: el nuevo sueldo rige desde ya.`;
+            const cur = mine[tStaff.role];
+            return `Al firmar pagas US$ ${(salary * 0.5).toFixed(1)} M de prima${cur ? ` + US$ ${severance(cur, season).toFixed(1)} M de indemnización a ${cur.name}` : ""}.`;
+          }}
+        />
+      )}
     </div>
   );
 }

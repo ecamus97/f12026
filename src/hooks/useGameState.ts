@@ -39,6 +39,9 @@ import {
   teamStaff,
   lineup,
   type PeopleState,
+  type TalkResult,
+  offerStaffContract,
+  offerStaffRenewal,
   migrateStaff,
   fireStaff as fireStaffFn,
   renewStaff as renewStaffFn,
@@ -73,6 +76,13 @@ import {
 } from "@/engine";
 
 const STORAGE_KEY = "f1-manager-2026-v2";
+
+export interface NegotiationAnswer {
+  ok: boolean;
+  message: string;
+  result: TalkResult;
+  counter?: number;
+}
 
 export interface Weekend {
   raceIndex: number;
@@ -521,61 +531,69 @@ export function useGameState() {
   // --- People ------------------------------------------------------------------
 
   /** Offer a contract for next season. Returns the driver's answer. */
-  const offerContract = useCallback((driverId: string, salary: number, years: number): { ok: boolean; message: string } => {
+  /** One offer to a driver for next season: they accept, counter or walk away. */
+  const offerContract = useCallback((driverId: string, salary: number, years: number): NegotiationAnswer => {
     const s = stateRef.current;
-    if (!s.people || !s.management || !s.playerTeamId) return { ok: false, message: "No disponible" };
+    if (!s.people || !s.management || !s.playerTeamId) return { ok: false, message: "No disponible", result: "reject" };
     const tp = teamStaff(s.people, s.playerTeamId).tp?.rating ?? 80;
-    const r = offerDriverContract(s.people, driverId, s.playerTeamId, salary, years, carRankOf(s.management, s.playerTeamId), tp);
-    if (r.ok) {
-      setGameState((cur) =>
-        cur.people && cur.management
-          ? {
-              ...cur,
-              people: { ...cur.people, drivers: { ...cur.people.drivers, [driverId]: r.people.drivers[driverId] } },
-              management: { ...cur.management, inbox: [...cur.management.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) },
-              news: addNews(cur.news, [
-                marketNews({
-                  season: cur.season,
-                  round: cur.currentRaceIndex,
-                  id: `player-${driverId}`,
-                  teamId: s.playerTeamId!,
-                  mine: true,
-                  look: lookupOf(cur),
-                  title: `Oficial: ${r.people.drivers[driverId].name} firma con ${lookupOf(cur).team(s.playerTeamId!)?.name}`,
-                  summary: r.message,
-                  body: [r.message, `Ritmo actual ${r.people.drivers[driverId].pace.toFixed(0)}, potencial estimado alto para su edad.`],
-                }),
-              ]),
-            }
-          : cur,
-      );
-    }
-    return { ok: r.ok, message: r.message };
+    const r = offerDriverContract(s.people, driverId, s.playerTeamId, salary, years, carRankOf(s.management, s.playerTeamId), tp, s.currentRaceIndex + 1);
+    const talks = r.people.talks;
+    setGameState((cur) => {
+      if (!cur.people || !cur.management) return cur;
+      const people = { ...cur.people, talks, drivers: r.ok ? { ...cur.people.drivers, [driverId]: r.people.drivers[driverId] } : cur.people.drivers };
+      if (!r.ok) return { ...cur, people };
+      return {
+        ...cur,
+        people,
+        management: { ...cur.management, inbox: [...cur.management.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) },
+        news: addNews(cur.news, [
+          marketNews({
+            season: cur.season,
+            round: cur.currentRaceIndex,
+            id: `player-${driverId}`,
+            teamId: s.playerTeamId!,
+            mine: true,
+            look: lookupOf(cur),
+            title: `Oficial: ${r.people.drivers[driverId].name} firma con ${lookupOf(cur).team(s.playerTeamId!)?.name}`,
+            summary: r.message,
+            body: [r.message, `Ritmo actual ${r.people.drivers[driverId].pace.toFixed(0)}.`],
+          }),
+        ]),
+      };
+    });
+    return { ok: r.ok, message: r.message, result: r.result ?? (r.ok ? "accept" : "reject"), counter: r.counter };
   }, []);
 
   const releaseDriver = useCallback((driverId: string) => {
     setGameState((s) => (s.people ? { ...s, people: releaseAtSeasonEnd(s.people, driverId) } : s));
   }, []);
 
-  const hireStaff = useCallback((staffId: string) => {
-    setGameState((s) => {
-      if (!s.people || !s.management || !s.playerTeamId) return s;
-      const r = hireStaffFn(s.people, staffId, s.playerTeamId);
-      if (!r.cost && r.people === s.people) return s;
-      const m = chargePlayer(withStaff(s.management, r.people), s.currentRaceIndex, `Contratación: ${r.people.staff[staffId].name}`, -r.cost, "transfers", r.message);
+  /** Negotiate with someone on the staff market; on agreement they join right away. */
+  const hireStaff = useCallback((staffId: string, salary: number, years: number): NegotiationAnswer => {
+    const s = stateRef.current;
+    if (!s.people || !s.management || !s.playerTeamId) return { ok: false, message: "No disponible", result: "reject" };
+    const r = offerStaffContract(s.people, staffId, s.playerTeamId, salary, years, s.currentRaceIndex + 1);
+    if (r.result === "accept" && (s.management.player?.budget ?? 0) < r.cost) {
+      return { ok: false, message: `Aceptaría, pero no tienes presupuesto para la prima y la indemnización (US$ ${r.cost.toFixed(1)} M).`, result: "reject" };
+    }
+    setGameState((cur) => {
+      if (!cur.people || !cur.management || !cur.playerTeamId) return cur;
+      if (r.result !== "accept") return { ...cur, people: { ...cur.people, talks: r.people.talks } };
+      const m = chargePlayer(withStaff(cur.management, r.people), cur.currentRaceIndex, `Contratación: ${r.people.staff[staffId].name}`, -r.cost, "transfers", r.message);
       const n = marketNews({
-        season: s.season,
-        round: s.currentRaceIndex,
+        season: cur.season,
+        round: cur.currentRaceIndex,
         id: `staff-${staffId}`,
-        teamId: s.playerTeamId,
+        teamId: cur.playerTeamId,
         mine: true,
-        look: lookupOf(s),
-        title: `${lookupOf(s).team(s.playerTeamId)?.name} contrata a ${r.people.staff[staffId].name}`,
+        look: lookupOf(cur),
+        title: `${lookupOf(cur).team(cur.playerTeamId)?.name} contrata a ${r.people.staff[staffId].name}`,
         summary: r.message,
-        body: [r.message, `Costo de la operación: US$ ${r.cost.toFixed(1)} M.`],
+        body: [r.message, `Sueldo US$ ${salary.toFixed(1)} M/año. Costo de la operación: US$ ${r.cost.toFixed(1)} M.`],
       });
-      return { ...s, people: r.people, management: m, news: addNews(s.news, [n]) };
+      return { ...cur, people: r.people, management: m, news: addNews(cur.news, [n]) };
     });
+    return { ok: r.result === "accept", message: r.message, result: r.result, counter: r.counter };
   }, []);
 
   const fireStaff = useCallback((staffId: string) => {
@@ -588,13 +606,21 @@ export function useGameState() {
     });
   }, []);
 
-  const renewStaff = useCallback((staffId: string) => {
-    setGameState((s) => {
-      if (!s.people || !s.management) return s;
-      const r = renewStaffFn(s.people, staffId);
-      const m = s.management;
-      return { ...s, people: r.people, management: { ...m, inbox: [...m.inbox, { race: s.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) } };
+  const renewStaff = useCallback((staffId: string, salary: number, years: number): NegotiationAnswer => {
+    const s = stateRef.current;
+    if (!s.people || !s.management) return { ok: false, message: "No disponible", result: "reject" };
+    const r = offerStaffRenewal(s.people, staffId, salary, years, s.currentRaceIndex + 1);
+    setGameState((cur) => {
+      if (!cur.people || !cur.management) return cur;
+      if (r.result !== "accept") return { ...cur, people: { ...cur.people, talks: r.people.talks } };
+      const m = cur.management;
+      return {
+        ...cur,
+        people: { ...cur.people, talks: r.people.talks, staff: { ...cur.people.staff, [staffId]: r.people.staff[staffId] } },
+        management: { ...withStaff(m, r.people), inbox: [...m.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) },
+      };
     });
+    return { ok: r.result === "accept", message: r.message, result: r.result, counter: r.counter };
   }, []);
 
   const castVote = useCallback((proposalId: string, vote: Vote) => {

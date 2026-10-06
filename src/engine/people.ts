@@ -45,6 +45,102 @@ export interface PeopleState {
   rngState: number;
   nextJunior: number;
   salaryCap?: number | null; // regulation: max salary per driver
+  talks?: Record<string, Talk>; // ongoing negotiations ("d:<id>" drivers, "s:<id>" staff)
+}
+
+// --- Negotiations -----------------------------------------------------------------
+
+export type TalkResult = "accept" | "counter" | "reject" | "walkout" | "locked";
+
+export interface TalkEntry {
+  round: number;
+  salary: number;
+  years: number;
+  result: TalkResult;
+  counter?: number;
+  msg: string;
+}
+
+export interface Talk {
+  patience: number;
+  maxPatience: number;
+  lastCounter: number | null;
+  lockedUntil: { season: number; round: number } | null;
+  log: TalkEntry[];
+}
+
+const hash01 = (str: string) => {
+  let h = 2166136261;
+  for (let i = 0; i < str.length; i++) h = Math.imul(h ^ str.charCodeAt(i), 16777619);
+  return ((h >>> 0) % 10000) / 10000;
+};
+const r1 = (x: number) => Math.round(x * 10) / 10;
+
+export function talkOf(p: PeopleState, key: string, star = false): Talk {
+  const t = p.talks?.[key];
+  if (t) return t;
+  const max = Math.max(2, 3 + (hash01(key + "pat") < 0.35 ? 1 : 0) - (star ? 1 : 0));
+  return { patience: max, maxPatience: max, lastCounter: null, lockedUntil: null, log: [] };
+}
+
+export function talkLocked(t: Talk, season: number, round: number) {
+  const l = t.lockedUntil;
+  return !!l && (season < l.season || (season === l.season && round < l.round));
+}
+
+/**
+ * One offer in a negotiation. The person has a hidden minimum (around the estimated salary),
+ * prefers some contract lengths, answers with a counter-offer and loses patience with low
+ * offers: when it runs out, they stop talking for a few races.
+ */
+export function negotiate(
+  p: PeopleState,
+  key: string,
+  o: { ask: number; salary: number; years: number; age?: number; name: string; round: number; star?: boolean },
+): { people: PeopleState; result: TalkResult; counter?: number; message: string } {
+  const season = p.season;
+  let t = talkOf(p, key, o.star);
+  if (talkLocked(t, season, o.round)) {
+    return { people: p, result: "locked", message: `${o.name} no quiere negociar contigo hasta la ronda ${t.lockedUntil!.round}.` };
+  }
+  if (t.lockedUntil) t = { ...t, lockedUntil: null, patience: t.maxPatience, lastCounter: null };
+  const reservation = o.ask * (0.84 + hash01(`${key}:${season}`) * 0.16); // never above the estimated salary
+  const age = o.age ?? 30;
+  const yearsAdj = age >= 33 ? 1 - 0.05 * (o.years - 1) : age <= 24 ? (o.years === 1 ? 0.96 : 1 + 0.02 * (o.years - 1)) : 1;
+  const eff = o.salary * yearsAdj;
+  const save = (tt: Talk, entry: TalkEntry) => ({ ...p, talks: { ...(p.talks ?? {}), [key]: { ...tt, log: [...tt.log, entry].slice(-8) } } });
+
+  const meetsCounter = t.lastCounter !== null && o.salary >= t.lastCounter - 1e-6;
+  if (eff >= reservation - 1e-6 || meetsCounter) {
+    const msg = o.salary >= o.ask * 1.15 ? `¡${o.name} acepta encantado!` : `¡Trato hecho! ${o.name} acepta la oferta.`;
+    return { people: save({ ...t, lastCounter: null }, { round: o.round, salary: o.salary, years: o.years, result: "accept", msg }), result: "accept", message: msg };
+  }
+  const ratio = eff / reservation;
+  const patience = t.patience - (ratio < 0.7 ? 2 : 1);
+  if (patience <= 0) {
+    const until = { season, round: o.round + 4 };
+    const msg = `${o.name} se cansó de las ofertas: su representante corta las negociaciones hasta la ronda ${until.round}.`;
+    return {
+      people: save({ ...t, patience: t.maxPatience, lastCounter: null, lockedUntil: until }, { round: o.round, salary: o.salary, years: o.years, result: "walkout", msg }),
+      result: "walkout",
+      message: msg,
+    };
+  }
+  const base = Math.max(reservation, (t.lastCounter ?? 0) * yearsAdj);
+  const counter = r1(Math.ceil(((base * (ratio < 0.7 ? 1.06 : 1)) / yearsAdj) * 10) / 10);
+  const msg =
+    ratio >= 0.9
+      ? `Estamos cerca. ${o.name} firma por US$ ${counter.toFixed(1)} M al año.`
+      : ratio >= 0.7
+        ? `La oferta está lejos de lo que espera. Su representante pide US$ ${counter.toFixed(1)} M al año.`
+        : `${o.name} se siente ofendido por la oferta. Exige US$ ${counter.toFixed(1)} M al año y su paciencia se agota.`;
+  const result: TalkResult = ratio >= 0.7 ? "counter" : "reject";
+  return {
+    people: save({ ...t, patience, lastCounter: counter }, { round: o.round, salary: o.salary, years: o.years, result, counter, msg }),
+    result,
+    counter,
+    message: msg,
+  };
 }
 
 export const ageOf = (d: { birthYear: number }, season: number) => season - d.birthYear;
@@ -182,6 +278,8 @@ export interface OfferResult {
   ok: boolean;
   message: string;
   people: PeopleState;
+  result?: TalkResult;
+  counter?: number;
 }
 
 export function offerDriverContract(
@@ -192,6 +290,7 @@ export function offerDriverContract(
   years: number,
   carRank: number,
   tpRating: number,
+  round = 0,
 ): OfferResult {
   const d = p.drivers[driverId];
   if (!d) return { ok: false, message: "Piloto no encontrado", people: p };
@@ -202,14 +301,16 @@ export function offerDriverContract(
   if (p.salaryCap && salary > p.salaryCap + 1e-6) return { ok: false, message: `El tope salarial es US$ ${p.salaryCap} M por piloto`, people: p };
   const age = ageOf(d, p.season + 1);
   if (age >= 38 && years > 1) return { ok: false, message: `${d.name} solo acepta contratos de 1 año a su edad`, people: p };
-  if (salary < ask * 0.97) return { ok: false, message: `${d.name} rechaza la oferta: pide al menos US$ ${ask.toFixed(1)} M por año`, people: p };
+  const n = negotiate(p, `d:${driverId}`, { ask, salary, years, age, name: d.name, round, star: d.pace >= 92 });
+  if (n.result !== "accept") return { ok: false, message: n.message, people: n.people, result: n.result, counter: n.counter };
   const next = p.season + 1;
   return {
     ok: true,
+    result: "accept",
     message: `${d.name} firma por ${years} año${years > 1 ? "s" : ""} (US$ ${salary.toFixed(1)} M/año) desde ${next}`,
     people: {
-      ...p,
-      drivers: { ...p.drivers, [driverId]: { ...d, nextContract: { teamId, salary, until: next + years - 1 } } },
+      ...n.people,
+      drivers: { ...n.people.drivers, [driverId]: { ...d, nextContract: { teamId, salary, until: next + years - 1 } } },
     },
   };
 }
@@ -221,12 +322,13 @@ export function releaseAtSeasonEnd(p: PeopleState, driverId: string): PeopleStat
   return { ...p, drivers: { ...p.drivers, [driverId]: { ...d, contract: { ...d.contract, until: p.season } } } };
 }
 
-export function hireStaff(p: PeopleState, staffId: string, teamId: string, years = 3): { people: PeopleState; cost: number; message: string } {
+export function hireStaff(p: PeopleState, staffId: string, teamId: string, years = 3, salary?: number): { people: PeopleState; cost: number; message: string } {
   const s = p.staff[staffId];
   if (!s || s.teamId) return { people: p, cost: 0, message: "No disponible" };
   const current = Object.values(p.staff).find((x) => x.teamId === teamId && x.role === s.role);
-  const staff = { ...p.staff, [staffId]: { ...s, teamId, until: p.season + years - 1 } };
-  let cost = s.salary * 0.5; // signing fee
+  const pay = salary ?? s.salary;
+  const staff = { ...p.staff, [staffId]: { ...s, teamId, until: p.season + years - 1, salary: pay } };
+  let cost = pay * 0.5; // signing fee
   if (current) {
     staff[current.id] = { ...current, teamId: null };
     cost += severance(current, p.season);
@@ -237,6 +339,46 @@ export function hireStaff(p: PeopleState, staffId: string, teamId: string, years
     message: `${s.name} es el nuevo ${STAFF_ROLE_INFO[s.role].label.toLowerCase()} hasta ${p.season + years - 1}${current ? ` (reemplaza a ${current.name})` : ""}`,
   };
 }
+
+/** Hiring through a negotiation: on agreement the person joins right away. */
+export function offerStaffContract(
+  p: PeopleState,
+  staffId: string,
+  teamId: string,
+  salary: number,
+  years: number,
+  round: number,
+): { people: PeopleState; result: TalkResult; counter?: number; message: string; cost: number } {
+  const s = p.staff[staffId];
+  if (!s || s.teamId) return { people: p, result: "reject", message: "No disponible", cost: 0 };
+  const n = negotiate(p, `s:${staffId}`, { ask: s.salary, salary, years, name: s.name, round, star: s.rating >= 88 });
+  if (n.result !== "accept") return { people: n.people, result: n.result, counter: n.counter, message: n.message, cost: 0 };
+  const h = hireStaff(n.people, staffId, teamId, years, salary);
+  return { people: h.people, result: "accept", message: h.message, cost: h.cost };
+}
+
+/** Renewing staff: they ask a raise and negotiate like anyone else. */
+export function offerStaffRenewal(
+  p: PeopleState,
+  staffId: string,
+  salary: number,
+  years: number,
+  round: number,
+): { people: PeopleState; result: TalkResult; counter?: number; message: string } {
+  const s = p.staff[staffId];
+  if (!s?.teamId) return { people: p, result: "reject", message: "No disponible" };
+  const n = negotiate(p, `r:${staffId}`, { ask: renewalAsk(s), salary, years, name: s.name, round, star: s.rating >= 88 });
+  if (n.result !== "accept") return n;
+  const until = Math.max(s.until ?? p.season, p.season) + years;
+  return {
+    people: { ...n.people, staff: { ...n.people.staff, [staffId]: { ...s, until, salary } } },
+    result: "accept",
+    message: `${s.name} renueva hasta ${until} (US$ ${salary.toFixed(1)} M/año)`,
+  };
+}
+
+/** What someone expects to renew: a raise, bigger for the best. */
+export const renewalAsk = (s: StaffRecord) => r1(Math.max(s.salary * 1.08, staffSalary(s.role, s.rating) * 1.05));
 
 /** Let someone go now, paying the rest of the contract. */
 export function fireStaff(p: PeopleState, staffId: string): { people: PeopleState; cost: number; message: string } {
@@ -556,7 +698,7 @@ export function advanceSeason(
     }
   }
 
-  return { people: { ...p1, drivers, staff, rngState: rng.state(), nextJunior }, news };
+  return { people: { ...p1, drivers, staff, rngState: rng.state(), nextJunior, talks: {} }, news };
 }
 
 /** Put each season's line-ups into the team list used by the races (keeps team order). */
