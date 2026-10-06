@@ -267,6 +267,7 @@ export default function F1Game() {
                 <QualifyingView
                   race={weekendRace}
                   quali={weekend.quali}
+                  weather={weekend.weather}
                   revealed={weekend.qualiRevealed}
                   entryMap={entryMap}
                   playerTeamId={gameState.playerTeamId}

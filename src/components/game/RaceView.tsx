@@ -6,13 +6,14 @@ import {
 import { Button } from "@/components/ui/button";
 import type { Race } from "@/data/f1Data";
 import {
-  COMPOUNDS, MODES, confirmStrategy, editNextStop, formatLap, gapToLeader, requestPit, setMode, simulateLap, simulateToEnd, tyreLife,
-  type CarState, type Compound, type DriverMode, type RaceEvent, type RaceState,
+  COMPOUNDS, MODES, FUEL_MODES, ERS_MODES, setFuelMode, setErsMode, confirmStrategy, editNextStop, formatLap, gapToLeader, requestPit, setMode, simulateLap, simulateToEnd, tyreLife,
+  type CarState, type Compound, type DriverMode, type FuelMode, type ErsMode, type RaceEvent, type RaceState,
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
 import { TrackMap, lapProgressDetailed, type LapAnimation } from "./TrackMap";
 import { StrategyPlanner } from "./StrategyPlanner";
+import { WeatherWidget } from "./WeatherWidget";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -120,7 +121,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
       const next = anim.to;
       const fresh = next.events.slice(state.events.length);
       const pause = fresh.some(
-        (e) => e.type === "sc" || (e.type === "dnf" && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
+        (e) => e.type === "sc" || e.type === "weather" || (e.type === "dnf" && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
       );
       if (pause || next.finished) setPlaying(false);
       setAnim(null);
@@ -270,6 +271,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           </Button>
         </div>
       </div>
+
+      {state.weather && <WeatherWidget weather={state.weather} lap={state.lap} title="Clima en pista" />}
 
       {state.lap === 0 && !anim && myCars.length > 0 && <StrategyPlanner state={state} cars={myCars} onApply={apply} />}
 
@@ -452,7 +455,10 @@ function PitWallCard({
 }) {
   const dnf = car.status === "dnf";
   const preRace = state.lap === 0;
-  const life = tyreLife(car.compound, state.track, car.entry.driver.tyreMgmt);
+  const life = tyreLife(car.compound, state.track, car.entry.driver.tyreMgmt, state.weather?.trackTemp[state.lap]);
+  const lapsLeft = state.totalLaps - state.lap;
+  const fuelMargin = (car.fuel ?? lapsLeft + 0.4) - lapsLeft;
+  const battery = car.battery ?? 80;
   const wear = Math.min(1.3, car.tyreAge / life);
   const wearColor = wear < 0.6 ? "bg-green-500" : wear < 0.9 ? "bg-yellow-400" : "bg-red-500";
   const next = car.plan.length > 1 ? { lap: car.plan[0].untilLap, compound: car.plan[1].compound } : null;
@@ -534,19 +540,44 @@ function PitWallCard({
 
       {!dnf && !preRace && (
         <>
-          <div className="grid grid-cols-3 gap-1">
-            {(Object.keys(MODES) as DriverMode[]).map((m) => (
-              <button
-                key={m}
-                onClick={() => onApply((s) => setMode(s, car.id, m))}
-                className={cn(
-                  "rounded-md border py-1.5 text-[11px] font-racing",
-                  car.mode === m ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted",
-                )}
-              >
-                {MODES[m].label}
-              </button>
-            ))}
+          <div className="space-y-1.5">
+            <ModeRow
+              label="Neumáticos"
+              options={(Object.keys(MODES) as DriverMode[]).map((m) => ({ id: m, label: MODES[m].label }))}
+              value={car.mode}
+              onPick={(m) => onApply((s) => setMode(s, car.id, m))}
+            />
+            <ModeRow
+              label="Combustible"
+              options={(Object.keys(FUEL_MODES) as FuelMode[]).map((m) => ({ id: m, label: FUEL_MODES[m].label }))}
+              value={car.fuelMode ?? "normal"}
+              onPick={(m) => onApply((s) => setFuelMode(s, car.id, m))}
+              extra={
+                <span className={cn("tabular-nums", fuelMargin < 0 ? "text-red-400 font-semibold" : fuelMargin < 0.25 ? "text-yellow-300" : "text-muted-foreground")}>
+                  {fuelMargin >= 0 ? `+${fuelMargin.toFixed(2)}` : fuelMargin.toFixed(2)} v de margen
+                </span>
+              }
+            />
+            {fuelMargin < 0 && (
+              <div className="text-[10px] text-red-400">No llega a la meta con este consumo: pon modo Ahorro (hace lift &amp; coast).</div>
+            )}
+            <ModeRow
+              label="Energía (ERS)"
+              options={(Object.keys(ERS_MODES) as ErsMode[]).map((m) => ({ id: m, label: ERS_MODES[m].label }))}
+              value={car.ersMode ?? "balanced"}
+              onPick={(m) => onApply((s) => setErsMode(s, car.id, m))}
+              extra={
+                <span className="flex items-center gap-1 text-muted-foreground">
+                  <span className="w-12 h-1.5 rounded-full bg-muted overflow-hidden inline-block">
+                    <span
+                      className={cn("block h-full", battery < 20 ? "bg-red-500" : battery < 50 ? "bg-yellow-400" : "bg-emerald-400")}
+                      style={{ width: `${Math.round(battery)}%` }}
+                    />
+                  </span>
+                  <span className="tabular-nums">{Math.round(battery)}%</span>
+                </span>
+              }
+            />
           </div>
 
           {car.pitRequest ? (
@@ -569,6 +600,39 @@ function PitWallCard({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+function ModeRow<T extends string>({
+  label, options, value, onPick, extra,
+}: {
+  label: string;
+  options: { id: T; label: string }[];
+  value: T;
+  onPick: (v: T) => void;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <div className="flex justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
+        <span>{label}</span>
+        <span className="normal-case tracking-normal">{extra}</span>
+      </div>
+      <div className="grid grid-cols-3 gap-1">
+        {options.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => onPick(o.id)}
+            className={cn(
+              "rounded-md border py-1 text-[11px] font-racing",
+              value === o.id ? "border-primary bg-primary text-primary-foreground" : "border-border hover:bg-muted",
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

@@ -4,7 +4,8 @@ import { Flag, Timer, FastForward, Pause, Play, Star, SkipForward } from "lucide
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Race } from "@/data/f1Data";
-import { formatLap, type Entry, type QualifyingResult } from "@/engine";
+import { formatLap, wetLabel, type Entry, type QualifyingResult, type WeatherTimeline } from "@/engine";
+import { WeatherWidget } from "./WeatherWidget";
 import { PositionBadge, TeamStripe, mineStyle } from "./common";
 import { cn } from "@/lib/utils";
 
@@ -16,6 +17,7 @@ interface Props {
   playerTeamId: string | null;
   onReveal: (all?: boolean) => void;
   onStartRace: () => void;
+  weather?: WeatherTimeline; // Sunday's weather (shown as a forecast)
 }
 
 type Row = QualifyingResult["sessions"][number]["rows"][number];
@@ -49,7 +51,7 @@ function buildSequence(rows: Row[], salt: number): Step[] {
   return [...order(0), ...order(1)];
 }
 
-export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, onReveal, onStartRace }: Props) {
+export function QualifyingView({ weather, race, quali, revealed, entryMap, playerTeamId, onReveal, onStartRace }: Props) {
   const done = revealed >= 3;
   const liveIndex = done ? -1 : revealed; // session that is next / in progress
   const [tab, setTab] = useState<string>(done ? "grid" : `${revealed}`);
@@ -89,7 +91,14 @@ export function QualifyingView({ race, quali, revealed, entryMap, playerTeamId, 
           {race.flag} {race.name}
         </h2>
         <p className="text-xs text-muted-foreground">{race.circuit}</p>
+        {quali.wet ? (
+          <p className="text-xs text-sky-300">🌧️ Clasificación con pista {wetLabel(quali.wet).toLowerCase()}</p>
+        ) : null}
       </div>
+
+      {weather && (
+        <WeatherWidget weather={weather} lap={-Math.round(race.track.laps * 0.4)} preview title="Pronóstico para la carrera" />
+      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="w-full grid grid-cols-4">
