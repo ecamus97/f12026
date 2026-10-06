@@ -2,16 +2,18 @@ import { motion } from "framer-motion";
 import { Play, Gavel, Wallet, Gauge, FlaskConical, Handshake, ChevronRight, Trophy, MapPin, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Race, Team } from "@/data/f1Data";
-import type { DriverStanding, TeamStanding } from "@/engine";
+import type { DriverStanding, TeamStanding, NewsItem, WeatherTimeline } from "@/engine";
+import { forecast, forecastIcon } from "@/engine";
+import { NewsFeed } from "./NewsCenter";
 import { carRankOf, ageOf, type ManagementState, type PeopleState, type RuleProposal } from "@/engine";
 import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile } from "./visuals";
 import { InboxList, money } from "./TeamHQ";
 import { cn } from "@/lib/utils";
 
-export type NavTarget = "weekend" | "car" | "drivers" | "finance" | "rules" | "standings" | "calendar";
+export type NavTarget = "weekend" | "car" | "drivers" | "finance" | "rules" | "standings" | "calendar" | "news";
 
 export function Paddock({
-  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onNavigate,
+  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onNavigate, news, teams, weather,
 }: {
   team: Team;
   season: number;
@@ -27,7 +29,14 @@ export function Paddock({
   proposals: RuleProposal[];
   onWeekend: () => void;
   onNavigate: (t: NavTarget) => void;
+  news: NewsItem[];
+  teams: Team[];
+  weather: WeatherTimeline | null;
 }) {
+  const fc = weather ? forecast(weather, 0, Math.max(3, Math.round(weather.rain.length / 10))) : [];
+  const raceChance = fc.reduce((a, f) => Math.max(a, f.chance), 0);
+  const satWet = weather?.qualiWet ?? 0;
+  const satIcon = satWet >= 0.45 ? "🌧️" : satWet > 0.05 ? "🌦️" : raceChance >= 40 ? "⛅" : "☀️";
   const teamPos = teamsStanding.findIndex((t) => t.teamId === team.id) + 1;
   const myTeam = teamsStanding.find((t) => t.teamId === team.id);
   const myDrivers = drivers.map((d, i) => ({ ...d, pos: i + 1 })).filter((d) => d.teamId === team.id);
@@ -68,9 +77,15 @@ export function Paddock({
                 <Chip label="Vueltas" value={race.track.laps} />
                 <Chip label="Adelantar" value={race.track.overtaking > 0.7 ? "Difícil" : race.track.overtaking < 0.4 ? "Fácil" : "Medio"} />
                 <Chip label="Desgaste" value={race.track.deg >= 1.2 ? "Alto" : race.track.deg <= 0.8 ? "Bajo" : "Medio"} />
-                <Chip label="Lluvia" value={`${Math.round((race.track.rain ?? 0.15) * 100)}%`} />
+
                 <Chip label="Tipo" value={(race.track.downforce ?? 0.5) >= 0.7 ? "Alta carga" : (race.track.power ?? 0.5) >= 0.75 ? "Motor" : "Mixto"} />
               </div>
+              {weather && (
+                <div className="flex gap-2">
+                  <WeatherDay label="Sábado · Clasificación" icon={satIcon} temp={weather.airTemp - 1} />
+                  <WeatherDay label="Domingo · Carrera" icon={forecastIcon(raceChance)} temp={weather.airTemp} />
+                </div>
+              )}
               <div className="mt-auto">
                 <Button onClick={onWeekend} size="lg" className="font-display text-lg h-12 px-6 shine">
                   <Play className="w-5 h-5 mr-2 fill-current" />
@@ -96,7 +111,7 @@ export function Paddock({
             <div className="font-display text-3xl" style={{ color: team.hex }}>
               {team.name}
             </div>
-            <CarSilhouette color={team.hex} className="w-full h-auto drop-shadow-[0_12px_20px_rgba(0,0,0,0.6)]" />
+            <CarSilhouette color={team.hex} className="w-[78%] mx-auto block h-auto drop-shadow-[0_12px_20px_rgba(0,0,0,0.6)]" />
             <div className="grid grid-cols-3 gap-2 text-center">
               <MiniStat label="Constructores" value={`P${teamPos || "-"}`} />
               <MiniStat label="Puntos" value={myTeam?.points ?? 0} />
@@ -185,6 +200,8 @@ export function Paddock({
         </div>
       )}
 
+      <NewsFeed news={news} ctx={{ teams, management, proposals, playerTeamId: team.id }} onAll={() => onNavigate("news")} />
+
       <div className="grid lg:grid-cols-[1.2fr_1fr] gap-4">
         {management && <InboxList management={management} limit={6} />}
         <div className="panel p-4 space-y-3">
@@ -203,6 +220,18 @@ export function Paddock({
             {round} de {totalRaces} carreras disputadas
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function WeatherDay({ label, icon, temp }: { label: string; icon: string; temp: number }) {
+  return (
+    <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/30 px-3 py-1.5">
+      <span className="text-2xl leading-none">{icon}</span>
+      <div>
+        <div className="tv-label text-muted-foreground !text-[9px]">{label}</div>
+        <div className="text-sm font-semibold">{temp}°C</div>
       </div>
     </div>
   );

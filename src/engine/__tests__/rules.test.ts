@@ -57,3 +57,25 @@ describe("regulation impact on the cars", () => {
     expect(carPace(r.m.dev.cadillac)).toBe(carPace(m.dev.cadillac));
   });
 });
+
+import { forecast, generateWeather } from "@/engine";
+import { races2026 } from "@/data/f1Data";
+describe("forecast", () => {
+  it("is the same before the race and changes gradually during it", () => {
+    const track = races2026.find((r) => r.country === "Belgium")!.track;
+    let maxJump = 0;
+    for (let seed = 1; seed < 40; seed++) {
+      const w = generateWeather(track, track.laps, seed);
+      expect(forecast(w, 0)).toEqual(forecast(w, -10));
+      for (let lap = 0; lap < track.laps - 6; lap += 3) {
+        const a = forecast(w, lap, 4);
+        const b = forecast(w, lap + 3, 4);
+        for (const x of b) {
+          const y = a.find((q) => q.toLap === x.toLap);
+          if (y && x.fromLap === y.fromLap) maxJump = Math.max(maxJump, Math.abs(x.chance - y.chance));
+        }
+      }
+    }
+    expect(maxJump).toBeLessThanOrEqual(30);
+  });
+});

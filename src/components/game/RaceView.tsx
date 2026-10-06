@@ -144,6 +144,44 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
     [onUpdate, state],
   );
 
+  /** Speed changes apply right away, keeping the cars where they are. */
+  const changeSpeed = (i: number) => {
+    setSpeed(i);
+    const ms = SPEEDS[i].ms;
+    setAnim((a) => {
+      if (!a) return a;
+      if (a.pausedElapsed != null) return { ...a, pausedElapsed: (a.pausedElapsed / a.duration) * ms, duration: ms };
+      const t = performance.now();
+      const p = Math.min(1, (t - a.start) / a.duration);
+      return { ...a, start: t - p * ms, duration: ms };
+    });
+  };
+
+  /**
+   * Mode changes apply from the point of the lap where the car is: the lap being animated
+   * is re-simulated with the old modes for the part already driven and the new ones for the rest.
+   */
+  const applyMode = useCallback(
+    (carId: string, fn: (s: RaceState) => RaceState) => {
+      if (!anim) return apply(fn);
+      const car = state.cars.find((c) => c.id === carId);
+      if (!car) return;
+      const frac = Math.max(0, Math.min(1, detailed?.[carId]?.frac ?? 0));
+      const changed = fn(state);
+      const withBlend: RaceState = {
+        ...changed,
+        cars: changed.cars.map((c) =>
+          c.id === carId
+            ? { ...c, modeBlend: { frac, mode: car.mode, fuelMode: car.fuelMode ?? "normal", ersMode: car.ersMode ?? "balanced" } }
+            : c,
+        ),
+      };
+      onUpdate(withBlend);
+      setAnim((a) => (a ? { ...a, to: simulateLap(withBlend) } : a));
+    },
+    [anim, apply, detailed, onUpdate, state],
+  );
+
   const leader = state.cars[0];
   const myCars = state.cars.filter((c) => c.entry.team.id === playerTeamId);
 
@@ -244,7 +282,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
             {SPEEDS.map((s, i) => (
               <button
                 key={s.label}
-                onClick={() => setSpeed(i)}
+                onClick={() => changeSpeed(i)}
                 className={cn("px-3 py-2 text-xs font-racing", i === speed ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
               >
                 {s.label}
@@ -294,6 +332,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
                 pos={state.cars.indexOf(car) + 1}
                 state={state}
                 onApply={apply}
+                onMode={(fn) => applyMode(car.id, fn)}
+                live={anim ? { frac: Math.max(0, Math.min(1, detailed?.[car.id]?.frac ?? 0)), to: anim.to.cars.find((c) => c.id === car.id) } : null}
               />
             ))}
           </div>
@@ -458,8 +498,10 @@ function TowerRow({
 }
 
 function PitWallCard({
-  car, pos, state, onApply,
+  car, pos, state, onApply, onMode, live,
 }: {
+  onMode: (fn: (s: RaceState) => RaceState) => void;
+  live: { frac: number; to?: CarState } | null;
   car: CarState;
   pos: number;
   state: RaceState;
@@ -469,8 +511,18 @@ function PitWallCard({
   const preRace = state.lap === 0 && !state.strategyConfirmed;
   const life = tyreLife(car.compound, state.track, car.entry.driver.tyreMgmt, state.weather?.trackTemp[state.lap]);
   const lapsLeft = state.totalLaps - state.lap;
-  const fuelMargin = (car.fuel ?? lapsLeft + 0.4) - lapsLeft;
-  const battery = car.battery ?? 80;
+  // fuel and battery move continuously during the lap
+  const f = live?.frac ?? 0;
+  const lerp = (a: number, b: number) => a + (b - a) * f;
+  const fuelNow = live?.to ? lerp(car.fuel ?? lapsLeft + 0.4, live.to.fuel ?? 0) : car.fuel ?? lapsLeft + 0.4;
+  const fuelMargin = fuelNow - (lapsLeft - f);
+  const ers = car.ersMode ?? "balanced";
+  // automatic energy use: deploy on the straights, harvest in the braking zones
+  const wave = Math.sin(2 * Math.PI * 4 * f);
+  const amp = ers === "deploy" ? 9 : ers === "harvest" ? 4 : 6;
+  const batteryBase = live?.to ? lerp(car.battery ?? 80, live.to.battery ?? 80) : car.battery ?? 80;
+  const battery = Math.max(0, Math.min(100, batteryBase + (live ? wave * amp * Math.min(1, f * 8, (1 - f) * 8) : 0)));
+  const ersState = !live ? null : Math.cos(2 * Math.PI * 4 * f) > 0 ? "⚡ desplegando" : "🔋 recuperando";
   const wear = Math.min(1.3, car.tyreAge / life);
   const wearColor = wear < 0.6 ? "bg-green-500" : wear < 0.9 ? "bg-yellow-400" : "bg-red-500";
   const next = car.plan.length > 1 ? { lap: car.plan[0].untilLap, compound: car.plan[1].compound } : null;
@@ -557,34 +609,38 @@ function PitWallCard({
               label="Neumáticos"
               options={(Object.keys(MODES) as DriverMode[]).map((m) => ({ id: m, label: MODES[m].label }))}
               value={car.mode}
-              onPick={(m) => onApply((s) => setMode(s, car.id, m))}
+              onPick={(m) => onMode((s) => setMode(s, car.id, m))}
             />
             <ModeRow
               label="Combustible"
               options={(Object.keys(FUEL_MODES) as FuelMode[]).map((m) => ({ id: m, label: FUEL_MODES[m].label }))}
               value={car.fuelMode ?? "normal"}
-              onPick={(m) => onApply((s) => setFuelMode(s, car.id, m))}
+              onPick={(m) => onMode((s) => setFuelMode(s, car.id, m))}
               extra={
                 <span className={cn("tabular-nums", fuelMargin < 0 ? "text-red-400 font-semibold" : fuelMargin < 0.25 ? "text-yellow-300" : "text-muted-foreground")}>
-                  {fuelMargin >= 0 ? `+${fuelMargin.toFixed(2)}` : fuelMargin.toFixed(2)} v de margen
+                  {fuelNow.toFixed(2)} v · margen {fuelMargin >= 0 ? `+${fuelMargin.toFixed(2)}` : fuelMargin.toFixed(2)}
                 </span>
               }
             />
             {fuelMargin < 0 && (
-              <div className="text-[10px] text-red-400">No llega a la meta con este consumo: pon modo Ahorro (hace lift &amp; coast).</div>
+              <div className="text-[10px] text-red-400">No llega a la meta con este consumo: pasa a Lift &amp; coast.</div>
             )}
             <ModeRow
               label="Energía (ERS)"
               options={(Object.keys(ERS_MODES) as ErsMode[]).map((m) => ({ id: m, label: ERS_MODES[m].label }))}
               value={car.ersMode ?? "balanced"}
-              onPick={(m) => onApply((s) => setErsMode(s, car.id, m))}
+              onPick={(m) => onMode((s) => setErsMode(s, car.id, m))}
               extra={
                 <span className="flex items-center gap-1 text-muted-foreground">
+                  {ersState && <span className="text-[10px] w-[86px] text-right">{ersState}</span>}
                   <span className="w-12 h-1.5 rounded-full bg-muted overflow-hidden inline-block">
                     <span
                       className={cn("block h-full", battery < 20 ? "bg-red-500" : battery < 50 ? "bg-yellow-400" : "bg-emerald-400")}
-                      style={{ width: `${Math.round(battery)}%` }}
+                      style={{ width: `${Math.round(battery)}%`, transition: "width 120ms linear" }}
                     />
+            <div className="text-[10px] text-muted-foreground">
+              Automático despliega en las rectas y recarga en las frenadas. Ataque gasta más batería por más ritmo; Recargar la llena.
+            </div>
                   </span>
                   <span className="tabular-nums">{Math.round(battery)}%</span>
                 </span>

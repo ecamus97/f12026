@@ -6,7 +6,8 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useGameState } from "@/hooks/useGameState";
+import { useGameState, weekendWeather } from "@/hooks/useGameState";
+import { NewsScreen } from "@/components/game/NewsCenter";
 import { RaceCard } from "@/components/RaceCard";
 import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
 import { ConfigDialog } from "@/components/ConfigDialog";
@@ -18,19 +19,20 @@ import { Paddock, type NavTarget } from "@/components/game/Paddock";
 import { CarSilhouette, SectionTitle, teamThemeVars } from "@/components/game/visuals";
 import heroImage from "@/assets/f1-hero.jpg";
 import {
-  Trophy, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2, Users, Briefcase, Wallet, Gavel, Wrench, MoreHorizontal, X,
+  Newspaper, Trophy, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2, Users, Briefcase, Wallet, Gavel, Wrench, MoreHorizontal, X,
 } from "lucide-react";
 import { TeamHQ, money } from "@/components/game/TeamHQ";
 import { nextSeasonLineup } from "@/engine";
 import { cn } from "@/lib/utils";
 
-type Screen = "home" | "weekend" | "calendar" | "standings" | "car" | "facilities" | "drivers" | "staff" | "finance" | "rules";
+type Screen = "home" | "news" | "weekend" | "calendar" | "standings" | "car" | "facilities" | "drivers" | "staff" | "finance" | "rules";
 
 const NAV: { group: string; items: { k: Screen; label: string; icon: typeof Home }[] }[] = [
   {
     group: "Temporada",
     items: [
       { k: "home", label: "Paddock", icon: Home },
+      { k: "news", label: "Noticias", icon: Newspaper },
       { k: "weekend", label: "Fin de semana", icon: Flag },
       { k: "calendar", label: "Calendario", icon: Calendar },
       { k: "standings", label: "Campeonato", icon: Trophy },
@@ -51,6 +53,7 @@ const NAV: { group: string; items: { k: Screen; label: string; icon: typeof Home
 
 const TITLES: Record<Screen, string> = {
   home: "Paddock",
+  news: "Noticias",
   weekend: "Fin de semana",
   calendar: "Calendario",
   standings: "Campeonato",
@@ -194,7 +197,7 @@ export default function F1Game() {
               <div className="font-display text-xl mt-1 leading-tight" style={{ color: playerTeam.hex }}>
                 {playerTeam.name}
               </div>
-              <CarSilhouette color={playerTeam.hex} className="w-full h-auto mt-2 opacity-90" />
+              <CarSilhouette color={playerTeam.hex} className="w-[85%] h-auto mt-2" />
             </div>
           )}
         </button>
@@ -301,6 +304,9 @@ export default function F1Game() {
                   proposals={gameState.proposals}
                   onWeekend={() => go("weekend")}
                   onNavigate={(t: NavTarget) => go(t)}
+                  news={gameState.news}
+                  teams={gameState.teamsData}
+                  weather={seasonComplete ? null : weekend?.weather ?? weekendWeather(gameState, gameState.currentRaceIndex)}
                 />
 
                 {gameState.pastSeasons.length > 0 && (
@@ -322,6 +328,15 @@ export default function F1Game() {
                     </div>
                   </div>
                 )}
+              </motion.div>
+            )}
+
+            {screen === "news" && (
+              <motion.div key="news" {...fade}>
+                <NewsScreen
+                  news={gameState.news}
+                  ctx={{ teams: gameState.teamsData, management: gameState.management, proposals: gameState.proposals, playerTeamId: gameState.playerTeamId }}
+                />
               </motion.div>
             )}
 

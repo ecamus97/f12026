@@ -11,3 +11,4 @@ export * from "./weather";
 export { dryCompoundFor, replan } from "./strategy";
 export * from "./people";
 export * from "./rules";
+export * from "./news";

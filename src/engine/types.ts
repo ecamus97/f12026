@@ -47,6 +47,8 @@ export interface CarState {
   fuel?: number; // laps of fuel left (normal consumption)
   battery?: number; // 0-100 %
   fuelWarned?: boolean;
+  /** Modes changed in the middle of the lap: the old ones count for the first `frac` of it. */
+  modeBlend?: { frac: number; mode: DriverMode; fuelMode: FuelMode; ersMode: ErsMode };
   pitRequest: Compound | null; // manual pit call (manager)
   controlled?: boolean; // player car: only planned/manual stops, no AI improvisation
   status: "running" | "dnf";

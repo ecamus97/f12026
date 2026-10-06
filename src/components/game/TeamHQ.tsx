@@ -14,6 +14,7 @@ import { PerformanceChart, type Metric } from "./PerformanceChart";
 import { TeamStripe } from "./common";
 import { DriversPanel, StaffPanel } from "./PeoplePanels";
 import { SectionTitle } from "./visuals";
+import { FacilitiesCampus } from "./FacilitiesCampus";
 import { cn } from "@/lib/utils";
 
 interface Props {
@@ -48,6 +49,7 @@ export function TeamHQ({
   const tab = section ? (section === "car" ? "dev" : section) : tabState;
   const showOverview = !section || section === "car";
   const pay = people ? payroll(people, team.id) : null;
+  const [devArea, setDevArea] = useState<DevArea>("aero");
 
   const fieldBest = useMemo(() => {
     const ds = Object.values(management.dev);
@@ -184,7 +186,29 @@ export function TeamHQ({
             )}
           </div>
 
-          {AREAS.map((area) => (
+          <div className="flex flex-wrap gap-1.5">
+            {AREAS.map((a) => {
+              const active = p.projects.filter((x) => x.area === a).length;
+              return (
+                <button
+                  key={a}
+                  onClick={() => setDevArea(a)}
+                  className={cn(
+                    "rounded-lg border px-3 py-2 text-left transition-colors min-w-[130px]",
+                    devArea === a ? "border-primary bg-primary/15" : "border-white/10 bg-black/20 hover:border-white/25",
+                  )}
+                >
+                  <div className="tv-label text-muted-foreground">{AREA_INFO[a].label}</div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="font-display text-2xl">{myDev[a].toFixed(1)}</span>
+                    <span className="text-xs text-muted-foreground">P{ranks[a]}</span>
+                    {active > 0 && <span className="ml-auto text-[10px] rounded bg-primary text-primary-foreground px-1.5">{active} en curso</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          {[devArea].map((area) => (
             <div key={area} className="space-y-2">
               <div className="flex items-baseline justify-between">
                 <h4 className="font-display text-lg">{AREA_INFO[area].label}</h4>
@@ -197,12 +221,16 @@ export function TeamHQ({
                   const blocked = canStartProject(management, t.id);
                   const [g0, g1] = expectedGain(t, management);
                   const level = p.partLevels?.[t.id] ?? 0;
+                  const fails = p.failures?.[t.id] ?? 0;
+                  const running = p.projects.find((x) => x.templateId === t.id);
                   return (
                     <div key={t.id} className="rounded-lg border border-border bg-card p-2.5 space-y-1.5">
                       <div className="flex items-start justify-between gap-2">
                         <div className="text-sm font-medium leading-tight">
                           {t.name}
-                          {level > 0 && <span className="ml-1.5 text-[10px] rounded bg-primary/20 text-primary px-1">Nv. {level}</span>}
+                          <div className="text-[10px] text-muted-foreground mt-0.5">
+                            {level > 0 ? `Versión actual v${level} · próxima v${level + 1}` : "Sin mejoras todavía · próxima v1"}
+                          </div>
                         </div>
                         <div className="text-right text-xs shrink-0">
                           <div className="font-racing">{money(t.cost)}</div>
@@ -215,7 +243,9 @@ export function TeamHQ({
                         <span>
                           Mejora: <span className="text-green-400">+{g0}–{g1}</span>
                         </span>
-                        <span className="text-muted-foreground">Éxito {Math.round(successChance(t, management) * 100)}%</span>
+                        <span className={cn(fails ? "text-emerald-300" : "text-muted-foreground")}>
+                          Éxito {Math.round(successChance(t, management) * 100)}%{fails ? ` (reintento +${fails * 12}%)` : ""}
+                        </span>
                       </div>
                       <Button
                         size="sm"
@@ -224,7 +254,7 @@ export function TeamHQ({
                         onClick={() => onStartProject(t.id)}
                         className="w-full h-7 text-xs"
                       >
-                        {blocked ?? "Desarrollar"}
+                        {running ? `En desarrollo · ${running.racesLeft} carrera${running.racesLeft === 1 ? "" : "s"}` : blocked ?? (fails ? "Reintentar" : level ? `Desarrollar v${level + 1}` : "Desarrollar")}
                       </Button>
                     </div>
                   );
@@ -233,58 +263,15 @@ export function TeamHQ({
             </div>
           ))}
           <p className="text-[11px] text-muted-foreground">
-            Si un proyecto falla entrega solo ~30% de la mejora. Mientras mejor es un área, más cuesta seguir mejorándola, y cada
-            nueva versión de la misma pieza rinde un 15% menos. El director técnico multiplica las mejoras. Aerodinámica pesa más en
+            Cada pieza se puede mejorar una y otra vez (v1, v2, v3…); cada nueva versión rinde un 15% menos. Si un proyecto falla entrega
+            solo ~30% de la mejora, no sube de versión y el siguiente intento tiene +12% de probabilidad de éxito. Las piezas grandes
+            (fondo plano, motor, peso) tardan hasta 10 carreras. El director técnico multiplica las mejoras. Aerodinámica pesa más en
             circuitos de alta carga (Mónaco, Hungría, Singapur), el motor en los rápidos (Monza, Spa, Las Vegas).
           </p>
         </div>
       )}
 
-      {tab === "facilities" && (
-        <div className="space-y-3">
-          {p.facilityWork && (
-            <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm flex items-center gap-2">
-              <Hammer className="w-4 h-4 text-yellow-400" />
-              Obra en curso: {FACILITY_INFO[p.facilityWork.key].label} → nivel {p.facilities[p.facilityWork.key] + 1} · faltan{" "}
-              {p.facilityWork.racesLeft} carrera{p.facilityWork.racesLeft === 1 ? "" : "s"}
-            </div>
-          )}
-          <div className="grid md:grid-cols-2 gap-3">
-            {(Object.keys(FACILITY_INFO) as FacilityKey[]).map((k) => {
-              const lvl = p.facilities[k];
-              const blocked = canUpgradeFacility(management, k);
-              return (
-                <div key={k} className="panel p-3 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium">{FACILITY_INFO[k].label}</div>
-                    <div className="flex gap-1">
-                      {Array.from({ length: MAX_FACILITY_LEVEL }, (_, i) => (
-                        <span key={i} className={cn("w-3 h-3 rounded-sm", i < lvl ? "bg-primary" : "bg-muted")} />
-                      ))}
-                    </div>
-                  </div>
-                  <p className="text-[11px] text-muted-foreground">{FACILITY_INFO[k].desc}</p>
-                  <Button
-                    size="sm"
-                    variant={blocked ? "outline" : "secondary"}
-                    disabled={!!blocked}
-                    onClick={() => onUpgradeFacility(k)}
-                    className="w-full text-xs"
-                  >
-                    {lvl >= MAX_FACILITY_LEVEL
-                      ? "Nivel máximo"
-                      : blocked ?? `Mejorar a nivel ${lvl + 1} · ${money(facilityUpgradeCost(lvl))} · ${facilityBuildRaces(lvl)} carreras`}
-                  </Button>
-                </div>
-              );
-            })}
-          </div>
-          <p className="text-[11px] text-muted-foreground">
-            Cada nivel multiplica la mejora de los proyectos de su área (nivel 1 = ×0,8 … nivel 5 = ×1,2) y sube su probabilidad de éxito.
-            Las obras son largas (10 a 16 carreras) y continúan en la temporada siguiente; solo puede haber una a la vez.
-          </p>
-        </div>
-      )}
+      {tab === "facilities" && <FacilitiesCampus management={management} teamColor={team.hex} onUpgrade={onUpgradeFacility} />}
 
       {tab === "drivers" && people && onOffer && onRelease && (
         <DriversPanel people={people} team={team} teams={teams} management={management} onOffer={onOffer} onRelease={onRelease} />

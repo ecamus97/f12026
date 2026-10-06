@@ -170,10 +170,17 @@ export function simulateLap(prev: RaceState): RaceState {
       car.ersMode = scLap || bat < 25 ? "harvest" : gapAhead < 1.0 && bat > 30 ? "deploy" : bat > 85 ? "deploy" : "balanced";
     }
     const ers = car.ersMode ?? "balanced";
+    const blend = car.modeBlend;
+    car.modeBlend = undefined;
+    const bf = blend ? Math.max(0, Math.min(1, blend.frac)) : 0; // share of the lap run with the previous modes
     const batteryBefore = car.battery ?? 80;
-    car.battery = Math.max(0, Math.min(100, batteryBefore + (scLap ? 15 : ERS_MODES[ers].charge)));
+    const charge = blend ? ERS_MODES[blend.ersMode].charge * bf + ERS_MODES[ers].charge * (1 - bf) : ERS_MODES[ers].charge;
+    car.battery = Math.max(0, Math.min(100, batteryBefore + (scLap ? 15 : charge)));
     const lapsToGo = state.totalLaps - lap + 1;
-    let burn = FUEL_MODES[car.fuelMode ?? "normal"].burn * (scLap ? 0.55 : 1);
+    const burnRate = blend
+      ? FUEL_MODES[blend.fuelMode].burn * bf + FUEL_MODES[car.fuelMode ?? "normal"].burn * (1 - bf)
+      : FUEL_MODES[car.fuelMode ?? "normal"].burn;
+    let burn = burnRate * (scLap ? 0.55 : 1);
     let liftAndCoast = 0;
     if ((car.fuel ?? lapsToGo) < lapsToGo - 0.05 && !scLap) {
       // not enough fuel: forced to lift and coast
@@ -222,7 +229,7 @@ export function simulateLap(prev: RaceState): RaceState {
     if (scLap) {
       time = track.baseLap * 1.4 + wet * 4 + rng.next() * 0.3;
     } else {
-      time = raceLapTime({
+      const lapParams = {
         entry: e,
         track,
         compound: car.compound,
@@ -237,7 +244,12 @@ export function simulateLap(prev: RaceState): RaceState {
         battery: batteryBefore,
         wet,
         trackTemp,
-      });
+      };
+      time = raceLapTime(lapParams);
+      if (blend && bf > 0) {
+        const before = raceLapTime({ ...lapParams, mode: blend.mode, fuelMode: blend.fuelMode, ersMode: blend.ersMode });
+        time = before * bf + time * (1 - bf);
+      }
       time += liftAndCoast;
       if (lap === 1) time += 2.5 + idx * 0.05; // standing start
       // dirty air

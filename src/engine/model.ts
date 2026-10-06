@@ -22,15 +22,15 @@ export const MODES: Record<DriverMode, { pace: number; wear: number; risk: numbe
 
 /** Fuel mixture: richer = faster but burns more. Fuel is measured in laps of normal running. */
 export const FUEL_MODES: Record<FuelMode, { pace: number; burn: number; label: string }> = {
-  rich: { pace: -0.2, burn: 1.07, label: "Mezcla rica" },
-  normal: { pace: 0, burn: 1, label: "Normal" },
-  lean: { pace: 0.25, burn: 0.93, label: "Ahorro" },
+  rich: { pace: -0.2, burn: 1.07, label: "Potencia máx." },
+  normal: { pace: 0, burn: 1, label: "Estándar" },
+  lean: { pace: 0.25, burn: 0.93, label: "Lift & coast" },
 };
 
 /** Energy (ERS) use: deploy spends battery for pace and attack, harvest refills it. */
 export const ERS_MODES: Record<ErsMode, { pace: number; charge: number; label: string }> = {
-  deploy: { pace: -0.35, charge: -14, label: "Desplegar" },
-  balanced: { pace: 0, charge: 2, label: "Equilibrado" },
+  deploy: { pace: -0.35, charge: -14, label: "Ataque" },
+  balanced: { pace: 0, charge: 2, label: "Automático" },
   harvest: { pace: 0.3, charge: 12, label: "Recargar" },
 };
 

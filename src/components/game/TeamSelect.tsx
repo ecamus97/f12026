@@ -26,7 +26,7 @@ export function TeamSelect({ teams, onChoose }: { teams: Team[]; onChoose: (team
               </span>
               <CarSilhouette
                 color={team.hex}
-                className="absolute -right-6 bottom-1 w-[85%] h-auto transition-transform duration-300 group-hover:translate-x-[-8px] group-hover:scale-105 drop-shadow-[0_12px_18px_rgba(0,0,0,0.7)]"
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-[64%] h-auto transition-transform duration-300 group-hover:translate-x-[-8px] group-hover:scale-105 drop-shadow-[0_12px_18px_rgba(0,0,0,0.7)]"
               />
               <span className="absolute left-4 bottom-3 tv-label rounded bg-black/50 px-2 py-1">{difficulty(i + 1)}</span>
             </div>

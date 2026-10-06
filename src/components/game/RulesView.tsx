@@ -148,7 +148,7 @@ function RulesTable({ title, rows, compare }: { title: string; rows: ReturnType<
   );
 }
 
-function ProposalCard({ p, teams, playerTeamId, compact }: { p: RuleProposal; teams: Team[]; playerTeamId: string | null; compact?: boolean }) {
+export function ProposalCard({ p, teams, playerTeamId, compact }: { p: RuleProposal; teams: Team[]; playerTeamId: string | null; compact?: boolean }) {
   const fia = p.by === "fia";
   const ok = p.status === "approved" || p.status === "decreed";
   const n = tally(p.votes);

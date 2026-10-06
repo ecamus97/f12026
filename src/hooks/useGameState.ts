@@ -51,6 +51,11 @@ import {
   type TeamContext,
   type Vote,
   techChanges,
+  raceNews,
+  developmentNews,
+  carPace,
+  type NewsItem,
+  type NewsLookup,
   applyRegulationImpact,
   AREA_INFO,
 } from "@/engine";
@@ -90,6 +95,7 @@ export interface GameState {
   seasonNews: string[]; // what happened in the last off-season
   rules: RuleSet; // regulations in force this season
   proposals: RuleProposal[]; // FIA decrees and votes (all seasons)
+  news: NewsItem[]; // paddock news, newest last
   seed: number; // career seed: makes each weekend's weather fixed (paddock, qualifying and race agree)
 }
 
@@ -117,10 +123,56 @@ const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = D
   seasonNews: [],
   rules: DEFAULT_RULES,
   proposals: [],
+  news: [],
   seed: randomSeed(),
 });
 
 const regsOf = (r: RuleSet) => ({ budgetCap: r.budgetCap, puFreeze: r.puFreeze, flatPrize: r.flatPrize });
+
+const MAX_NEWS = 160;
+const addNews = (list: NewsItem[], items: NewsItem[]) => {
+  const ids = new Set(items.map((n) => n.id));
+  return [...list.filter((n) => !ids.has(n.id)), ...items].slice(-MAX_NEWS);
+};
+
+function lookupOf(s: GameState): NewsLookup {
+  const drivers = new Map(s.teamsData.flatMap((t) => t.drivers.map((d) => [d.id, { name: d.name, short: d.shortName, teamId: t.id }])));
+  const teams = new Map(s.teamsData.map((t) => [t.id, { name: t.name, hex: t.hex }]));
+  return {
+    driver: (id) => drivers.get(id) ?? (s.people?.drivers[id] ? { name: s.people.drivers[id].name, short: s.people.drivers[id].shortName, teamId: "" } : undefined),
+    team: (id) => teams.get(id),
+  };
+}
+
+/** News about a regulation: announced, or resolved with the votes. */
+function ruleNews(p: RuleProposal, round: number, s: GameState): NewsItem {
+  const resolved = p.status !== "pending";
+  const passed = p.status === "approved" || p.status === "decreed";
+  return {
+    id: `${p.id}-${p.status}`,
+    season: p.season,
+    round,
+    kind: "rules",
+    title:
+      p.by === "fia"
+        ? `La FIA impone para ${p.effective}: ${p.title}`
+        : resolved
+          ? `${passed ? "Aprobado" : "Rechazado"}: ${p.title}`
+          : `Los equipos votarán: ${p.title}`,
+    summary: p.desc,
+    body: [
+      p.desc,
+      p.by === "fia"
+        ? `Es una decisión de la FIA: no se vota y entra en vigor en ${p.effective}.`
+        : resolved
+          ? `Resultado de la votación entre los jefes de equipo. Rige desde ${p.effective}.`
+          : `Los 11 jefes de equipo votarán antes de la próxima carrera. Tu voto está en la sección Reglamento.`,
+    ],
+    teamIds: s.playerTeamId ? [s.playerTeamId] : [],
+    importance: p.effect || p.key === "budgetCap" ? 3 : 2,
+    chart: resolved && p.votes ? { type: "votes", proposalId: p.id } : undefined,
+  };
+}
 
 /** How each team sees itself when it votes. */
 function teamContexts(s: GameState): TeamContext[] {
@@ -156,6 +208,7 @@ function loadState(): GameState {
     const state = { ...initialState(), ...parsed };
     state.rules = { ...DEFAULT_RULES, ...(parsed.rules ?? {}) };
     if (typeof parsed.seed !== "number") state.seed = randomSeed();
+    if (!Array.isArray(parsed.news)) state.news = [];
     // saves from before team management existed
     if (state.playerTeamId && !state.management) {
       state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
@@ -193,6 +246,74 @@ function loadState(): GameState {
   } catch {
     return initialState();
   }
+}
+
+/** Stories of the off-season: champions, new regulations, the driver market. */
+function seasonStories(
+  s: GameState,
+  newSeason: number,
+  sum: SeasonSummary,
+  impact: { label: string; color: string; value: number; mine?: boolean }[],
+  market: string[],
+  proposals: RuleProposal[],
+): NewsItem[] {
+  const st = computeStandings(s.teamsData, s.results);
+  const out: NewsItem[] = [
+    {
+      id: `${s.season}-champions`,
+      season: newSeason,
+      round: 0,
+      kind: "season",
+      title: `${sum.driverChampion.name}, campeón del mundo ${s.season}`,
+      summary: `${sum.constructorChampion} se queda con el título de constructores. Tu equipo terminó P${sum.playerPos}.`,
+      body: [
+        `${sum.driverChampion.name} (${sum.driverChampion.team}) es el campeón de pilotos ${s.season} con ${st.drivers[0]?.points ?? 0} puntos y ${st.drivers[0]?.wins ?? 0} victorias.`,
+        `${sum.constructorChampion} gana el campeonato de constructores.`,
+        `Tu equipo cerró ${s.season} en P${sum.playerPos} con ${sum.playerPoints} puntos.`,
+      ],
+      teamIds: [],
+      importance: 3,
+      chart: {
+        type: "bars",
+        title: `Constructores ${s.season}`,
+        unit: "pts",
+        rows: st.teams.slice(0, 8).map((t) => ({ label: t.teamName, color: t.teamColor, value: t.points, mine: t.teamId === s.playerTeamId })),
+      },
+    },
+  ];
+  const changes = proposals.filter((p) => p.effective === newSeason && (p.status === "approved" || p.status === "decreed"));
+  if (impact.length) {
+    out.push({
+      id: `${newSeason}-reg-impact`,
+      season: newSeason,
+      round: 0,
+      kind: "rules",
+      title: `Nuevo reglamento ${newSeason}: así cambian los autos`,
+      summary: changes.map((p) => p.title).join(" · "),
+      body: [
+        `Entran en vigor: ${changes.map((p) => p.title).join(", ")}.`,
+        `Los cambios técnicos acercan a los equipos en las áreas afectadas y algunos se adaptan mejor que otros.`,
+      ],
+      teamIds: [],
+      importance: 3,
+      chart: { type: "bars", title: "Cambio de rendimiento por el reglamento", unit: "", rows: [...impact].sort((a, b) => b.value - a.value) },
+    });
+  }
+  const transfers = market.filter((n) => /ficha|se cambia|debuta|retiro|se retira/.test(n));
+  if (transfers.length) {
+    out.push({
+      id: `${newSeason}-market`,
+      season: newSeason,
+      round: 0,
+      kind: "market",
+      title: `Mercado de pilotos: ${transfers.length} movimientos para ${newSeason}`,
+      summary: transfers.slice(0, 2).join(" "),
+      body: transfers,
+      teamIds: [],
+      importance: 2,
+    });
+  }
+  return out;
 }
 
 export const entriesFromTeams = (teams: Team[]): Entry[] =>
@@ -318,6 +439,10 @@ export function useGameState() {
         p.id === proposalId && p.status === "pending" ? resolveVote(p, teamContexts(s), s.playerTeamId, vote, randomSeed()) : p,
       ),
     }));
+    setGameState((s) => {
+      const p = s.proposals.find((x) => x.id === proposalId);
+      return p && p.status !== "pending" ? { ...s, news: addNews(s.news, [ruleNews(p, s.currentRaceIndex, s)]) } : s;
+    });
   }, []);
 
   // --- Race weekend ------------------------------------------------------------
@@ -411,10 +536,48 @@ export function useGameState() {
           ].slice(-60),
         };
       }
+      // news of the weekend
+      const look = lookupOf(s);
+      const lite = (st: ReturnType<typeof computeStandings>) => ({
+        drivers: st.drivers.map((d) => ({ id: d.driverId, name: d.driverName, teamId: d.teamId, points: d.points })),
+        teams: st.teams.map((t) => ({ id: t.teamId, name: t.teamName, teamId: t.teamId, points: t.points })),
+      });
+      const results = [...s.results.filter((r) => r.raceId !== result.raceId), result];
+      const before = lite(computeStandings(s.teamsData, s.results));
+      const after = lite(computeStandings(s.teamsData, results));
+      const raceInfo = races2026[w.raceIndex];
+      let news = raceNews({
+        season: s.season,
+        round,
+        raceId: raceInfo.id,
+        raceName: raceInfo.name,
+        country: raceInfo.country,
+        rows: result.rows,
+        events: w.race.events,
+        fastest: result.fastestLap,
+        poleId: result.pole,
+        before: before.drivers,
+        after: after.drivers,
+        teamsAfter: after.teams,
+        playerTeamId: s.playerTeamId,
+        look,
+      });
+      if (management) {
+        const h = management.history;
+        const prev = h.find((x) => x.round === round - 1);
+        const cur = h.find((x) => x.round === round);
+        if (prev && cur) {
+          const pace = (d: Record<string, import("@/engine").CarDev>) => Object.fromEntries(Object.entries(d).map(([k, v]) => [k, carPace(v)]));
+          news = [...news, ...developmentNews({ season: s.season, round, before: pace(prev.dev), after: pace(cur.dev), playerTeamId: s.playerTeamId, look })];
+        }
+      }
+      const resolvedNow = proposals.filter((p) => p.status !== "pending" && s.proposals.find((q) => q.id === p.id)?.status === "pending");
+      news = [...news, ...resolvedNow.map((p) => ruleNews(p, round, s)), ...fresh.map((p) => ruleNews(p, round, s))];
       return {
         ...s,
         proposals,
-        results: [...s.results.filter((r) => r.raceId !== result.raceId), result],
+        news: addNews(s.news, news),
+        results,
         currentRaceIndex: round,
         weekend: null,
         management,
@@ -483,6 +646,12 @@ export function useGameState() {
       if (mine.length) {
         management = { ...management, inbox: [...management.inbox, ...mine.map((text) => ({ race: 0, tone: "info" as const, text }))].slice(-60) };
       }
+      const regImpactRows = Object.entries(reg.impact).map(([id, d]) => ({
+        label: s.teamsData.find((t) => t.id === id)?.name ?? id,
+        color: s.teamsData.find((t) => t.id === id)?.hex ?? "#888",
+        value: +Object.values(d).reduce((a, v) => a + (v ?? 0), 0).toFixed(2),
+        mine: id === s.playerTeamId,
+      }));
       const champ = st.drivers[0];
       const myTeam = st.teams.find((t) => t.teamId === s.playerTeamId);
       const summary: SeasonSummary = {
@@ -506,6 +675,7 @@ export function useGameState() {
         rules,
         proposals,
         seasonNews: [...regNews, ...news],
+        news: addNews(s.news, seasonStories(s, people.season, summary, regImpactRows, news, proposals)),
       };
     });
   }, []);
