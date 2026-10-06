@@ -5,7 +5,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import type { Team } from "@/data/f1Data";
 import { NEWS_KIND_INFO, carPace, type ManagementState, type NewsChart, type NewsItem, type NewsKind, type RuleProposal } from "@/engine";
-import { CircuitOutline, SectionTitle } from "./visuals";
+import { CarSilhouette, CircuitOutline, SectionTitle } from "./visuals";
 import { ProposalCard } from "./RulesView";
 import { cn } from "@/lib/utils";
 
@@ -27,16 +27,44 @@ function KindTag({ kind }: { kind: NewsKind }) {
   );
 }
 
-/** Header art of a story: team colour, circuit outline when it's about a race. */
-function Art({ n, className }: { n: NewsItem; className?: string }) {
+const KIND_ICON: Record<NewsKind, string> = {
+  race: "🏁",
+  championship: "🏆",
+  team: "⭐",
+  development: "🔧",
+  rules: "⚖️",
+  market: "✍️",
+  weather: "🌧️",
+  season: "🏆",
+};
+
+/** Header art of a story: the team's car at speed, the circuit when it's about a race. */
+function Art({ n, className, big }: { n: NewsItem; className?: string; big?: boolean }) {
   const color = n.color ?? NEWS_KIND_INFO[n.kind].color;
+  const showCar = !!n.color && n.kind !== "rules";
   return (
-    <div className={cn("relative overflow-hidden", className)} style={{ background: `linear-gradient(135deg, ${color}55, ${color}10 60%, transparent)` }}>
-      {n.raceId ? (
-        <CircuitOutline raceId={n.raceId} className="absolute -right-4 -top-4 h-[130%] opacity-70" stroke={color} width={14} />
-      ) : (
-        <Newspaper className="absolute right-3 top-3 w-16 h-16 opacity-15" style={{ color }} />
+    <div className={cn("relative overflow-hidden", className)} style={{ background: `linear-gradient(120deg, ${color}66 0%, ${color}22 45%, #0b0d12 100%)` }}>
+      {/* speed streaks */}
+      <div
+        className="absolute inset-0 opacity-40"
+        style={{ backgroundImage: `repeating-linear-gradient(170deg, transparent 0 18px, ${color}33 18px 19px, transparent 19px 46px)` }}
+      />
+      {n.raceId && (
+        <CircuitOutline raceId={n.raceId} className={cn("absolute top-1/2 -translate-y-1/2 opacity-50", big ? "left-4 h-[90%]" : "left-3 h-[85%]")} stroke={color} width={12} />
       )}
+      {showCar ? (
+        <motion.div
+          initial={{ x: 80, opacity: 0 }}
+          animate={{ x: 0, opacity: 1 }}
+          transition={{ duration: 0.5, ease: "easeOut" }}
+          className={cn("absolute top-1/2 -translate-y-1/2", big ? "right-6 w-[46%]" : "right-3 w-[52%]")}
+        >
+          <CarSilhouette color={color} className="w-full h-auto drop-shadow-[0_14px_18px_rgba(0,0,0,0.7)]" />
+        </motion.div>
+      ) : (
+        <span className={cn("absolute right-6 top-1/2 -translate-y-1/2 drop-shadow-lg", big ? "text-7xl" : "text-5xl")}>{KIND_ICON[n.kind]}</span>
+      )}
+      <div className="absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-t from-[hsl(222_22%_8%)] to-transparent" />
     </div>
   );
 }
@@ -109,39 +137,48 @@ export function NewsChartView({ chart, ctx, large }: { chart: NewsChart; ctx: Ct
     }
     case "positions":
       return (
-        <div className="space-y-3">
-          {chart.rows.map((r) => (
-            <div key={r.label} className="space-y-1">
-              <div className="flex justify-between text-xs">
-                <span className="font-display text-base">{r.label}</span>
-                <span className="text-muted-foreground">
-                  Salida P{r.from} → {r.to ? `llegada P${r.to}` : "abandono"}
-                </span>
+        <div className="grid gap-2">
+          {chart.rows.map((r) => {
+            const delta = r.to ? r.from - r.to : 0;
+            return (
+              <div key={r.label} className="relative overflow-hidden rounded-lg border border-white/10 bg-black/30 p-3 flex items-center gap-4">
+                <div className="absolute inset-y-0 left-0 w-1.5" style={{ backgroundColor: r.color }} />
+                <div className="flex-1 min-w-0 pl-1">
+                  <div className="text-xs text-muted-foreground truncate">{r.label.split(" ").slice(0, -1).join(" ")}</div>
+                  <div className="font-display text-xl leading-none truncate">{r.label.split(" ").slice(-1)[0]}</div>
+                  {r.note && <div className="text-[11px] text-muted-foreground mt-1 truncate">{r.note}</div>}
+                </div>
+                <div className="text-center">
+                  <div className="tv-label text-muted-foreground !text-[9px]">Salida</div>
+                  <div className="font-display text-2xl text-muted-foreground">P{r.from}</div>
+                </div>
+                <motion.span initial={{ x: -6, opacity: 0 }} animate={{ x: 0, opacity: 1 }} transition={{ delay: 0.2 }} className="text-xl text-muted-foreground">
+                  →
+                </motion.span>
+                <div className="text-center min-w-[64px]">
+                  <div className="tv-label text-muted-foreground !text-[9px]">Llegada</div>
+                  {r.to ? (
+                    <div className={cn("font-display text-4xl leading-none", r.to === 1 ? "text-yellow-300" : r.to <= 3 ? "text-foreground" : "")} style={r.to > 3 ? { color: r.color } : undefined}>
+                      P{r.to}
+                    </div>
+                  ) : (
+                    <div className="font-display text-2xl text-red-400">DNF</div>
+                  )}
+                </div>
+                <div className="w-20 text-right space-y-1">
+                  <span
+                    className={cn(
+                      "inline-block font-display text-sm px-2 py-0.5 rounded",
+                      !r.to ? "bg-red-500/20 text-red-300" : delta > 0 ? "bg-emerald-500/20 text-emerald-300" : delta < 0 ? "bg-red-500/20 text-red-300" : "bg-white/10 text-muted-foreground",
+                    )}
+                  >
+                    {!r.to ? "—" : delta > 0 ? `▲ ${delta}` : delta < 0 ? `▼ ${-delta}` : "="}
+                  </span>
+                  {r.points !== undefined && <div className="text-xs text-muted-foreground">{r.points ? `+${r.points} pts` : "sin puntos"}</div>}
+                </div>
               </div>
-              <div className="relative h-6 rounded bg-white/5">
-                {Array.from({ length: 22 }, (_, i) => (
-                  <div key={i} className="absolute top-0 bottom-0 w-px bg-white/10" style={{ left: `${(i / 21) * 100}%` }} />
-                ))}
-                <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border-2 border-white/60" style={{ left: `calc(${((r.from - 1) / 21) * 100}% - 6px)` }} />
-                {r.to > 0 && (
-                  <>
-                    <motion.div
-                      className="absolute top-1/2 -translate-y-1/2 h-1 rounded"
-                      style={{ backgroundColor: r.color, left: `${(Math.min(r.from, r.to) - 1) / 0.21}%` }}
-                      initial={{ width: 0 }}
-                      animate={{ width: `${(Math.abs(r.from - r.to) / 21) * 100}%` }}
-                      transition={{ duration: 0.8 }}
-                    />
-                    <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 rounded-full" style={{ backgroundColor: r.color, left: `calc(${((r.to - 1) / 21) * 100}% - 8px)` }} />
-                  </>
-                )}
-              </div>
-              <div className="flex justify-between text-[10px] text-muted-foreground">
-                <span>P1</span>
-                <span>P22</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       );
     case "dev": {
@@ -181,8 +218,8 @@ export function NewsDialog({ n, ctx, onClose }: { n: NewsItem | null; ctx: Ctx; 
       <DialogContent className="max-w-2xl p-0 overflow-hidden bg-[hsl(222_22%_8%)] border-white/10 max-h-[90vh] overflow-y-auto">
         {n && (
           <>
-            <Art n={n} className="h-32" />
-            <div className="p-5 md:p-6 space-y-4 -mt-10 relative">
+            <Art n={n} className="h-44" big />
+            <div className="p-5 md:p-6 space-y-4 -mt-6 relative">
               <div className="flex items-center gap-2">
                 <KindTag kind={n.kind} />
                 <span className="tv-label text-muted-foreground">{when(n)}</span>
@@ -227,7 +264,7 @@ export function NewsFeed({ news, ctx, onAll, limit = 5 }: { news: NewsItem[]; ct
       <SectionTitle right={<button className="hover:text-foreground" onClick={onAll}>Todas las noticias →</button>}>Noticias del paddock</SectionTitle>
       <div className="grid lg:grid-cols-[1.3fr_1fr] gap-4">
         <button onClick={() => setOpen(featured)} className="panel panel-hover text-left overflow-hidden">
-          <Art n={featured} className="h-24" />
+          <Art n={featured} className="h-36" />
           <div className="p-4 space-y-3 -mt-6 relative">
             <div className="flex items-center gap-2">
               <KindTag kind={featured.kind} />
@@ -292,7 +329,7 @@ export function NewsScreen({ news, ctx }: { news: NewsItem[]; ctx: Ctx }) {
             onClick={() => setOpen(n)}
             className="panel panel-hover text-left overflow-hidden"
           >
-            <Art n={n} className="h-20" />
+            <Art n={n} className="h-28" />
             <div className="p-4 space-y-2 -mt-5 relative">
               <div className="flex items-center gap-2">
                 <KindTag kind={n.kind} />

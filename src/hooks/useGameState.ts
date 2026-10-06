@@ -59,6 +59,10 @@ import {
   type Activity,
   raceNews,
   developmentNews,
+  playerDevNews,
+  marketNews,
+  midSeasonMarket,
+  FACILITY_INFO,
   carPace,
   type NewsItem,
   type NewsLookup,
@@ -524,6 +528,19 @@ export function useGameState() {
               ...cur,
               people: { ...cur.people, drivers: { ...cur.people.drivers, [driverId]: r.people.drivers[driverId] } },
               management: { ...cur.management, inbox: [...cur.management.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) },
+              news: addNews(cur.news, [
+                marketNews({
+                  season: cur.season,
+                  round: cur.currentRaceIndex,
+                  id: `player-${driverId}`,
+                  teamId: s.playerTeamId!,
+                  mine: true,
+                  look: lookupOf(cur),
+                  title: `Oficial: ${r.people.drivers[driverId].name} firma con ${lookupOf(cur).team(s.playerTeamId!)?.name}`,
+                  summary: r.message,
+                  body: [r.message, `Ritmo actual ${r.people.drivers[driverId].pace.toFixed(0)}, potencial estimado alto para su edad.`],
+                }),
+              ]),
             }
           : cur,
       );
@@ -541,7 +558,18 @@ export function useGameState() {
       const r = hireStaffFn(s.people, staffId, s.playerTeamId);
       if (!r.cost && r.people === s.people) return s;
       const m = chargePlayer(withStaff(s.management, r.people), s.currentRaceIndex, `Contratación: ${r.people.staff[staffId].name}`, -r.cost, "transfers", r.message);
-      return { ...s, people: r.people, management: m };
+      const n = marketNews({
+        season: s.season,
+        round: s.currentRaceIndex,
+        id: `staff-${staffId}`,
+        teamId: s.playerTeamId,
+        mine: true,
+        look: lookupOf(s),
+        title: `${lookupOf(s).team(s.playerTeamId)?.name} contrata a ${r.people.staff[staffId].name}`,
+        summary: r.message,
+        body: [r.message, `Costo de la operación: US$ ${r.cost.toFixed(1)} M.`],
+      });
+      return { ...s, people: r.people, management: m, news: addNews(s.news, [n]) };
     });
   }, []);
 
@@ -682,6 +710,7 @@ export function useGameState() {
         before: before.drivers,
         after: after.drivers,
         teamsAfter: after.teams,
+        teamsBefore: before.teams,
         playerTeamId: s.playerTeamId,
         look,
       });
@@ -694,12 +723,74 @@ export function useGameState() {
           news = [...news, ...developmentNews({ season: s.season, round, before: pace(prev.dev), after: pace(cur.dev), playerTeamId: s.playerTeamId, look })];
         }
       }
+      // the player's own upgrades and finished buildings
+      if (management?.player && s.management?.player && s.playerTeamId) {
+        const b = s.management.dev[s.playerTeamId];
+        const a = management.dev[s.playerTeamId];
+        const fb = s.management.player.facilities;
+        const fa = management.player.facilities;
+        const done = (Object.keys(fa) as (keyof typeof fa)[]).find((k) => fa[k] > fb[k]);
+        news = [
+          ...news,
+          ...playerDevNews({
+            season: s.season,
+            round,
+            teamId: s.playerTeamId,
+            before: b,
+            after: a,
+            facility: done ? { label: FACILITY_INFO[done].label, level: fa[done] } : null,
+            paceBefore: carPace(b),
+            paceAfter: carPace(a),
+            look,
+          }),
+        ];
+      }
+      // AI teams close deals for next season during the year
+      let people = s.people;
+      if (people && management && [8, 12, 16, 20].includes(round)) {
+        const ranks = Object.fromEntries(Object.keys(management.dev).map((id) => [id, carRankOf(management!, id)]));
+        const mk = midSeasonMarket(people, s.teamsData, s.playerTeamId, ranks, randomSeed());
+        people = mk.people;
+        for (const mv of mk.moves.slice(0, 4)) {
+          const d = people.drivers[mv.driverId];
+          const to = look.team(mv.teamId)?.name ?? mv.teamId;
+          const from = mv.fromTeamId ? look.team(mv.fromTeamId)?.name : null;
+          news.push(
+            marketNews({
+              season: s.season,
+              round,
+              id: `${mv.kind}-${mv.driverId}`,
+              teamId: mv.teamId,
+              look,
+              title: mv.kind === "renew" ? `${d.name} renueva con ${to} hasta ${mv.until}` : `Bombazo: ${to} ficha a ${d.name} para ${s.season + 1}`,
+              summary:
+                mv.kind === "renew"
+                  ? `Contrato hasta ${mv.until} por unos US$ ${mv.salary.toFixed(1)} M al año.`
+                  : `${d.name}${from ? ` deja ${from}` : d.status === "junior" ? " da el salto desde la Fórmula 2" : " vuelve a la parrilla"} y firma hasta ${mv.until}.`,
+              body: [
+                mv.kind === "renew"
+                  ? `${to} aseguró la continuidad de ${d.name} hasta ${mv.until}.`
+                  : `${to} cerró el fichaje de ${d.name} para la próxima temporada${from ? `: deja ${from} al final del año` : ""}.`,
+                `Salario estimado: US$ ${mv.salary.toFixed(1)} M por año. Ritmo actual ${d.pace.toFixed(0)}.`,
+                ...(mv.fromTeamId === s.playerTeamId ? [`Es uno de tus pilotos: tendrás que buscar reemplazo.`] : []),
+              ],
+            }),
+          );
+        }
+        if (mk.moves.length && management) {
+          management = {
+            ...management,
+            inbox: [...management.inbox, { race: round, tone: "info" as const, text: `Mercado: ${mk.moves.length} movimiento(s) de otros equipos para ${s.season + 1}. Revisa Noticias.` }].slice(-60),
+          };
+        }
+      }
       const resolvedNow = proposals.filter((p) => p.status !== "pending" && s.proposals.find((q) => q.id === p.id)?.status === "pending");
       news = [...news, ...resolvedNow.map((p) => ruleNews(p, round, s)), ...fresh.map((p) => ruleNews(p, round, s))];
       return withAgenda({
         ...s,
         proposals,
         news: addNews(s.news, news),
+        people,
         results,
         currentRaceIndex: round,
         weekend: null,

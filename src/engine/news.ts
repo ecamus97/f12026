@@ -8,7 +8,7 @@ export type NewsChart =
   | { type: "bars"; title: string; unit: string; rows: { label: string; color: string; value: number; mine?: boolean }[] }
   | { type: "dev"; teamIds: string[]; metric: "pace" }
   | { type: "votes"; proposalId: string }
-  | { type: "positions"; rows: { label: string; color: string; from: number; to: number }[] };
+  | { type: "positions"; rows: { label: string; color: string; from: number; to: number; points?: number; note?: string }[] };
 
 export interface NewsItem {
   id: string;
@@ -50,6 +50,13 @@ export interface StandingLite {
 }
 
 const ord = (n: number) => `P${n}`;
+
+const COUNTRY_ES: Record<string, string> = {
+  Australia: "Australia", Austria: "Austria", Azerbaijan: "Azerbaiyán", Bahrain: "Baréin", Belgium: "Bélgica", Brazil: "Brasil",
+  Canada: "Canadá", China: "China", "Great Britain": "Gran Bretaña", Hungary: "Hungría", Italy: "Italia", Japan: "Japón",
+  Mexico: "México", Monaco: "Mónaco", Netherlands: "Países Bajos", Qatar: "Catar", "Saudi Arabia": "Arabia Saudita",
+  Singapore: "Singapur", Spain: "España", UAE: "Abu Dabi", USA: "Estados Unidos",
+};
 const surname = (n: string) => n.split(" ").slice(-1)[0];
 
 /** News after a Grand Prix. */
@@ -66,10 +73,12 @@ export function raceNews(ctx: {
   before: StandingLite[]; // drivers' standings before the race
   after: StandingLite[];
   teamsAfter: StandingLite[];
+  teamsBefore?: StandingLite[];
   playerTeamId: string | null;
   look: NewsLookup;
 }): NewsItem[] {
   const { season, round, rows, look } = ctx;
+  ctx = { ...ctx, country: COUNTRY_ES[ctx.country] ?? ctx.country };
   const out: NewsItem[] = [];
   const id = (k: string) => `${season}-${round}-${k}`;
   const dn = (did: string) => look.driver(did)?.name ?? did;
@@ -135,13 +144,23 @@ export function raceNews(ctx: {
       season,
       round,
       kind: "team",
-      title: best ? (best.position <= 3 ? `¡Podio para ${team?.name}!` : pts > 0 ? `${team?.name} suma ${pts} punto${pts === 1 ? "" : "s"}` : `${team?.name} se va sin puntos`) : `Doble abandono de ${team?.name}`,
+      title: !best
+        ? `Doble abandono de ${team?.name}`
+        : mine.filter((r) => r.status === "finished" && r.position <= 2).length === 2
+          ? `¡Doblete histórico de ${team?.name}!`
+          : best.position === 1
+            ? `¡Victoria de ${team?.name}! ${surname(dn(best.driverId))} gana en ${ctx.country}`
+            : best.position <= 3
+              ? `¡Podio para ${team?.name}!`
+              : pts > 0
+                ? `${team?.name} suma ${pts} punto${pts === 1 ? "" : "s"}`
+                : `${team?.name} se va sin puntos`,
       summary: mine.map((r) => `${surname(dn(r.driverId))} ${r.status === "dnf" ? "abandonó" : ord(r.position)} (salía ${ord(r.grid)})`).join(" · "),
       body: [
         ...mine.map((r) =>
           r.status === "dnf"
             ? `${dn(r.driverId)} abandonó: ${r.dnfReason ?? "abandono"}.`
-            : `${dn(r.driverId)} terminó ${ord(r.position)} tras largar ${ord(r.grid)}, con ${r.stops} parada${r.stops === 1 ? "" : "s"}${r.points ? ` y ${r.points} puntos` : ""}.`,
+            : `${dn(r.driverId)} terminó ${ord(r.position)} tras largar ${ord(r.grid)}, con ${r.stops} parada${r.stops === 1 ? "" : "s"}${r.points ? ` y ${r.points} punto${r.points === 1 ? "" : "s"}` : ""}.`,
         ),
         `El equipo queda ${ord(teamPos)} en el campeonato de constructores.`,
       ],
@@ -149,10 +168,17 @@ export function raceNews(ctx: {
       color: team?.hex,
       mine: true,
       raceId: ctx.raceId,
-      importance: best && best.position <= 3 ? 3 : 2,
+      importance: best && best.position === 1 ? 4 : best && best.position <= 3 ? 3 : 2,
       chart: {
         type: "positions",
-        rows: mine.map((r) => ({ label: surname(dn(r.driverId)), color: team?.hex ?? "#888", from: r.grid, to: r.status === "dnf" ? 0 : r.position })),
+        rows: mine.map((r) => ({
+          label: dn(r.driverId),
+          color: team?.hex ?? "#888",
+          from: r.grid,
+          to: r.status === "dnf" ? 0 : r.position,
+          points: r.points,
+          note: r.status === "dnf" ? r.dnfReason : `${r.stops} parada${r.stops === 1 ? "" : "s"}`,
+        })),
       },
     });
   }
@@ -190,6 +216,67 @@ export function raceNews(ctx: {
     }
   }
 
+  // 3b) big moves in the standings (later in the season, when positions are harder to change)
+  if (round >= 5) {
+    const move = (before: StandingLite[], after: StandingLite[]) =>
+      after
+        .map((x, i) => ({ x, now: i + 1, was: before.findIndex((b) => b.id === x.id) + 1 }))
+        .filter((m) => m.was > 0 && m.was - m.now >= (m.now <= 5 ? 2 : 3) && m.now <= 10)
+        .sort((a, b) => b.was - b.now - (a.was - a.now))[0];
+    const seg = (after: StandingLite[], idx: number, isTeam: boolean) =>
+      after.slice(Math.max(0, idx - 3), idx + 3).map((d) => ({
+        label: isTeam ? d.name : d.name,
+        color: tm(d.teamId)?.hex ?? "#888",
+        value: d.points,
+        mine: d.teamId === ctx.playerTeamId,
+      }));
+    const dm = move(ctx.before, ctx.after);
+    if (dm) {
+      out.push({
+        id: id("climb-d"),
+        season,
+        round,
+        kind: "championship",
+        title: `${surname(dm.x.name)} escala al ${ord(dm.now)} del campeonato`,
+        summary: `Sube ${dm.was - dm.now} puestos en la general tras ${ctx.country}: estaba ${ord(dm.was)}.`,
+        body: [
+          `${dm.x.name} (${tm(dm.x.teamId)?.name}) pasa de ${ord(dm.was)} a ${ord(dm.now)} en el campeonato de pilotos con ${dm.x.points} puntos.`,
+          dm.now > 1 ? `Está a ${ctx.after[0].points - dm.x.points} puntos del líder, ${ctx.after[0].name}.` : `Ahora es el líder del campeonato.`,
+        ],
+        teamIds: [dm.x.teamId],
+        color: tm(dm.x.teamId)?.hex,
+        importance: 2,
+        chart: { type: "bars", title: "Campeonato de pilotos", unit: "pts", rows: seg(ctx.after, dm.now - 1, false) },
+      });
+    }
+    const before = ctx.teamsBefore ?? [];
+    const tmv = before.length ? move(before, ctx.teamsAfter) : undefined;
+    if (tmv) {
+      out.push({
+        id: id("climb-t"),
+        season,
+        round,
+        kind: "championship",
+        title: `${tm(tmv.x.id)?.name ?? tmv.x.name} sube al ${ord(tmv.now)} de constructores`,
+        summary: `Gana ${tmv.was - tmv.now} puestos en la tabla de equipos (estaba ${ord(tmv.was)}).`,
+        body: [
+          `${tm(tmv.x.id)?.name} suma ${tmv.x.points} puntos y escala de ${ord(tmv.was)} a ${ord(tmv.now)} en el campeonato de constructores.`,
+          tmv.now > 1 ? `Le faltan ${ctx.teamsAfter[tmv.now - 2].points - tmv.x.points} puntos para alcanzar a ${tm(ctx.teamsAfter[tmv.now - 2].id)?.name}.` : `Lidera el campeonato de constructores.`,
+        ],
+        teamIds: [tmv.x.id],
+        color: tm(tmv.x.id)?.hex,
+        mine: tmv.x.id === ctx.playerTeamId,
+        importance: 2,
+        chart: {
+          type: "bars",
+          title: "Campeonato de constructores",
+          unit: "pts",
+          rows: ctx.teamsAfter.slice(Math.max(0, tmv.now - 4), tmv.now + 2).map((t) => ({ label: tm(t.id)?.name ?? t.name, color: tm(t.id)?.hex ?? "#888", value: t.points, mine: t.id === ctx.playerTeamId })),
+        },
+      });
+    }
+  }
+
   // 4) comeback of the day
   const climber = [...finished].sort((a, b) => b.grid - b.position - (a.grid - a.position))[0];
   if (climber && climber.grid - climber.position >= 6) {
@@ -208,7 +295,10 @@ export function raceNews(ctx: {
       color: tm(climber.teamId)?.hex,
       importance: 1,
       raceId: ctx.raceId,
-      chart: { type: "positions", rows: [{ label: surname(dn(climber.driverId)), color: tm(climber.teamId)?.hex ?? "#888", from: climber.grid, to: climber.position }] },
+      chart: {
+        type: "positions",
+        rows: [{ label: dn(climber.driverId), color: tm(climber.teamId)?.hex ?? "#888", from: climber.grid, to: climber.position, points: climber.points, note: tm(climber.teamId)?.name }],
+      },
     });
   }
 
@@ -266,7 +356,7 @@ export function developmentNews(ctx: {
     .map((id) => ({ id, g: (ctx.after[id] ?? 0) - (ctx.before[id] ?? 0) }))
     .sort((a, b) => b.g - a.g);
   const top = gains[0];
-  if (!top || top.g < 0.45) return [];
+  if (!top || top.g < 0.6) return [];
   const t = ctx.look.team(top.id);
   const rank = (id: string, m: Record<string, number>) => 1 + Object.keys(m).filter((x) => m[x] > m[id]).length;
   return [
@@ -290,4 +380,88 @@ export function developmentNews(ctx: {
       chart: { type: "dev", teamIds: ctx.playerTeamId ? [top.id, ctx.playerTeamId] : [top.id], metric: "pace" },
     },
   ];
+}
+
+/** The player's own big upgrades and finished facility works. */
+export function playerDevNews(ctx: {
+  season: number;
+  round: number;
+  teamId: string;
+  before: Record<"aero" | "powerUnit" | "chassis" | "reliability" | "pitCrew", number>;
+  after: Record<"aero" | "powerUnit" | "chassis" | "reliability" | "pitCrew", number>;
+  facility?: { label: string; level: number } | null;
+  paceBefore: number;
+  paceAfter: number;
+  look: NewsLookup;
+}): NewsItem[] {
+  const out: NewsItem[] = [];
+  const t = ctx.look.team(ctx.teamId);
+  const LABEL = { aero: "aerodinámica", powerUnit: "unidad de potencia", chassis: "chasis", reliability: "fiabilidad", pitCrew: "pit crew" } as const;
+  const gains = (Object.keys(LABEL) as (keyof typeof LABEL)[]).map((k) => ({ k, g: ctx.after[k] - ctx.before[k] })).filter((x) => x.g >= 1.5);
+  if (gains.length) {
+    out.push({
+      id: `${ctx.season}-${ctx.round}-mydev`,
+      season: ctx.season,
+      round: ctx.round,
+      kind: "development",
+      title: `${t?.name} estrena mejoras de ${gains.map((x) => LABEL[x.k]).join(" y ")}`,
+      summary: gains.map((x) => `${LABEL[x.k]} +${x.g.toFixed(1)}`).join(" · ") + ` · ritmo del auto ${ctx.paceBefore.toFixed(1)} → ${ctx.paceAfter.toFixed(1)}`,
+      body: [
+        `El trabajo en la fábrica da frutos: ${gains.map((x) => `${LABEL[x.k]} sube ${x.g.toFixed(1)} puntos`).join(", ")}.`,
+        `El ritmo general del auto pasa de ${ctx.paceBefore.toFixed(1)} a ${ctx.paceAfter.toFixed(1)}.`,
+      ],
+      teamIds: [ctx.teamId],
+      color: t?.hex,
+      mine: true,
+      importance: 2,
+      chart: { type: "dev", teamIds: [ctx.teamId], metric: "pace" },
+    });
+  }
+  if (ctx.facility) {
+    out.push({
+      id: `${ctx.season}-${ctx.round}-fac`,
+      season: ctx.season,
+      round: ctx.round,
+      kind: "development",
+      title: `Inauguración: ${ctx.facility.label} de ${t?.name} llega al nivel ${ctx.facility.level}`,
+      summary: `Termina la obra tras meses de construcción. Los proyectos de esa área rinden más desde ahora.`,
+      body: [
+        `${t?.name} inauguró la ampliación de su ${ctx.facility.label.toLowerCase()}, que pasa al nivel ${ctx.facility.level}.`,
+        `Cada nivel multiplica la mejora de los proyectos del área y sube su probabilidad de éxito.`,
+      ],
+      teamIds: [ctx.teamId],
+      color: t?.hex,
+      mine: true,
+      importance: 2,
+    });
+  }
+  return out;
+}
+
+/** A transfer story (signing, renewal, staff hire). */
+export function marketNews(ctx: {
+  season: number;
+  round: number;
+  id: string;
+  title: string;
+  summary: string;
+  body: string[];
+  teamId: string;
+  mine?: boolean;
+  look: NewsLookup;
+}): NewsItem {
+  const t = ctx.look.team(ctx.teamId);
+  return {
+    id: `${ctx.season}-${ctx.round}-mkt-${ctx.id}`,
+    season: ctx.season,
+    round: ctx.round,
+    kind: "market",
+    title: ctx.title,
+    summary: ctx.summary,
+    body: ctx.body,
+    teamIds: [ctx.teamId],
+    color: t?.hex,
+    mine: ctx.mine,
+    importance: 2,
+  };
 }

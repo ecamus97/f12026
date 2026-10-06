@@ -276,6 +276,63 @@ function newStaff(rng: Rng, role: StaffRole, season: number, n: number): StaffRe
   };
 }
 
+// --- Mid-season market ---------------------------------------------------------
+
+export interface MarketMove {
+  kind: "renew" | "sign";
+  driverId: string;
+  teamId: string;
+  fromTeamId: string | null;
+  until: number;
+  salary: number;
+}
+
+/**
+ * During the season AI teams close deals for next year: they renew drivers whose
+ * contracts end, or sign someone better from the market (a free agent, a junior or a
+ * driver whose contract ends elsewhere). The player can lose targets this way.
+ */
+export function midSeasonMarket(p0: PeopleState, teams: Team[], playerTeamId: string | null, carRanks: Record<string, number>, seed: number): { people: PeopleState; moves: MarketMove[] } {
+  const rng = createRng(seed);
+  const next = p0.season + 1;
+  const drivers = { ...p0.drivers };
+  const p: PeopleState = { ...p0, drivers };
+  const moves: MarketMove[] = [];
+  for (const t of teams) {
+    if (t.id === playerTeamId) continue;
+    const rank = carRanks[t.id] ?? 6;
+    // 1) renewals
+    for (const d of Object.values(drivers)) {
+      if (d.status !== "active" || d.contract?.teamId !== t.id || d.contract.until > p0.season || d.nextContract) continue;
+      const age = ageOf(d, next);
+      const mate = Object.values(drivers).find((x) => x.id !== d.id && x.contract?.teamId === t.id && x.status === "active");
+      const keep = age <= 37 && d.pace >= (mate?.pace ?? 0) - 4;
+      if (keep && rng.chance(0.35)) {
+        const years = age >= 34 ? 1 : rng.int(1, 3);
+        const salary = capSalary(p0, marketValue(d, next));
+        drivers[d.id] = { ...d, nextContract: { teamId: t.id, salary, until: next + years - 1 } };
+        moves.push({ kind: "renew", driverId: d.id, teamId: t.id, fromTeamId: t.id, until: next + years - 1, salary });
+      }
+    }
+    // 2) a signing for an open seat next year
+    if (nextSeasonLineup(p, t.id).length >= 2 || !rng.chance(0.3)) continue;
+    const pool = Object.values(drivers).filter(
+      (d) => d.status !== "retired" && !d.nextContract && d.contract?.teamId !== t.id && availableForNextSeason(p, d) && ageOf(d, next) <= 36,
+    );
+    if (!pool.length) continue;
+    const score = (d: DriverRecord) =>
+      d.pace + (ageOf(d, next) <= 23 ? (d.potential - d.pace) * 0.35 : 0) - marketValue(d, next) * (0.08 + rank * 0.03) + rng.next();
+    const pick = pool.sort((a, b) => score(b) - score(a))[0];
+    const current = Object.values(drivers).filter((d) => d.contract?.teamId === t.id && d.status === "active");
+    if (pick.pace < Math.min(...current.map((d) => d.pace), 99) - 1) continue; // only if it's an upgrade
+    const years = ageOf(pick, next) <= 24 ? 2 : rng.int(1, 2);
+    const salary = capSalary(p0, marketValue(pick, next));
+    drivers[pick.id] = { ...pick, nextContract: { teamId: t.id, salary, until: next + years - 1 } };
+    moves.push({ kind: "sign", driverId: pick.id, teamId: t.id, fromTeamId: pick.contract?.teamId ?? null, until: next + years - 1, salary });
+  }
+  return { people: p, moves };
+}
+
 // --- Season change -------------------------------------------------------------
 
 const capSalary = (p: PeopleState, s: number) => (p.salaryCap ? Math.min(p.salaryCap, s) : s);
