@@ -3,7 +3,7 @@ import { teams } from "@/data/f1Data";
 import {
   advanceSeason, applyLineups, askingSalary, carRankOf, initManagement, initPeople, lineup, offerDriverContract,
   hireStaff, payroll, startNewSeason, constructorsPrize, applyDevToTeams, staffRatings, nextSeasonLineup,
-  willRetire, signableNow, midSeasonMarket, fireStaff, ageOf,
+  willRetire, signableNow, midSeasonMarket, fireStaff, ageOf, availableForNextSeason,
 } from "@/engine";
 
 const ranks = () => Object.fromEntries(teams.map((t, i) => [t.id, i + 1]));
@@ -51,18 +51,20 @@ describe("people and seasons", () => {
 
   it("market: asking salary, refusals and signings for next season", () => {
     const p = initPeople(teams, 3);
-    const ask = askingSalary(p.drivers.cam, 2027, 6, 86);
-    const low = offerDriverContract(p, "cam", "williams", ask * 0.5, 2, 6, 86);
+    const ask = askingSalary(p.drivers.for, 2027, 6, 86);
+    // a junior who isn't ready for F1 yet (one season of F2) can't be signed
+    expect(offerDriverContract(p, "cam", "williams", 99, 2, 6, 86).ok).toBe(false);
+    const low = offerDriverContract(p, "for", "williams", ask * 0.5, 2, 6, 86);
     expect(low.ok).toBe(false);
     // Albon is under contract until 2027: can't be signed for 2027
     expect(offerDriverContract(p, "nor", "williams", 99, 2, 6, 86).ok).toBe(false);
-    // Sainz's deal ends in 2026; Williams can't sign a third driver while Albon continues + Câmara signed
-    const ok = offerDriverContract(p, "cam", "williams", ask, 2, 6, 86);
+    // Sainz's deal ends in 2026; Williams can't sign a third driver while Albon continues + Fornaroli signed
+    const ok = offerDriverContract(p, "for", "williams", ask, 2, 6, 86);
     expect(ok.ok).toBe(true);
-    expect(nextSeasonLineup(ok.people, "williams").map((d) => d.id).sort()).toEqual(["alb", "cam"]);
+    expect(nextSeasonLineup(ok.people, "williams").map((d) => d.id).sort()).toEqual(["alb", "for"]);
     expect(offerDriverContract(ok.people, "tsu", "williams", 50, 1, 6, 86).ok).toBe(false);
     const next = advanceSeason(ok.people, teams, "williams", ranks()).people;
-    expect(lineup(next, "williams").sort()).toEqual(["alb", "cam"]);
+    expect(lineup(next, "williams").sort()).toEqual(["alb", "for"]);
     expect(next.drivers.sai.contract?.teamId).not.toBe("williams");
   });
 
@@ -171,7 +173,7 @@ describe("negotiations", () => {
     let p = initPeople(teams, 11);
     let ts = applyLineups(teams, p);
     const rk = ranks();
-    const arrivals: { rank: number; age: number; pace: number }[] = [];
+    const arrivals: { rank: number; age: number; pace: number; exp: number }[] = [];
     for (let y = 0; y < 6; y++) {
       for (const r of [8, 12, 16, 20]) p = midSeasonMarket(p, ts, null, rk, y * 100 + r).people;
       const before = Object.fromEntries(Object.values(p.drivers).map((d) => [d.id, d.contract?.teamId ?? null]));
@@ -179,7 +181,7 @@ describe("negotiations", () => {
       ts = applyLineups(ts, p);
       for (const d of Object.values(p.drivers)) {
         const to = d.contract?.teamId;
-        if (to && before[d.id] !== to) arrivals.push({ rank: rk[to], age: ageOf(d, p.season), pace: d.pace });
+        if (to && before[d.id] !== to) arrivals.push({ rank: rk[to], age: ageOf(d, p.season), pace: d.pace, exp: (d.f1Seasons ?? 1) - 1 });
       }
     }
     const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / Math.max(1, xs.length);
@@ -187,7 +189,8 @@ describe("negotiations", () => {
     const small = arrivals.filter((a) => a.rank >= 8);
     expect(top.length).toBeGreaterThan(0);
     expect(small.length).toBeGreaterThan(0);
-    expect(avg(top.map((a) => a.pace))).toBeGreaterThan(avg(small.map((a) => a.pace)));
+    // the top teams want experience, the small ones give rookies their chance
+    expect(avg(top.map((a) => a.exp))).toBeGreaterThan(avg(small.map((a) => a.exp)));
     expect(avg(small.map((a) => a.age))).toBeLessThan(avg(top.map((a) => a.age)) + 1);
   });
 
@@ -199,5 +202,40 @@ describe("negotiations", () => {
     const stillFree = free.filter((d) => r.drivers[d.id].status === "free");
     expect(stillFree.some((d) => r.drivers[d.id].pace < d.pace)).toBe(true);
     expect(r.drivers.nor.racecraft).toBeGreaterThan(r.drivers.pia.racecraft - (p.drivers.pia.racecraft - p.drivers.nor.racecraft) - 0.01);
+  });
+
+  it("feeder ladder: invented juniors start in F3/F2 with fitting names and climb", () => {
+    let p = initPeople(teams, 21);
+    const f3 = Object.values(p.drivers).filter((d) => d.series === "F3");
+    expect(f3.length).toBeGreaterThanOrEqual(10);
+    expect(f3.every((d) => d.juniorTeam && !availableForNextSeason(p, d))).toBe(true);
+    const names = Object.values(p.drivers).map((d) => d.name);
+    expect(new Set(names).size).toBe(names.length);
+    let ts = applyLineups(teams, p);
+    const startIds = new Set(f3.map((d) => d.id));
+    for (let y = 0; y < 5; y++) {
+      p = advanceSeason(p, ts, null, ranks()).people;
+      ts = applyLineups(ts, p);
+    }
+    // some of the 2026 F3 kids reached F2 or F1, none jumped from F3 to F1 in year one
+    const climbed = [...startIds].filter((id) => p.drivers[id].series === "F2" || p.drivers[id].status === "active");
+    expect(climbed.length).toBeGreaterThan(0);
+    const all = Object.values(p.drivers).map((d) => d.name);
+    expect(new Set(all).size).toBeGreaterThan(all.length * 0.97);
+  });
+
+  it("contracts are mostly multi-year and experience is valued", () => {
+    let p = initPeople(teams, 8);
+    let ts = applyLineups(teams, p);
+    const lengths: number[] = [];
+    for (let y = 0; y < 4; y++) {
+      for (const r of [8, 12, 16, 20]) p = midSeasonMarket(p, ts, null, ranks(), y * 50 + r).people;
+      for (const d of Object.values(p.drivers)) if (d.nextContract) lengths.push(d.nextContract.until - p.season);
+      p = advanceSeason(p, ts, null, ranks()).people;
+      ts = applyLineups(ts, p);
+    }
+    const multi = lengths.filter((l) => l >= 2).length / lengths.length;
+    expect(multi).toBeGreaterThan(0.5);
+    expect(p.drivers.nor.f1Seasons).toBe(11);
   });
 });

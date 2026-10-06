@@ -48,6 +48,7 @@ import {
   offerStaffContract,
   offerStaffRenewal,
   migrateStaff,
+  migrateFeeder,
   fireStaff as fireStaffFn,
   renewStaff as renewStaffFn,
   DEFAULT_RULES,
@@ -287,7 +288,7 @@ function loadState(): GameState {
     }
     // saves from before contracts and staff existed
     if (state.playerTeamId && !state.people) state.people = initPeople(state.teamsData, randomSeed());
-    if (state.people) state.people = migrateStaff(state.people);
+    if (state.people) state.people = migrateFeeder(migrateStaff(state.people));
     if (state.management && state.people) {
       state.management = withStaff(state.management, state.people);
       const pl = state.management.player;
@@ -370,7 +371,21 @@ function seasonStories(
       chart: { type: "bars", title: "Cambio de rendimiento por el reglamento", unit: "", rows: [...impact].sort((a, b) => b.value - a.value) },
     });
   }
-  const transfers = market.filter((n) => !n.startsWith("Tu equipo") && /ficha|se cambia|debuta|retiro|se retira/.test(n));
+  const transfers = market.filter((n) => !n.startsWith("Tu equipo") && !n.startsWith("Cantera") && /ficha|se cambia|debuta|retiro|se retira/.test(n));
+  const youth = market.filter((n) => n.startsWith("Cantera"));
+  if (youth.length) {
+    out.push({
+      id: `${newSeason}-feeder`,
+      season: newSeason,
+      round: 0,
+      kind: "market",
+      title: `La cantera se mueve: ascensos y nuevas promesas para ${newSeason}`,
+      summary: youth[0].replace(/^Cantera:\s*/, ""),
+      body: youth.map((n) => n.replace(/^Cantera:\s*/, "")),
+      teamIds: [],
+      importance: 1,
+    });
+  }
   const staffMoves = market.filter((n) => !n.startsWith("Tu equipo") && /contrata a|deja |se incorpora/.test(n));
   if (staffMoves.length) {
     out.push({

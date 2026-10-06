@@ -7,7 +7,7 @@ import { SectionTitle } from "./visuals";
 import { NegotiationDialog, type NegotiationAnswer } from "./NegotiationDialog";
 import {
   ageOf, askingSalary, availableForNextSeason, carRankOf, lineup, nextSeasonLineup, payroll, teamStaff,
-  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING, talkOf, renewalAsk, willRetire, seatOpenNow, signableNow, signedFor,
+  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING, talkOf, renewalAsk, willRetire, seatOpenNow, signableNow, signedFor, f1Ready,
   type DriverRecord, type ManagementState, type PeopleState, type StaffRecord,
 } from "@/engine";
 import { TeamStripe } from "./common";
@@ -80,7 +80,12 @@ export function DriversPanel({
   const market = useMemo(
     () =>
       Object.values(people.drivers)
-        .filter((d) => d.status !== "retired" && (availableForNextSeason(people, d) || (openNow && signableNow(d))) && d.contract?.teamId !== team.id)
+        .filter(
+          (d) =>
+            d.status !== "retired" &&
+            d.contract?.teamId !== team.id &&
+            (availableForNextSeason(people, d) || (openNow && signableNow(d)) || (filter === "junior" && d.status === "junior")),
+        )
         .filter((d) =>
           filter === "all" ? true : filter === "contract" ? d.status === "active" : filter === "free" ? d.status === "free" : d.status === "junior",
         )
@@ -170,7 +175,7 @@ export function DriversPanel({
                 ["all", "Todos"],
                 ["contract", "Fin de contrato"],
                 ["free", "Libres"],
-                ["junior", "Juveniles F2"],
+                ["junior", "Cantera F2/F3"],
               ] as [MarketFilter, string][]
             ).map(([k, l]) => (
               <button key={k} onClick={() => setFilter(k)} className={cn("px-2 py-1", filter === k ? "bg-muted text-foreground" : "text-muted-foreground")}>
@@ -181,12 +186,14 @@ export function DriversPanel({
         </div>
         <p className="text-[11px] text-muted-foreground">
           Los pilotos con experiencia y mucho ritmo son caros; los jóvenes son baratos y pueden crecer hasta su potencial en pocos años. Un auto
-          competitivo y un jefe de equipo reconocido bajan lo que piden. Los mayores de 35 pueden retirarse.
+          competitivo y un jefe de equipo reconocido bajan lo que piden. Los mayores de 35 pueden retirarse. Los juveniles empiezan en la
+          F3, suben a la F2 y solo están listos para la F1 cuando muestran nivel (ritmo 77 o dos temporadas sólidas en F2).
         </p>
         <div className="divide-y divide-border/40">
           {market.map((d) => {
             const t = teamName(d.contract?.teamId);
             const retiring = willRetire(d, season) && !(openNow && signableNow(d));
+            const notReady = d.status === "junior" && !f1Ready(d);
             const now = openNow && signableNow(d);
             return (
               <div key={d.id} className="py-2">
@@ -196,7 +203,10 @@ export function DriversPanel({
                     {d.nationality} {d.name}
                   </span>
                   <span className="text-[11px] text-muted-foreground">
-                    {ageOf(d, next)} años · {t ? t.name : d.origin ?? (d.status === "junior" ? "Fórmula 2" : "Libre")}
+                    {ageOf(d, next)} años ·{" "}
+                    {t ? t.name : d.status === "junior" ? `${d.series ?? "F2"}${d.juniorTeam ? ` · ${d.juniorTeam}` : ""}` : d.origin ?? "Libre"}
+                    {" · "}
+                    {(d.f1Seasons ?? 0) > 0 ? `${d.f1Seasons} temp. en F1` : "sin experiencia en F1"}
                   </span>
                   <span className="ml-auto flex items-center gap-3 text-xs tabular-nums">
                     <span>
@@ -204,7 +214,11 @@ export function DriversPanel({
                     </span>
                     <span className="text-muted-foreground">Pot. {potentialLabel(d, season)}</span>
                     <span className="w-24 text-right">{m1(askingSalary(d, next, carRank, tp))}</span>
-                    {retiring ? (
+                    {notReady ? (
+                      <span className="text-[11px] text-muted-foreground w-[74px] text-center" title="Todavía no tiene nivel para la F1: sigue en la cantera">
+                        En desarrollo
+                      </span>
+                    ) : retiring ? (
                       <span className="text-[11px] text-orange-300 w-[74px] text-center">Se retira</span>
                     ) : (
                       <Button size="sm" variant={now ? "default" : "outline"} className="h-7 text-xs" onClick={() => openOffer(d)}>
