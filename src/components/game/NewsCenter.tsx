@@ -57,9 +57,9 @@ function Art({ n, className, big }: { n: NewsItem; className?: string; big?: boo
           initial={{ x: 80, opacity: 0 }}
           animate={{ x: 0, opacity: 1 }}
           transition={{ duration: 0.5, ease: "easeOut" }}
-          className={cn("absolute top-1/2 -translate-y-1/2 flex justify-end", big ? "right-8 h-[70%] w-[40%]" : "right-4 h-[68%] w-[40%]")}
+          className={cn("absolute top-[42%] -translate-y-1/2 flex justify-end", big ? "right-8 h-[62%] w-[40%]" : "right-4 h-[58%] w-[40%]")}
         >
-          <TeamLogo teamId={n.teamIds[0]} color={color} className="w-full h-full max-h-full drop-shadow-[0_10px_18px_rgba(0,0,0,0.7)]" />
+          <TeamLogo teamId={n.teamIds[0]} color={color} className="h-full aspect-square drop-shadow-[0_10px_18px_rgba(0,0,0,0.7)]" />
         </motion.div>
       ) : (
         <span className={cn("absolute right-6 top-1/2 -translate-y-1/2 drop-shadow-lg", big ? "text-7xl" : "text-5xl")}>{KIND_ICON[n.kind]}</span>

@@ -223,7 +223,7 @@ function probeLogo(id: string, cb: (v: string | null) => void) {
     for (const w of logoWaiters.get(id) ?? []) w(v);
     logoWaiters.delete(id);
   };
-  tryExt(["svg", "png", "webp"]);
+  tryExt(["png", "svg", "webp"]);
 }
 
 /** The team's logo (from public/logos) or, if there is none, a crest in its colours. */
@@ -239,7 +239,13 @@ export function TeamLogo({ teamId, color, label, className }: { teamId: string; 
   const info = defaultTeams.find((t) => t.id === teamId);
   const hex = color ?? info?.hex ?? "#888";
   const text = (label ?? info?.shortName ?? teamId.slice(0, 3)).toUpperCase();
-  if (url) return <img src={url} alt={info?.name ?? teamId} className={cn("object-contain", className)} draggable={false} />;
+  if (url)
+    return (
+      // a light badge so dark logos stay readable on the dark UI
+      <span className={cn("relative inline-block rounded-[22%] bg-white shadow-md overflow-hidden", className)}>
+        <img src={url} alt={info?.name ?? teamId} className="absolute inset-[11%] w-[78%] h-[78%] object-contain" draggable={false} />
+      </span>
+    );
   const gid = `crest-${teamId.replace(/[^a-z0-9]/gi, "")}`;
   return (
     <svg viewBox="0 0 100 116" className={className} aria-label={info?.name ?? teamId}>
