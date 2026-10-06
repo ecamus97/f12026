@@ -9,3 +9,4 @@ export * from "./management";
 export * from "./sponsors";
 export * from "./weather";
 export { dryCompoundFor, replan } from "./strategy";
+export * from "./people";

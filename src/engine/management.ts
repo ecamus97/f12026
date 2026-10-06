@@ -96,18 +96,21 @@ export interface FacilityWork {
 }
 
 export type LedgerCategory =
-  | "initial" | "tv" | "sponsor" | "prize" | "logistics" | "staff" | "parts" | "operations" | "repairs" | "rnd" | "facilities";
+  | "initial" | "tv" | "sponsor" | "prize" | "owners" | "logistics" | "staff" | "parts" | "operations" | "repairs" | "salaries" | "transfers" | "rnd" | "facilities";
 
 export const CATEGORY_INFO: Record<LedgerCategory, { label: string; kind: "income" | "expense" }> = {
   initial: { label: "Presupuesto inicial", kind: "income" },
   tv: { label: "Derechos comerciales y TV", kind: "income" },
   sponsor: { label: "Patrocinadores", kind: "income" },
-  prize: { label: "Premios por puntos", kind: "income" },
+  prize: { label: "Premios", kind: "income" },
+  owners: { label: "Aporte de los dueños para sueldos", kind: "income" },
   logistics: { label: "Logística y viajes", kind: "expense" },
   staff: { label: "Personal de carrera", kind: "expense" },
   parts: { label: "Componentes y neumáticos", kind: "expense" },
   operations: { label: "Operación del fin de semana", kind: "expense" },
   repairs: { label: "Reparaciones", kind: "expense" },
+  salaries: { label: "Sueldos de pilotos y dirección", kind: "expense" },
+  transfers: { label: "Fichajes e indemnizaciones", kind: "expense" },
   rnd: { label: "Investigación y desarrollo", kind: "expense" },
   facilities: { label: "Instalaciones", kind: "expense" },
 };
@@ -127,7 +130,7 @@ export function ledgerCategory(l: LedgerEntry): LedgerCategory {
 }
 
 /** Investments are decisions taken between races; the rest happens on the race weekend. */
-export const isInvestment = (cat: LedgerCategory) => cat === "rnd" || cat === "facilities";
+export const isInvestment = (cat: LedgerCategory) => cat === "rnd" || cat === "facilities" || cat === "transfers";
 
 export interface LedgerEntry {
   race: number; // round number (1-24), 0 = pre-season
@@ -152,6 +155,7 @@ export interface PlayerEconomy {
   sponsors: SponsorDeal[]; // signed contracts
   offers: SponsorDeal[]; // available on the market
   partLevels?: Record<string, number>; // upgrades completed per part
+  salaryFund?: number; // M USD per season the owners put in for salaries
 }
 
 export interface DevSnapshot {
@@ -436,6 +440,7 @@ export function processRaceWeekend(
   rows: ClassifiedRow[],
   round: number,
   pole?: string,
+  payrollPerSeason?: number,
 ): ManagementState {
   const rng = createRng(m.rngState);
   const inbox: InboxMessage[] = [];
@@ -476,6 +481,11 @@ export function processRaceWeekend(
     ledger.push({ race: round, concept: "Logística y viajes", amount: -logisticsCost(round), category: "logistics" });
     ledger.push({ race: round, concept: "Personal de carrera", amount: -STAFF_COST, category: "staff" });
     ledger.push({ race: round, concept: "Componentes y neumáticos", amount: -PARTS_COST, category: "parts" });
+    if (payrollPerSeason !== undefined) {
+      const fund = player.salaryFund ?? payrollPerSeason;
+      ledger.push({ race: round, concept: "Aporte de los dueños para sueldos", amount: +(fund / races2026.length).toFixed(2), category: "owners" });
+      ledger.push({ race: round, concept: "Sueldos de pilotos y dirección", amount: -(payrollPerSeason / races2026.length).toFixed(2), category: "salaries" });
+    }
     if (crashes > 0) {
       ledger.push({ race: round, concept: `Reparación por accidente${crashes > 1 ? "s" : ""}`, amount: -CRASH_REPAIR * crashes, category: "repairs" });
       inbox.push({ race: round, tone: "bad", text: `Reparar el auto accidentado cuesta US$ ${(CRASH_REPAIR * crashes).toFixed(1)} M.` });
@@ -545,10 +555,90 @@ export function processRaceWeekend(
 }
 
 /** Rough per-race balance with the current contracts (no bonuses or prizes). */
-export function baseRaceBalance(m: ManagementState, round: number) {
+export function baseRaceBalance(m: ManagementState, round: number, payrollPerSeason = 0) {
   const p = m.player!;
-  const income = tvRights(carRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0);
-  return { income, costs: raceRunningCost(Math.max(1, round)) };
+  const n = races2026.length;
+  const income = tvRights(carRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0) + (p.salaryFund ?? payrollPerSeason) / n;
+  return { income, costs: raceRunningCost(Math.max(1, round)) + payrollPerSeason / n };
+}
+
+/** One-off expense or income outside a race weekend (signing fees, severance...). */
+export function chargePlayer(m: ManagementState, round: number, concept: string, amount: number, category: LedgerCategory, text?: string): ManagementState {
+  const p = m.player;
+  if (!p || amount === 0) return m;
+  return {
+    ...m,
+    player: { ...p, budget: +(p.budget + amount).toFixed(2), ledger: [...p.ledger, { race: round, concept, amount: +amount.toFixed(2), category }] },
+    inbox: text ? [...m.inbox, { race: round, tone: "info" as const, text }].slice(-60) : m.inbox,
+  };
+}
+
+// --- Seasons -----------------------------------------------------------------
+
+/** Prize money from the constructors' championship, paid when the next season starts. */
+export const constructorsPrize = (pos: number) => Math.round(10 + (11 - Math.min(11, pos)) * 2.5);
+
+export interface SeasonFinance {
+  income: number;
+  expenses: number;
+  investments: number;
+}
+
+export function seasonFinance(p: PlayerEconomy): SeasonFinance {
+  let income = 0, expenses = 0, investments = 0;
+  for (const l of p.ledger) {
+    const c = ledgerCategory(l);
+    if (c === "initial") continue;
+    if (isInvestment(c)) investments -= l.amount;
+    else if (l.amount >= 0) income += l.amount;
+    else expenses -= l.amount;
+  }
+  return { income: +income.toFixed(1), expenses: +expenses.toFixed(1), investments: +investments.toFixed(1) };
+}
+
+/**
+ * Start a new season: prize money by constructors' position, budgets for the AI,
+ * a small convergence of the field (rules stability), fresh sponsor offers.
+ * Projects, part levels, facility works and sponsor contracts carry over.
+ */
+export function startNewSeason(m: ManagementState, teams: Team[], constructorsOrder: string[], season: number): ManagementState {
+  const rng = createRng(m.rngState ^ season);
+  const ids = Object.keys(m.dev);
+  const mean = (k: keyof CarDev) => ids.reduce((a, id) => a + m.dev[id][k], 0) / ids.length;
+  const means = { aero: mean("aero"), powerUnit: mean("powerUnit"), chassis: mean("chassis") };
+  const dev: Record<string, CarDev> = {};
+  for (const id of ids) {
+    const d = m.dev[id];
+    const conv = (k: "aero" | "powerUnit" | "chassis") => +(d[k] + (means[k] - d[k]) * 0.12).toFixed(2);
+    dev[id] = { ...d, aero: conv("aero"), powerUnit: conv("powerUnit"), chassis: conv("chassis") };
+  }
+  const posOf = (id: string) => {
+    const i = constructorsOrder.indexOf(id);
+    return i < 0 ? 11 : i + 1;
+  };
+  const aiBudget: Record<string, number> = {};
+  for (const id of ids) aiBudget[id] = startBudget(carPace(dev[id])) + Math.round(constructorsPrize(posOf(id)) * 0.3);
+  let player = m.player;
+  const inbox: InboxMessage[] = [{ race: 0, tone: "info", text: `Comienza la temporada ${season}. Las diferencias entre autos se reducen un poco con la estabilidad del reglamento.` }];
+  let nm: ManagementState = { ...m, dev, aiBudget, nextUid: m.nextUid + 1000 };
+  if (player) {
+    const pos = posOf(player.teamId);
+    const prize = constructorsPrize(pos);
+    const fin = seasonFinance(player);
+    inbox.push({ race: 0, tone: "good", text: `Premio del campeonato de constructores ${season - 1} (P${pos}): US$ ${prize} M.` });
+    player = {
+      ...player,
+      budget: +(player.budget + prize).toFixed(2),
+      ledger: [
+        { race: 0, concept: `Saldo de la temporada ${season - 1}`, amount: player.budget, category: "initial" },
+        { race: 0, concept: `Premio constructores ${season - 1} (P${pos})`, amount: prize, category: "prize" },
+      ],
+    };
+    nm = { ...nm, player };
+    for (const slot of ["principal", "secundario"] as SponsorSlot[]) player = refreshSlotOffers(nm, player, slot, 0, rng, applyDevToTeams(teams, nm));
+    inbox.push({ race: 0, tone: "info", text: `Temporada ${season - 1}: ingresos US$ ${fin.income} M, gastos US$ ${fin.expenses} M, inversión US$ ${fin.investments} M.` });
+  }
+  return { ...nm, player, inbox: [...m.inbox, ...inbox].slice(-60), rngState: rng.state(), history: [{ round: 0, dev: structuredClone(dev) }] };
 }
 
 /** Field ranking (1 = best) of a team in each area. */
