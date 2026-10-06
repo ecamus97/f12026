@@ -37,6 +37,9 @@ import {
   teamStaff,
   lineup,
   type PeopleState,
+  migrateStaff,
+  fireStaff as fireStaffFn,
+  renewStaff as renewStaffFn,
   DEFAULT_RULES,
   POINTS_TABLES,
   generateProposals,
@@ -87,6 +90,15 @@ export interface GameState {
   seasonNews: string[]; // what happened in the last off-season
   rules: RuleSet; // regulations in force this season
   proposals: RuleProposal[]; // FIA decrees and votes (all seasons)
+  seed: number; // career seed: makes each weekend's weather fixed (paddock, qualifying and race agree)
+}
+
+/** The weather of a weekend is decided in advance so every forecast is consistent. */
+export function weekendWeather(s: Pick<GameState, "seed" | "season">, raceIndex: number) {
+  const race = races2026[raceIndex];
+  if (!race) return null;
+  const seed = (Math.imul(s.seed ^ (s.season * 2654435761), 1) + raceIndex * 40503) >>> 0;
+  return generateWeather(race.track, race.track.laps, seed);
 }
 
 const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = DEFAULT_SIM_CONFIG): GameState => ({
@@ -105,6 +117,7 @@ const initialState = (teamsData: Team[] = defaultTeams, simConfig: SimConfig = D
   seasonNews: [],
   rules: DEFAULT_RULES,
   proposals: [],
+  seed: randomSeed(),
 });
 
 const regsOf = (r: RuleSet) => ({ budgetCap: r.budgetCap, puFreeze: r.puFreeze, flatPrize: r.flatPrize });
@@ -142,6 +155,7 @@ function loadState(): GameState {
     if (parsed?.version !== 2 || !Array.isArray(parsed.teamsData)) return initialState();
     const state = { ...initialState(), ...parsed };
     state.rules = { ...DEFAULT_RULES, ...(parsed.rules ?? {}) };
+    if (typeof parsed.seed !== "number") state.seed = randomSeed();
     // saves from before team management existed
     if (state.playerTeamId && !state.management) {
       state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
@@ -149,6 +163,7 @@ function loadState(): GameState {
     }
     // saves from before contracts and staff existed
     if (state.playerTeamId && !state.people) state.people = initPeople(state.teamsData, randomSeed());
+    if (state.people) state.people = migrateStaff(state.people);
     if (state.management && state.people) {
       state.management = withStaff(state.management, state.people);
       const pl = state.management.player;
@@ -277,6 +292,25 @@ export function useGameState() {
     });
   }, []);
 
+  const fireStaff = useCallback((staffId: string) => {
+    setGameState((s) => {
+      if (!s.people || !s.management) return s;
+      const r = fireStaffFn(s.people, staffId);
+      if (r.people === s.people) return s;
+      const m = chargePlayer(withStaff(s.management, r.people), s.currentRaceIndex, `Despido: ${s.people.staff[staffId].name}`, -r.cost, "transfers", r.message);
+      return { ...s, people: r.people, management: m };
+    });
+  }, []);
+
+  const renewStaff = useCallback((staffId: string) => {
+    setGameState((s) => {
+      if (!s.people || !s.management) return s;
+      const r = renewStaffFn(s.people, staffId);
+      const m = s.management;
+      return { ...s, people: r.people, management: { ...m, inbox: [...m.inbox, { race: s.currentRaceIndex, tone: "good" as const, text: r.message }].slice(-60) } };
+    });
+  }, []);
+
   const castVote = useCallback((proposalId: string, vote: Vote) => {
     setGameState((s) => ({
       ...s,
@@ -293,8 +327,8 @@ export function useGameState() {
       const race = races2026[s.currentRaceIndex];
       if (!race) return s;
       if (s.weekend?.raceIndex === s.currentRaceIndex) return s; // resume
-      const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig);
-      const weather = generateWeather(race.track, race.track.laps, randomSeed());
+      const weather = weekendWeather(s, s.currentRaceIndex)!;
+      const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet);
       return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather } };
     });
   }, []);
@@ -532,5 +566,7 @@ export function useGameState() {
     releaseDriver,
     hireStaff,
     castVote,
+    fireStaff,
+    renewStaff,
   };
 }

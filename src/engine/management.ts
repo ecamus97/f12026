@@ -54,31 +54,31 @@ const P = (id: string, area: DevArea, name: string, cost: number, races: number,
 
 export const PROJECTS: ProjectTemplate[] = [
   // Aerodinámica
-  P("fw", "aero", "Alerón delantero", 3.5, 2, [1, 2.2], 0.85),
-  P("rw", "aero", "Alerón trasero", 3.5, 2, [1, 2.2], 0.85),
-  P("floor", "aero", "Fondo plano", 9, 4, [2.5, 4.5], 0.7),
-  P("sidepods", "aero", "Pontones y refrigeración", 6, 3, [1.8, 3.2], 0.75),
-  P("diffuser", "aero", "Difusor", 7, 3, [2, 3.6], 0.72),
+  P("fw", "aero", "Alerón delantero", 3.5, 3, [1.1, 2.4], 0.85),
+  P("rw", "aero", "Alerón trasero", 3.5, 3, [1.1, 2.4], 0.85),
+  P("sidepods", "aero", "Pontones y refrigeración", 6, 5, [2.2, 3.8], 0.75),
+  P("diffuser", "aero", "Difusor", 7.5, 6, [2.6, 4.4], 0.72),
+  P("floor", "aero", "Fondo plano", 10, 8, [3.5, 6], 0.68),
   // Unidad de potencia
-  P("ice", "powerUnit", "Motor de combustión (ICE)", 10, 5, [3, 5.5], 0.65),
-  P("mguk", "powerUnit", "MGU-K", 6, 3, [1.8, 3.2], 0.75),
-  P("es", "powerUnit", "Batería (almacenamiento de energía)", 5, 3, [1.5, 3], 0.78),
-  P("turbo", "powerUnit", "Turbo", 4.5, 2, [1.2, 2.4], 0.8),
-  P("pu-sw", "powerUnit", "Software de despliegue", 2.5, 1, [0.6, 1.4], 0.9),
+  P("pu-sw", "powerUnit", "Software de despliegue", 2.5, 2, [0.7, 1.5], 0.9),
+  P("turbo", "powerUnit", "Turbo", 4.5, 4, [1.5, 2.8], 0.8),
+  P("es", "powerUnit", "Batería (almacenamiento de energía)", 5.5, 5, [2, 3.6], 0.77),
+  P("mguk", "powerUnit", "MGU-K", 6.5, 6, [2.3, 4], 0.74),
+  P("ice", "powerUnit", "Motor de combustión (ICE)", 12, 10, [4, 7], 0.62),
   // Chasis
-  P("fsusp", "chassis", "Suspensión delantera", 3.5, 2, [1, 2.2], 0.85),
-  P("rsusp", "chassis", "Suspensión trasera", 3.5, 2, [1, 2.2], 0.85),
-  P("weight", "chassis", "Reducción de peso", 8, 4, [2.2, 4], 0.7),
-  P("brakes", "chassis", "Frenos", 3, 2, [0.9, 1.8], 0.88),
-  P("gearbox", "chassis", "Caja de cambios", 5, 3, [1.5, 2.8], 0.78),
+  P("brakes", "chassis", "Frenos", 3, 3, [1, 2], 0.88),
+  P("fsusp", "chassis", "Suspensión delantera", 3.5, 3, [1.1, 2.3], 0.85),
+  P("rsusp", "chassis", "Suspensión trasera", 3.5, 3, [1.1, 2.3], 0.85),
+  P("gearbox", "chassis", "Caja de cambios", 5.5, 5, [1.9, 3.3], 0.77),
+  P("weight", "chassis", "Reducción de peso", 9, 7, [3, 5], 0.7),
   // Fiabilidad
-  P("cooling", "reliability", "Sistema de refrigeración", 2.5, 2, [1.5, 3], 0.9),
-  P("hydraulics", "reliability", "Hidráulica", 2, 1, [1, 2], 0.9),
-  P("electronics", "reliability", "Electrónica", 3, 2, [1.5, 3], 0.88),
+  P("hydraulics", "reliability", "Hidráulica", 2, 2, [1.1, 2.1], 0.9),
+  P("cooling", "reliability", "Sistema de refrigeración", 2.5, 3, [1.6, 3.2], 0.9),
+  P("electronics", "reliability", "Electrónica", 3.5, 4, [1.8, 3.4], 0.87),
   // Pit crew
-  P("guns", "pitCrew", "Pistolas de rueda", 1.5, 1, [0.8, 1.6], 0.9),
-  P("jacks", "pitCrew", "Gatos y equipamiento", 1.2, 1, [0.6, 1.4], 0.9),
   P("pit-training", "pitCrew", "Entrenamiento del pit crew", 1, 1, [0.8, 2], 0.85),
+  P("guns", "pitCrew", "Pistolas de rueda", 1.5, 1, [0.8, 1.6], 0.9),
+  P("jacks", "pitCrew", "Gatos y equipamiento", 1.2, 2, [0.8, 1.6], 0.9),
 ];
 
 export interface ActiveProject {
@@ -156,6 +156,7 @@ export interface PlayerEconomy {
   offers: SponsorDeal[]; // available on the market
   partLevels?: Record<string, number>; // upgrades completed per part
   salaryFund?: number; // M USD per season the owners put in for salaries
+  failures?: Record<string, number>; // failed attempts per part (each retry is more likely to work)
 }
 
 export interface DevSnapshot {
@@ -172,7 +173,7 @@ export interface ManagementState {
   rngState: number;
   nextUid: number;
   history: DevSnapshot[]; // development of every team, after each round
-  staffRatings?: Record<string, { tp: number; td: number }>; // team principal / technical director per team
+  staffRatings?: Record<string, { tp: number; td: number; aero?: number; pu?: number; sport?: number; race?: number }>; // staff per team
   regs?: { budgetCap: number | null; puFreeze: boolean; flatPrize: boolean }; // regulations that affect development and money
 }
 
@@ -194,6 +195,23 @@ function capCheck(m: ManagementState, cost: number): string | null {
 /** Technical director: better development results (0.85x .. 1.2x) and success chance. */
 export const tdMult = (td = 80) => 0.85 + (td - 70) * 0.012;
 export const tdSuccess = (td = 80) => (td - 80) * 0.005;
+/** Development multiplier of an area: technical director plus the specialist of that area. */
+export function areaMult(m: ManagementState, teamId: string, area: DevArea) {
+  const r = m.staffRatings?.[teamId];
+  const td = r?.td ?? 80;
+  switch (area) {
+    case "aero":
+      return Math.sqrt(tdMult(td) * tdMult(r?.aero ?? 80));
+    case "powerUnit":
+    case "reliability":
+      return Math.sqrt(tdMult(td) * tdMult(r?.pu ?? 80));
+    case "pitCrew":
+      return tdMult(r?.sport ?? 80);
+    default:
+      return tdMult(td);
+  }
+}
+
 /** Team principal: sponsors pay more with a well-known leader. */
 export const tpSponsorMult = (tp = 80) => 0.92 + (tp - 70) * 0.006;
 
@@ -282,7 +300,8 @@ export function applyDevToTeams(teams: Team[], m: ManagementState): Team[] {
       powerUnit: +d.powerUnit.toFixed(2),
       chassis: +d.chassis.toFixed(2),
       reliability: +d.reliability.toFixed(1),
-      pitCrew: +d.pitCrew.toFixed(1),
+      // a good sporting director makes the pit stops sharper
+      pitCrew: +Math.min(99.5, d.pitCrew + ((m.staffRatings?.[t.id]?.sport ?? 80) - 80) * 0.15).toFixed(1),
     };
   });
 }
@@ -309,15 +328,19 @@ export function expectedGain(t: ProjectTemplate, m: ManagementState): [number, n
   const p = m.player!;
   const current = m.dev[p.teamId][t.area];
   const k =
-    facilityMult(p.facilities[AREA_INFO[t.area].facility]) * diminishing(current) * partMult(p, t.id) * tdMult(m.staffRatings?.[p.teamId]?.td);
+    facilityMult(p.facilities[AREA_INFO[t.area].facility]) * diminishing(current) * partMult(p, t.id) * areaMult(m, p.teamId, t.area);
   return [+(t.gain[0] * k).toFixed(1), +(t.gain[1] * k).toFixed(1)];
 }
 
 /** Probability that a project delivers its full gain. */
 export function successChance(t: ProjectTemplate, m: ManagementState) {
   const p = m.player!;
-  return Math.min(0.97, Math.max(0.3, t.success + (p.facilities[AREA_INFO[t.area].facility] - 3) * 0.04 + tdSuccess(m.staffRatings?.[p.teamId]?.td)));
+  const retry = (p.failures?.[t.id] ?? 0) * RETRY_BONUS;
+  return Math.min(0.97, Math.max(0.3, t.success + (p.facilities[AREA_INFO[t.area].facility] - 3) * 0.04 + tdSuccess(m.staffRatings?.[p.teamId]?.td) + retry));
 }
+
+/** Each failed attempt at a part makes the next one more likely to succeed. */
+export const RETRY_BONUS = 0.12;
 
 export function canStartProject(m: ManagementState, templateId: string): string | null {
   const p = m.player;
@@ -433,12 +456,12 @@ function developAi(m: ManagementState, teams: Team[], rng: Rng): Record<string, 
     if (!d) continue;
     const cap = m.regs?.budgetCap;
     const budget = Math.min(m.aiBudget[t.id] ?? 40, cap ? cap * 0.8 : Infinity);
-    const budgetFactor = (budget / 45) * tdMult(m.staffRatings?.[t.id]?.td);
+    const budgetFactor = budget / 45;
     let next = d;
     // ~1.6 projects' worth of gains per race spread over areas
     for (const area of ["aero", "powerUnit", "chassis"] as DevArea[]) {
       if (rng.chance(0.42) && !(area === "powerUnit" && m.regs?.puFreeze)) {
-        const g = (0.6 + rng.next() * 1.2) * budgetFactor * diminishing(next[area]) * 0.28;
+        const g = (0.6 + rng.next() * 1.2) * budgetFactor * areaMult(m, t.id, area) * diminishing(next[area]) * 0.28;
         next = applyGain(next, area, g);
       }
     }
@@ -524,9 +547,14 @@ export function processRaceWeekend(
       const t = PROJECTS.find((x) => x.id === pr.templateId)!;
       const k =
         facilityMult(player.facilities[AREA_INFO[t.area].facility]) * diminishing(myDev[t.area]) * partMult(player, t.id) *
-        tdMult(m.staffRatings?.[player.teamId]?.td);
+        areaMult(m, player.teamId, t.area);
       const success = rng.chance(successChance(t, { ...m, player }));
-      player = { ...player, partLevels: { ...(player.partLevels ?? {}), [t.id]: (player.partLevels?.[t.id] ?? 0) + 1 } };
+      const failures = { ...(player.failures ?? {}) };
+      if (success) {
+        player = { ...player, partLevels: { ...(player.partLevels ?? {}), [t.id]: (player.partLevels?.[t.id] ?? 0) + 1 } };
+        delete failures[t.id];
+      } else failures[t.id] = (failures[t.id] ?? 0) + 1;
+      player = { ...player, failures };
       const raw = t.gain[0] + rng.next() * (t.gain[1] - t.gain[0]);
       const gain = +(raw * k * (success ? 1 : 0.3)).toFixed(2);
       myDev = applyGain(myDev, t.area, gain);
@@ -535,7 +563,7 @@ export function processRaceWeekend(
         tone: success ? "good" : "bad",
         text: success
           ? `${t.name} listo: ${AREA_INFO[t.area].label} +${gain.toFixed(1)}.`
-          : `${t.name} no rindió lo esperado: solo +${gain.toFixed(1)} en ${AREA_INFO[t.area].label.toLowerCase()}.`,
+          : `${t.name} no rindió lo esperado: solo +${gain.toFixed(1)} en ${AREA_INFO[t.area].label.toLowerCase()}. Puedes reintentarlo con +${Math.round(RETRY_BONUS * 100 * (player.failures?.[t.id] ?? 1))}% de probabilidad de éxito.`,
       });
     }
     dev = { ...dev, [player.teamId]: myDev };

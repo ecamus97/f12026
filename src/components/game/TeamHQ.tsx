@@ -28,6 +28,8 @@ interface Props {
   onOffer?: (driverId: string, salary: number, years: number) => { ok: boolean; message: string };
   onRelease?: (driverId: string) => void;
   onHireStaff?: (staffId: string) => void;
+  onFireStaff?: (staffId: string) => void;
+  onRenewStaff?: (staffId: string) => void;
   section?: "car" | "facilities" | "drivers" | "staff" | "finance"; // show a single section (no tab bar)
 }
 
@@ -36,7 +38,7 @@ export const money = (m: number) => `US$ ${m.toFixed(1)} M`;
 const AREAS: DevArea[] = ["aero", "powerUnit", "chassis", "reliability", "pitCrew"];
 
 export function TeamHQ({
-  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff, section,
+  team, teams, round, management, onStartProject, onUpgradeFacility, onSignSponsor, people, onOffer, onRelease, onHireStaff, onFireStaff, onRenewStaff, section,
 }: Props) {
   const [metric, setMetric] = useState<Metric>("pace");
   const p = management.player!;
@@ -288,7 +290,7 @@ export function TeamHQ({
         <DriversPanel people={people} team={team} teams={teams} management={management} onOffer={onOffer} onRelease={onRelease} />
       )}
       {tab === "staff" && people && onHireStaff && (
-        <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} />
+        <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} onFire={onFireStaff} onRenew={onRenewStaff} />
       )}
 
       {tab === "finance" && <Finance management={management} onSignSponsor={onSignSponsor} />}

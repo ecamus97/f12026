@@ -9,6 +9,7 @@ export interface WeatherTimeline {
   airTemp: number;
   trackTemp: number[]; // per lap
   seed: number;
+  qualiWet?: number; // track wetness during Saturday's qualifying
 }
 
 export type Sky = "sol" | "nubes" | "llovizna" | "lluvia" | "tormenta";
@@ -54,7 +55,10 @@ export function generateWeather(track: Track, laps: number, seed: number): Weath
     const drying = rain[l] < 0.05 ? 0.045 + Math.max(0, trackTemp[l] - 20) * 0.003 : 0;
     wet[l] = Math.max(0, Math.min(1, prev + rain[l] * 0.32 - drying - (rain[l] > 0 ? 0.02 : 0)));
   }
-  return { rain, wet, airTemp, trackTemp, seed };
+  // Saturday: more likely to be wet on a rainy weekend
+  const sat = createRng(seed ^ 0x9a1);
+  const qualiWet = sat.chance(chance * 0.6 + (events ? 0.25 : 0)) ? +(0.2 + sat.next() * 0.6).toFixed(2) : 0;
+  return { rain, wet, airTemp, trackTemp, seed, qualiWet };
 }
 
 /** Deterministic pseudo-noise in [-1, 1] for (seed, a, b). */
@@ -73,24 +77,36 @@ export interface ForecastPoint {
 }
 
 /**
- * Forecast of rain for windows of `window` laps, seen from lap `now`
- * (use a negative `now` before the race). Far windows are less reliable;
- * the forecast is refreshed every 3 laps.
+ * Rain forecast in fixed windows of laps, seen from lap `now` (0 or less = before the race:
+ * the paddock, qualifying and the grid all see the same forecast). Each window has a fixed
+ * forecast error that shrinks as the window gets closer, so the forecast converges smoothly
+ * towards what really happens instead of jumping around.
  */
 export function forecast(w: WeatherTimeline, now: number, window = 5): ForecastPoint[] {
   const laps = w.rain.length - 1;
-  const bucket = Math.floor(now / 3);
+  const at = Math.max(0, now);
+  const bucket = Math.floor(at / 3);
   const out: ForecastPoint[] = [];
-  for (let from = Math.max(1, now + 1); from <= laps; from += window) {
-    const to = Math.min(laps, from + window - 1);
+  for (let start = 1; start <= laps; start += window) {
+    const to = Math.min(laps, start + window - 1);
+    if (to <= at) continue;
+    const from = Math.max(start, at + 1);
     let maxRain = 0;
     for (let l = from; l <= to; l++) maxRain = Math.max(maxRain, w.rain[l]);
-    const distance = Math.max(0, from - now) / Math.max(1, laps); // 0 = imminent, 1 = whole race away
-    const uncertainty = 0.08 + distance * 0.55;
-    const truth = maxRain > 0.05 ? 0.85 : 0.05;
-    const chance = Math.round(Math.min(98, Math.max(2, (truth + noise(w.seed, from, bucket) * uncertainty) * 100)) / 5) * 5;
-    const intensity = Math.max(0, Math.min(1, maxRain + noise(w.seed, from + 999, bucket) * uncertainty * 0.6));
+    let nearby = 0;
+    for (let l = Math.max(1, from - 3); l <= Math.min(laps, to + 3); l++) nearby = Math.max(nearby, w.rain[l]);
+    const distance = Math.max(0, start - at) / Math.max(1, laps); // 0 = imminent, 1 = whole race away
+    const uncertainty = 0.05 + distance * 0.4;
+    const truth = maxRain > 0.05 ? 0.55 + 0.4 * Math.min(1, maxRain * 1.6) : 0.04 + nearby * 0.35;
+    const err = noise(w.seed, start, 0) * uncertainty + (at > 0 ? noise(w.seed, start, bucket + 1) * 0.03 : 0);
+    const chance = Math.round(Math.min(98, Math.max(2, (truth + err) * 100)) / 5) * 5;
+    const intensity = Math.max(0, Math.min(1, Math.max(maxRain, nearby * 0.5) + noise(w.seed, start + 999, 0) * uncertainty * 0.5));
     out.push({ fromLap: from, toLap: to, chance, intensity });
   }
   return out;
+}
+
+/** Sky icon for a rain chance (used for the weekend summary). */
+export function forecastIcon(chance: number) {
+  return chance >= 65 ? "🌧️" : chance >= 40 ? "🌦️" : chance >= 20 ? "⛅" : "☀️";
 }

@@ -52,10 +52,17 @@ function runSession(entries: Entry[], race: Race, name: SessionName, evo: number
   return { name, rows };
 }
 
-export function runQualifying(race: Race, entries: Entry[], seed: number, cfg: SimConfig = DEFAULT_SIM_CONFIG): QualifyingResult {
+export function runQualifying(
+  race: Race,
+  entries: Entry[],
+  seed: number,
+  cfg: SimConfig = DEFAULT_SIM_CONFIG,
+  wetOverride?: number, // Saturday's wetness from the weekend weather
+): QualifyingResult {
   const rng = createRng(seed);
-  // Saturday weather: its own roll against the circuit's rain chance
-  const wet = rng.chance((race.track.rain ?? 0.15) * 0.8) ? 0.2 + rng.next() * 0.6 : 0;
+  // Saturday weather: from the weekend forecast, or its own roll against the circuit's rain chance
+  const rolled = rng.chance((race.track.rain ?? 0.15) * 0.8) ? 0.2 + rng.next() * 0.6 : 0;
+  const wet = wetOverride ?? rolled;
   const sessions: QualiSession[] = [];
   let field = entries;
   for (const s of SESSIONS) {

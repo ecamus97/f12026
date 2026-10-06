@@ -23,9 +23,9 @@ interface Props {
 type Row = QualifyingResult["sessions"][number]["rows"][number];
 
 const SESSION_INFO = [
-  { name: "Q1", out: 6, text: "22 autos · los 6 más lentos quedan eliminados" },
-  { name: "Q2", out: 6, text: "16 autos · otros 6 quedan eliminados" },
-  { name: "Q3", out: 0, text: "Top 10 · pelean la pole position" },
+  { name: "Q1", out: 6, text: "22 autos · los 6 más lentos quedan eliminados", minutes: 18 },
+  { name: "Q2", out: 6, text: "16 autos · otros 6 quedan eliminados", minutes: 15 },
+  { name: "Q3", out: 0, text: "Top 10 · pelean la pole position", minutes: 12 },
 ];
 
 const SPEEDS = [
@@ -72,11 +72,25 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
   );
 
   // Playback
+  const [stepAt, setStepAt] = useState(() => performance.now());
+  useEffect(() => setStepAt(performance.now()), [step]);
   useEffect(() => {
     if (!playing || step < 0 || step >= sequence.length - 1) return;
     const t = window.setTimeout(() => setStep((s) => s + 1), SPEEDS[speed].ms);
     return () => window.clearTimeout(t);
   }, [playing, step, sequence.length, speed]);
+
+  // session clock: runs smoothly between laps (the laps themselves are the simulated attempts)
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    if (!playing) return;
+    const id = window.setInterval(() => setNow(performance.now()), 100);
+    return () => window.clearInterval(id);
+  }, [playing]);
+  const sessionSecs = liveIndex >= 0 ? SESSION_INFO[liveIndex].minutes * 60 : 0;
+  const partial = playing && step >= 0 && step < sequence.length - 1 ? Math.min(1, (now - stepAt) / SPEEDS[speed].ms) : 0;
+  const clockSec =
+    step < 0 ? sessionSecs : step >= sequence.length - 1 ? 0 : Math.max(0, sessionSecs * (1 - (step + 1 + partial) / sequence.length));
 
   const sessionOver = step >= 0 && step >= sequence.length - 1;
 
@@ -97,7 +111,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
       </div>
 
       {weather && (
-        <WeatherWidget weather={weather} lap={-Math.round(race.track.laps * 0.4)} preview title="Pronóstico para la carrera" />
+        <WeatherWidget weather={weather} lap={0} preview title="Pronóstico para la carrera" />
       )}
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -123,7 +137,7 @@ export function QualifyingView({ weather, race, quali, revealed, entryMap, playe
           over={sessionOver}
           entryMap={entryMap}
           playerTeamId={playerTeamId}
-        />
+         clockSec={clockSec}/>
       )}
 
       {!viewingLive && tab !== "grid" && (
@@ -241,7 +255,9 @@ function LiveSession({
   over,
   entryMap,
   playerTeamId,
+  clockSec,
 }: {
+  clockSec: number;
   info: (typeof SESSION_INFO)[number];
   rows: Row[];
   sequence: Step[];
@@ -293,13 +309,20 @@ function LiveSession({
     <div className="space-y-3">
       <div className="panel p-3 flex flex-wrap items-center gap-3 justify-between">
         <div>
-          <div className="font-racing text-sm">{info.name}</div>
+          <div className="font-display text-2xl">{info.name}</div>
           <div className="text-xs text-muted-foreground">{info.text}</div>
         </div>
         <div className="text-right">
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            {over ? "🏁 Sesión terminada" : step < 0 ? "Esperando" : step < sequence.length / 2 ? "Primer intento" : "Segundo intento"} ·{" "}
-            {Math.max(0, step + 1)}/{sequence.length}
+          <div className="flex items-center justify-end gap-2">
+            <span className="tv-label text-muted-foreground">{over ? "🏁 Sesión terminada" : step < 0 ? "Esperando" : "Tiempo restante"}</span>
+            <span
+              className={cn(
+                "font-display text-3xl tabular-nums rounded-md px-2 py-0.5 bg-black/50 border border-white/10",
+                !over && clockSec < 120 && step >= 0 && "text-red-400",
+              )}
+            >
+              {String(Math.floor(clockSec / 60)).padStart(2, "0")}:{String(Math.floor(clockSec % 60)).padStart(2, "0")}
+            </span>
           </div>
           {ticker && <div className={cn("text-sm font-medium", ticker.tone)}>{ticker.text}</div>}
         </div>

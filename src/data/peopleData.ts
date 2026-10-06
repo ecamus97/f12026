@@ -82,7 +82,9 @@ export const EXTRA_DRIVERS: ExtraDriver[] = [
   x("mar", "Victor Martins", "MAR", 45, "🇫🇷", 75, 76, 74, 77, 75, 2001, 82, "junior", "Fórmula 2"),
 ];
 
-export type StaffRole = "tp" | "td";
+export type StaffRole = "tp" | "td" | "aero" | "pu" | "sport" | "race";
+
+export const STAFF_ROLES: StaffRole[] = ["tp", "td", "aero", "pu", "sport", "race"];
 
 export interface StaffSeed {
   id: string;
@@ -91,52 +93,146 @@ export interface StaffSeed {
   rating: number; // 60-99
   nationality: string;
   teamId: string | null;
+  until?: number; // last season of the contract
+  fictional?: boolean; // no public data: invented name
 }
 
-export const STAFF_ROLE_INFO: Record<StaffRole, { label: string; effect: string }> = {
+export const STAFF_ROLE_INFO: Record<StaffRole, { label: string; short: string; effect: string }> = {
   tp: {
     label: "Jefe de equipo",
+    short: "Jefe",
     effect: "Patrocinadores pagan más con un líder reconocido y los pilotos piden menos sueldo para venir.",
   },
   td: {
     label: "Director técnico",
-    effect: "Multiplica las mejoras de los proyectos de I+D y sube su probabilidad de éxito.",
+    short: "Técnico",
+    effect: "Multiplica todas las mejoras de I+D (sobre todo el chasis) y sube su probabilidad de éxito.",
+  },
+  aero: {
+    label: "Jefe de aerodinámica",
+    short: "Aero",
+    effect: "Multiplica las mejoras de aerodinámica.",
+  },
+  pu: {
+    label: "Jefe de unidad de potencia",
+    short: "Motor",
+    effect: "Multiplica las mejoras de motor y de fiabilidad.",
+  },
+  sport: {
+    label: "Director deportivo",
+    short: "Deportivo",
+    effect: "Paradas en boxes más rápidas y mejores resultados en los proyectos del pit crew.",
+  },
+  race: {
+    label: "Jefe de ingeniería de pista",
+    short: "Pista",
+    effect: "Tus pilotos crecen más rápido cada temporada y ganan constancia.",
   },
 };
 
-const s = (id: string, name: string, role: StaffRole, rating: number, nationality: string, teamId: string | null): StaffSeed =>
-  ({ id, name, role, rating, nationality, teamId });
+const s = (
+  id: string, name: string, role: StaffRole, rating: number, nationality: string, teamId: string | null, until = 2027, fictional = false,
+): StaffSeed => ({ id, name, role, rating, nationality, teamId, until, fictional });
+const f = (id: string, name: string, role: StaffRole, rating: number, nationality: string, teamId: string | null, until = 2027) =>
+  s(id, name, role, rating, nationality, teamId, until, true);
 
+// Real people where their role is public (as of early 2026, to the best of our knowledge); the rest are invented.
 export const STAFF: StaffSeed[] = [
-  s("stella", "Andrea Stella", "tp", 93, "🇮🇹", "mclaren"),
-  s("prodromou", "Peter Prodromou", "td", 90, "🇬🇧", "mclaren"),
-  s("wolff", "Toto Wolff", "tp", 92, "🇦🇹", "mercedes"),
-  s("allison", "James Allison", "td", 92, "🇬🇧", "mercedes"),
-  s("vasseur", "Frédéric Vasseur", "tp", 86, "🇫🇷", "ferrari"),
-  s("serra", "Loïc Serra", "td", 85, "🇫🇷", "ferrari"),
-  s("mekies", "Laurent Mekies", "tp", 84, "🇫🇷", "redbull"),
-  s("wache", "Pierre Waché", "td", 90, "🇫🇷", "redbull"),
-  s("vowles", "James Vowles", "tp", 86, "🇬🇧", "williams"),
-  s("fry", "Pat Fry", "td", 86, "🇬🇧", "williams"),
-  s("newey", "Adrian Newey", "tp", 84, "🇬🇧", "aston-martin"),
-  s("cardile", "Enrico Cardile", "td", 86, "🇮🇹", "aston-martin"),
-  s("permane", "Alan Permane", "tp", 82, "🇬🇧", "racing-bulls"),
-  s("goss", "Tim Goss", "td", 80, "🇬🇧", "racing-bulls"),
-  s("komatsu", "Ayao Komatsu", "tp", 84, "🇯🇵", "haas"),
-  s("dezordo", "Andrea de Zordo", "td", 78, "🇮🇹", "haas"),
-  s("briatore", "Flavio Briatore", "tp", 80, "🇮🇹", "alpine"),
-  s("sanchez", "David Sanchez", "td", 80, "🇫🇷", "alpine"),
-  s("wheatley", "Jonathan Wheatley", "tp", 83, "🇬🇧", "audi"),
-  s("key", "James Key", "td", 84, "🇬🇧", "audi"),
-  s("lowdon", "Graeme Lowdon", "tp", 78, "🇬🇧", "cadillac"),
-  s("chester", "Nick Chester", "td", 80, "🇬🇧", "cadillac"),
-  // available on the market
+  // McLaren
+  s("stella", "Andrea Stella", "tp", 93, "🇮🇹", "mclaren", 2029),
+  s("houldey", "Neil Houldey", "td", 88, "🇬🇧", "mclaren", 2028),
+  s("prodromou", "Peter Prodromou", "aero", 92, "🇬🇧", "mclaren", 2027),
+  f("mcl-pu", "Tom Ashworth", "pu", 80, "🇬🇧", "mclaren", 2026),
+  s("rsingh", "Randeep Singh", "sport", 87, "🇬🇧", "mclaren", 2027),
+  s("temple", "Mark Temple", "race", 86, "🇬🇧", "mclaren", 2027),
+  // Mercedes
+  s("wolff", "Toto Wolff", "tp", 92, "🇦🇹", "mercedes", 2029),
+  s("allison", "James Allison", "td", 92, "🇬🇧", "mercedes", 2027),
+  s("murphy", "Jarrod Murphy", "aero", 85, "🇬🇧", "mercedes", 2027),
+  s("hthomas", "Hywel Thomas", "pu", 91, "🇬🇧", "mercedes", 2028),
+  s("meadows", "Ron Meadows", "sport", 88, "🇬🇧", "mercedes", 2026),
+  s("shovlin", "Andrew Shovlin", "race", 88, "🇬🇧", "mercedes", 2027),
+  // Ferrari
+  s("vasseur", "Frédéric Vasseur", "tp", 86, "🇫🇷", "ferrari", 2027),
+  s("serra", "Loïc Serra", "td", 85, "🇫🇷", "ferrari", 2027),
+  s("tondi", "Diego Tondi", "aero", 83, "🇮🇹", "ferrari", 2026),
+  s("gualtieri", "Enrico Gualtieri", "pu", 86, "🇮🇹", "ferrari", 2027),
+  s("ioverno", "Diego Ioverno", "sport", 84, "🇮🇹", "ferrari", 2027),
+  s("togninalli", "Matteo Togninalli", "race", 83, "🇮🇹", "ferrari", 2026),
+  // Red Bull
+  s("mekies", "Laurent Mekies", "tp", 84, "🇫🇷", "redbull", 2028),
+  s("wache", "Pierre Waché", "td", 90, "🇫🇷", "redbull", 2027),
+  s("balbo", "Enrico Balbo", "aero", 85, "🇮🇹", "redbull", 2027),
+  s("hodgkinson", "Ben Hodgkinson", "pu", 84, "🇬🇧", "redbull", 2028),
+  f("rbr-sport", "Daniel Hartley", "sport", 82, "🇬🇧", "redbull", 2026),
+  s("lambiase", "Gianpiero Lambiase", "race", 89, "🇬🇧", "redbull", 2027),
+  // Williams
+  s("vowles", "James Vowles", "tp", 86, "🇬🇧", "williams", 2029),
+  s("fry", "Pat Fry", "td", 86, "🇬🇧", "williams", 2027),
+  f("wil-aero", "Owen Pritchard", "aero", 79, "🇬🇧", "williams", 2026),
+  f("wil-pu", "Mark Ellis", "pu", 76, "🇬🇧", "williams", 2027),
+  s("smeets", "Sven Smeets", "sport", 82, "🇧🇪", "williams", 2027),
+  f("wil-race", "Chris Doyle", "race", 79, "🇬🇧", "williams", 2026),
+  // Aston Martin
+  s("newey", "Adrian Newey", "tp", 84, "🇬🇧", "aston-martin", 2030),
+  s("cardile", "Enrico Cardile", "td", 86, "🇮🇹", "aston-martin", 2029),
+  s("blandin", "Eric Blandin", "aero", 82, "🇫🇷", "aston-martin", 2027),
+  f("amr-pu", "Kenji Morita", "pu", 80, "🇯🇵", "aston-martin", 2027),
+  s("stevenson", "Andy Stevenson", "sport", 83, "🇬🇧", "aston-martin", 2026),
+  s("krack", "Mike Krack", "race", 82, "🇱🇺", "aston-martin", 2027),
+  // Racing Bulls
+  s("permane", "Alan Permane", "tp", 82, "🇬🇧", "racing-bulls", 2027),
+  s("goss", "Tim Goss", "td", 80, "🇬🇧", "racing-bulls", 2027),
+  f("rcb-aero", "Paolo Ferri", "aero", 78, "🇮🇹", "racing-bulls", 2026),
+  f("rcb-pu", "Sam Whitfield", "pu", 76, "🇬🇧", "racing-bulls", 2027),
+  f("rcb-sport", "Luca Bertolini", "sport", 77, "🇮🇹", "racing-bulls", 2027),
+  f("rcb-race", "Jamie Fenton", "race", 78, "🇬🇧", "racing-bulls", 2026),
+  // Haas
+  s("komatsu", "Ayao Komatsu", "tp", 84, "🇯🇵", "haas", 2028),
+  s("dezordo", "Andrea de Zordo", "td", 78, "🇮🇹", "haas", 2027),
+  f("haa-aero", "Marco Lenzi", "aero", 76, "🇮🇹", "haas", 2026),
+  f("haa-pu", "Greg Hollis", "pu", 74, "🇺🇸", "haas", 2027),
+  f("haa-sport", "Rachel Kemp", "sport", 78, "🇬🇧", "haas", 2027),
+  s("lmuller", "Laura Müller", "race", 79, "🇩🇪", "haas", 2027),
+  // Alpine
+  s("briatore", "Flavio Briatore", "tp", 80, "🇮🇹", "alpine", 2027),
+  s("sanchez", "David Sanchez", "td", 80, "🇫🇷", "alpine", 2027),
+  f("alp-aero", "Julien Marchand", "aero", 77, "🇫🇷", "alpine", 2026),
+  f("alp-pu", "Nicolas Ferrand", "pu", 74, "🇫🇷", "alpine", 2027),
+  f("alp-sport", "Hugo Lambert", "sport", 76, "🇫🇷", "alpine", 2027),
+  f("alp-race", "Simon Graves", "race", 77, "🇬🇧", "alpine", 2026),
+  // Audi
+  s("wheatley", "Jonathan Wheatley", "tp", 83, "🇬🇧", "audi", 2029),
+  s("key", "James Key", "td", 84, "🇬🇧", "audi", 2028),
+  f("aud-aero", "Felix Brandt", "aero", 78, "🇩🇪", "audi", 2027),
+  s("dreyer", "Stefan Dreyer", "pu", 80, "🇩🇪", "audi", 2028),
+  f("aud-sport", "Jonas Keller", "sport", 79, "🇩🇪", "audi", 2027),
+  f("aud-race", "Tobias Reiter", "race", 78, "🇩🇪", "audi", 2026),
+  // Cadillac
+  s("lowdon", "Graeme Lowdon", "tp", 78, "🇬🇧", "cadillac", 2028),
+  s("chester", "Nick Chester", "td", 80, "🇬🇧", "cadillac", 2028),
+  s("symonds", "Pat Symonds", "aero", 82, "🇬🇧", "cadillac", 2026),
+  f("cad-pu", "Ryan Mitchell", "pu", 74, "🇺🇸", "cadillac", 2027),
+  f("cad-sport", "Dana Brooks", "sport", 76, "🇺🇸", "cadillac", 2027),
+  f("cad-race", "Kevin Ortiz", "race", 77, "🇺🇸", "cadillac", 2027),
+  // Available on the market
   s("horner", "Christian Horner", "tp", 90, "🇬🇧", null),
   s("steiner", "Guenther Steiner", "tp", 78, "🇮🇹", null),
   s("szafnauer", "Otmar Szafnauer", "tp", 77, "🇺🇸", null),
   s("elliott", "Mike Elliott", "td", 84, "🇬🇧", null),
-  s("fallows", "Dan Fallows", "td", 83, "🇬🇧", null),
+  s("fallows", "Dan Fallows", "aero", 84, "🇬🇧", null),
+  s("smedley", "Rob Smedley", "race", 82, "🇬🇧", null),
+  f("free-pu1", "Martin Kessler", "pu", 83, "🇩🇪", null),
+  f("free-pu2", "Hiro Takeda", "pu", 79, "🇯🇵", null),
+  f("free-sport1", "Claire Dubois", "sport", 82, "🇫🇷", null),
+  f("free-sport2", "Peter Lindgren", "sport", 77, "🇸🇪", null),
+  f("free-aero2", "Alessio Conti", "aero", 79, "🇮🇹", null),
+  f("free-td2", "Richard Hale", "td", 79, "🇬🇧", null),
+  f("free-race2", "Ana Ribeiro", "race", 80, "🇵🇹", null),
 ];
+
+export const STAFF_FIRST = ["Mark", "Paul", "Elena", "Marco", "Kenji", "Sophie", "David", "Laura", "Tom", "Andrea", "Luis", "Nina", "Oscar", "Ingrid", "Raúl", "Sven"];
+export const STAFF_LAST = ["Harper", "Bianchi", "Schulz", "Moreau", "Sato", "Fernández", "Novak", "Quinn", "Larsson", "Costa", "Weber", "Hughes", "Ricci", "Dupont", "Vargas", "Holm"];
 
 /** Names for procedurally generated junior drivers in future seasons. */
 export const JUNIOR_FIRST = ["Lucas", "Mateo", "Oliver", "Noah", "Leo", "Hugo", "Tomás", "Kai", "Emil", "Arthur", "Diego", "Felix", "Ren", "Isaac", "Nico", "Max", "Elias", "Jonah", "Sami", "Luca"];

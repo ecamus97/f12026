@@ -2,10 +2,11 @@ import { useMemo, useState } from "react";
 import { UserPlus, UserMinus, CheckCircle2, AlertTriangle, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Team } from "@/data/f1Data";
-import { STAFF_ROLE_INFO } from "@/data/peopleData";
+import { STAFF_ROLE_INFO, STAFF_ROLES, type StaffRole } from "@/data/peopleData";
+import { SectionTitle } from "./visuals";
 import {
   ageOf, askingSalary, availableForNextSeason, carRankOf, lineup, nextSeasonLineup, payroll, teamStaff,
-  tdMult, tdSuccess, tpSponsorMult,
+  tdMult, tdSuccess, tpSponsorMult, severance, VACANT_RATING,
   type DriverRecord, type ManagementState, type PeopleState, type StaffRecord,
 } from "@/engine";
 import { TeamStripe } from "./common";
@@ -227,75 +228,148 @@ export function DriversPanel({
   );
 }
 
+const ROLE_ICON: Record<StaffRole, string> = { tp: "🎧", td: "📐", aero: "🌀", pu: "⚡", sport: "🏁", race: "🛠️" };
+
+function staffEffect(role: StaffRole, r: number) {
+  const pct = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`;
+  switch (role) {
+    case "tp":
+      return `Patrocinios ${pct(tpSponsorMult(r) - 1)} · sueldos de pilotos ${pct(-(r - 70) * 0.006 + 0.08)}`;
+    case "td":
+      return `Todas las mejoras ${pct(tdMult(r) - 1)} · éxito ${pct(tdSuccess(r))}`;
+    case "aero":
+      return `Mejoras de aerodinámica ${pct(Math.sqrt(tdMult(r)) - 1)}`;
+    case "pu":
+      return `Mejoras de motor y fiabilidad ${pct(Math.sqrt(tdMult(r)) - 1)}`;
+    case "sport":
+      return `Pit crew ${((r - 80) * 0.15 >= 0 ? "+" : "")}${((r - 80) * 0.15).toFixed(1)} · proyectos de pits ${pct(tdMult(r) - 1)}`;
+    case "race":
+      return `Crecimiento de pilotos ${pct(Math.max(-0.3, Math.min(0.3, (r - 80) * 0.02)))}`;
+  }
+}
+
 export function StaffPanel({
-  people, team, teams, management, onHire,
+  people, team, teams, management, onHire, onFire, onRenew,
 }: {
   people: PeopleState;
   team: Team;
   teams: Team[];
   management: ManagementState;
   onHire: (staffId: string) => void;
+  onFire?: (staffId: string) => void;
+  onRenew?: (staffId: string) => void;
 }) {
+  const season = people.season;
   const mine = teamStaff(people, team.id);
-  const free = Object.values(people.staff).filter((s) => !s.teamId).sort((a, b) => b.rating - a.rating);
+  const [role, setRole] = useState<StaffRole | "all">("all");
+  const [confirmFire, setConfirmFire] = useState<string | null>(null);
+  const free = Object.values(people.staff)
+    .filter((s) => !s.teamId && (role === "all" || s.role === role))
+    .sort((a, b) => b.rating - a.rating);
   const budget = management.player?.budget ?? 0;
-  const effect = (s: StaffRecord) =>
-    s.role === "td"
-      ? `Mejoras de I+D ×${tdMult(s.rating).toFixed(2)} · éxito ${tdSuccess(s.rating) >= 0 ? "+" : ""}${Math.round(tdSuccess(s.rating) * 100)}%`
-      : `Patrocinadores ×${tpSponsorMult(s.rating).toFixed(2)} · sueldos de pilotos ×${(1.08 - (s.rating - 70) * 0.006).toFixed(2)}`;
-
-  const card = (s: StaffRecord | null, role: "tp" | "td") => (
-    <div className="rounded-lg border border-border/60 p-3 space-y-1">
-      <div className="text-[11px] uppercase tracking-wider text-muted-foreground">{STAFF_ROLE_INFO[role].label}</div>
-      {s ? (
-        <>
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">
-              {s.nationality} {s.name}
-            </span>
-            <span className="font-racing">{s.rating}</span>
-          </div>
-          <div className="text-xs text-green-400">{effect(s)}</div>
-          <div className="text-[11px] text-muted-foreground">Sueldo {m1(s.salary)}/año</div>
-        </>
-      ) : (
-        <div className="text-sm text-muted-foreground">Vacante</div>
-      )}
-      <div className="text-[11px] text-muted-foreground">{STAFF_ROLE_INFO[role].effect}</div>
-    </div>
-  );
 
   return (
-    <div className="space-y-4">
-      <div className="panel p-4 space-y-3">
-        <h3 className="font-display text-lg flex items-center gap-2">
-          <Briefcase className="w-4 h-4" /> Dirección de {team.name}
-        </h3>
-        <div className="grid md:grid-cols-2 gap-3">
-          {card(mine.tp, "tp")}
-          {card(mine.td, "td")}
+    <div className="space-y-5">
+      <div className="space-y-3">
+        <SectionTitle right={`Sueldos de dirección: US$ ${payroll(people, team.id).staff.toFixed(1)} M/año`}>Dirección de {team.name}</SectionTitle>
+        <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
+          {STAFF_ROLES.map((r) => {
+            const st = mine[r];
+            const ends = st && (st.until ?? season) <= season;
+            return (
+              <div key={r} className={cn("panel p-4 space-y-2 relative overflow-hidden", !st && "border-red-500/40")}>
+                <div className="flex items-center justify-between">
+                  <span className="tv-label text-muted-foreground">
+                    {ROLE_ICON[r]} {STAFF_ROLE_INFO[r].label}
+                  </span>
+                  <span className={cn("font-display text-3xl", st ? (st.rating >= 85 ? "text-emerald-400" : st.rating < 75 ? "text-amber-300" : "") : "text-red-400")}>
+                    {st?.rating ?? VACANT_RATING}
+                  </span>
+                </div>
+                {st ? (
+                  <>
+                    <div className="font-display text-xl leading-tight">
+                      {st.nationality} {st.name}
+                      {st.fictional && <span className="ml-1 text-[10px] font-sans normal-case not-italic text-muted-foreground">(ficticio)</span>}
+                    </div>
+                    <div className="text-xs text-green-400">{staffEffect(r, st.rating)}</div>
+                    <div className="text-[11px] text-muted-foreground">
+                      {m1(st.salary)}/año · contrato hasta <b className={cn(ends && "text-yellow-300")}>{st.until ?? season}</b>
+                    </div>
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {ends && onRenew && (
+                        <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => onRenew(st.id)}>
+                          Renovar 2 años (+10%)
+                        </Button>
+                      )}
+                      {onFire &&
+                        (confirmFire === st.id ? (
+                          <>
+                            <Button size="sm" variant="destructive" className="h-7 text-xs" onClick={() => (onFire(st.id), setConfirmFire(null))}>
+                              Confirmar · {m1(severance(st, season))}
+                            </Button>
+                            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setConfirmFire(null)}>
+                              No
+                            </Button>
+                          </>
+                        ) : (
+                          <Button size="sm" variant="ghost" className="h-7 text-xs text-muted-foreground hover:text-destructive" onClick={() => setConfirmFire(st.id)}>
+                            Despedir
+                          </Button>
+                        ))}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="font-display text-xl text-red-400">Vacante</div>
+                    <div className="text-[11px] text-muted-foreground">Sin nadie en el puesto el área rinde como un {VACANT_RATING}. Contrata abajo.</div>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setRole(r)}>
+                      Ver candidatos
+                    </Button>
+                  </>
+                )}
+                <div className="text-[10px] text-muted-foreground/80">{STAFF_ROLE_INFO[r].effect}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      <div className="panel p-4 space-y-2">
-        <h3 className="font-display text-lg">Disponibles para contratar</h3>
+      <div className="panel p-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="font-display text-lg">Disponibles para contratar</h3>
+          <div className="flex flex-wrap text-[11px] rounded border border-border overflow-hidden">
+            {(["all", ...STAFF_ROLES] as (StaffRole | "all")[]).map((k) => (
+              <button key={k} onClick={() => setRole(k)} className={cn("px-2 py-1", role === k ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}>
+                {k === "all" ? "Todos" : STAFF_ROLE_INFO[k].short}
+              </button>
+            ))}
+          </div>
+        </div>
         <p className="text-[11px] text-muted-foreground">
-          Contratar cuesta medio año de sueldo como prima, más medio año de indemnización para quien deja el cargo. El efecto es inmediato.
+          Contratar cuesta medio año de sueldo como prima (contrato de 3 años). Si el puesto está ocupado, se paga la indemnización de quien sale
+          (la mitad de lo que le queda de contrato). El efecto es inmediato.
         </p>
         <div className="divide-y divide-border/40">
           {free.map((s) => {
             const current = mine[s.role];
-            const cost = s.salary * 0.5 + (current ? current.salary * 0.5 : 0);
+            const cost = s.salary * 0.5 + (current ? severance(current, season) : 0);
             const better = !current || s.rating > current.rating;
             return (
               <div key={s.id} className="py-2 flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="text-sm">
                   {s.nationality} {s.name}
+                  {s.fictional && <span className="ml-1 text-[10px] text-muted-foreground">(ficticio)</span>}
                 </span>
-                <span className="text-[11px] text-muted-foreground">{STAFF_ROLE_INFO[s.role].label}</span>
-                <span className="text-xs text-green-400/80">{effect(s)}</span>
+                <span className="text-[11px] text-muted-foreground">
+                  {ROLE_ICON[s.role]} {STAFF_ROLE_INFO[s.role].label}
+                </span>
+                <span className="text-xs text-green-400/80">{staffEffect(s.role, s.rating)}</span>
                 <span className="ml-auto flex items-center gap-3 text-xs">
-                  <span className={cn("font-racing", better ? "text-green-400" : "text-muted-foreground")}>{s.rating}</span>
+                  <span className={cn("font-display text-lg", better ? "text-green-400" : "text-muted-foreground")}>
+                    {s.rating}
+                    {current && <span className="text-[10px] text-muted-foreground"> vs {current.rating}</span>}
+                  </span>
                   <span className="text-muted-foreground">{m1(s.salary)}/año</span>
                   <Button size="sm" variant="outline" className="h-7 text-xs" disabled={budget < cost} onClick={() => onHire(s.id)}>
                     Contratar · {m1(cost)}
@@ -304,26 +378,46 @@ export function StaffPanel({
               </div>
             );
           })}
-          {!free.length && <div className="py-2 text-sm text-muted-foreground">No hay directivos libres.</div>}
+          {!free.length && <div className="py-2 text-sm text-muted-foreground">No hay candidatos libres para este puesto.</div>}
         </div>
       </div>
 
-      <div className="panel p-4 space-y-2">
+      <div className="panel p-4 space-y-2 overflow-x-auto">
         <h3 className="font-display text-lg">Directivos de la parrilla</h3>
-        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-1">
-          {teams.map((t) => {
-            const st = teamStaff(people, t.id);
-            return (
-              <div key={t.id} className="flex items-center gap-2 text-xs py-1">
-                <TeamStripe color={t.hex} />
-                <span className="w-24 truncate">{t.shortName ?? t.name}</span>
-                <span className="text-muted-foreground truncate flex-1">
-                  {st.tp?.name ?? "—"} ({st.tp?.rating ?? "–"}) · {st.td?.name ?? "—"} ({st.td?.rating ?? "–"})
-                </span>
-              </div>
-            );
-          })}
-        </div>
+        <table className="w-full text-xs min-w-[720px]">
+          <thead>
+            <tr className="tv-label text-muted-foreground text-left">
+              <th className="py-1 pr-2">Equipo</th>
+              {STAFF_ROLES.map((r) => (
+                <th key={r} className="py-1 pr-2">{STAFF_ROLE_INFO[r].short}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {teams.map((t) => {
+              const st = teamStaff(people, t.id);
+              return (
+                <tr key={t.id} className={cn("border-t border-white/5", t.id === team.id && "text-primary")}>
+                  <td className="py-1.5 pr-2 whitespace-nowrap">
+                    <span className="inline-block h-3 w-1 rounded-full mr-1.5 align-middle" style={{ backgroundColor: t.hex }} />
+                    {t.shortName ?? t.name}
+                  </td>
+                  {STAFF_ROLES.map((r) => (
+                    <td key={r} className="py-1.5 pr-2 whitespace-nowrap">
+                      {st[r] ? (
+                        <>
+                          {st[r]!.name.split(" ").slice(-1)[0]} <span className="text-muted-foreground">{st[r]!.rating}</span>
+                        </>
+                      ) : (
+                        <span className="text-red-400">—</span>
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

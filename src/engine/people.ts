@@ -1,7 +1,7 @@
 // Drivers and staff over the years: contracts, salaries, the market, ageing and retirements.
 import type { Driver, Team } from "@/data/f1Data";
 import {
-  EXTRA_DRIVERS, GRID_BIOS, JUNIOR_FIRST, JUNIOR_FLAGS, JUNIOR_LAST, STAFF,
+  EXTRA_DRIVERS, GRID_BIOS, JUNIOR_FIRST, JUNIOR_FLAGS, JUNIOR_LAST, STAFF, STAFF_ROLES, STAFF_ROLE_INFO, STAFF_FIRST, STAFF_LAST,
   type StaffRole,
 } from "@/data/peopleData";
 import { createRng, type Rng } from "./rng";
@@ -33,6 +33,8 @@ export interface StaffRecord {
   nationality: string;
   teamId: string | null;
   salary: number;
+  until?: number; // last season of the contract
+  fictional?: boolean;
 }
 
 export interface PeopleState {
@@ -63,7 +65,18 @@ export function askingSalary(d: DriverRecord, season: number, carRank: number, t
 }
 
 export const staffSalary = (role: StaffRole, rating: number) =>
-  Math.round((role === "tp" ? 1 + (rating - 70) * 0.25 : 1.5 + (rating - 70) * 0.35) * 10) / 10;
+  Math.round(
+    (role === "tp" ? 1 + (rating - 70) * 0.25 : role === "td" ? 1.5 + (rating - 70) * 0.35 : 0.8 + (rating - 70) * 0.18) * 10,
+  ) / 10;
+
+/** Rating used when a position is empty. */
+export const VACANT_RATING = 65;
+
+/** Paying off the rest of a contract: half of what is left (at least half a year). */
+export function severance(s: StaffRecord, season: number) {
+  const yearsLeft = Math.max(1, (s.until ?? season) - season + 1);
+  return Math.round(s.salary * Math.max(0.5, yearsLeft * 0.5) * 10) / 10;
+}
 
 export function initPeople(teams: Team[], seed: number): PeopleState {
   const drivers: Record<string, DriverRecord> = {};
@@ -87,8 +100,32 @@ export function initPeople(teams: Team[], seed: number): PeopleState {
     drivers[e.id] = { ...base, birthYear, potential, contract: null, nextContract: null, status, origin };
   }
   const staff: Record<string, StaffRecord> = {};
-  for (const s of STAFF) staff[s.id] = { ...s, salary: staffSalary(s.role, s.rating) };
+  for (const s of STAFF) staff[s.id] = { ...s, salary: staffSalary(s.role, s.rating), until: s.teamId ? s.until ?? FIRST_SEASON + 1 : undefined };
   return { version: 1, season: FIRST_SEASON, drivers, staff, rngState: seed, nextJunior: 1 };
+}
+
+/** Saves from before the extra staff roles: add the missing people. */
+export function migrateStaff(p: PeopleState): PeopleState {
+  const staff = { ...p.staff };
+  let changed = false;
+  for (const seed of STAFF) {
+    if (staff[seed.id]) continue;
+    const taken = seed.teamId && Object.values(staff).some((x) => x.teamId === seed.teamId && x.role === seed.role);
+    staff[seed.id] = {
+      ...seed,
+      teamId: taken ? null : seed.teamId,
+      salary: staffSalary(seed.role, seed.rating),
+      until: seed.teamId && !taken ? Math.max(seed.until ?? p.season, p.season) : undefined,
+    };
+    changed = true;
+  }
+  for (const x of Object.values(staff)) {
+    if (x.teamId && x.until === undefined) {
+      staff[x.id] = { ...x, until: p.season + 1 };
+      changed = true;
+    }
+  }
+  return changed ? { ...p, staff } : p;
 }
 
 /** Driver ids racing for a team in a given season. */
@@ -108,27 +145,28 @@ export function nextSeasonLineup(p: PeopleState, teamId: string): DriverRecord[]
   );
 }
 
-export function teamStaff(p: PeopleState, teamId: string) {
+export function teamStaff(p: PeopleState, teamId: string): Record<StaffRole, StaffRecord | null> {
   const list = Object.values(p.staff).filter((s) => s.teamId === teamId);
-  return { tp: list.find((s) => s.role === "tp") ?? null, td: list.find((s) => s.role === "td") ?? null };
+  return Object.fromEntries(STAFF_ROLES.map((r) => [r, list.find((s) => s.role === r) ?? null])) as Record<StaffRole, StaffRecord | null>;
 }
 
-/** Ratings used by the management engine. */
-export function staffRatings(p: PeopleState): Record<string, { tp: number; td: number }> {
-  const out: Record<string, { tp: number; td: number }> = {};
-  for (const s of Object.values(p.staff)) {
-    if (!s.teamId) continue;
-    out[s.teamId] ??= { tp: 75, td: 75 };
-    out[s.teamId][s.role] = s.rating;
-  }
+export type StaffRatings = Record<StaffRole, number>;
+
+/** Ratings used by the management engine (an empty position counts as a weak one). */
+export function staffRatings(p: PeopleState): Record<string, StaffRatings> {
+  const out: Record<string, StaffRatings> = {};
+  const teams = new Set(Object.values(p.drivers).map((d) => d.contract?.teamId).filter(Boolean) as string[]);
+  for (const s of Object.values(p.staff)) if (s.teamId) teams.add(s.teamId);
+  for (const t of teams) out[t] = Object.fromEntries(STAFF_ROLES.map((r) => [r, VACANT_RATING])) as StaffRatings;
+  for (const s of Object.values(p.staff)) if (s.teamId) out[s.teamId][s.role] = s.rating;
   return out;
 }
 
 /** Yearly payroll of a team (drivers + staff), M USD. */
 export function payroll(p: PeopleState, teamId: string) {
   const drivers = lineup(p, teamId).reduce((a, id) => a + (p.drivers[id].contract?.salary ?? 0), 0);
-  const st = teamStaff(p, teamId);
-  return { drivers, staff: (st.tp?.salary ?? 0) + (st.td?.salary ?? 0) };
+  const staff = Object.values(p.staff).filter((s) => s.teamId === teamId).reduce((a, s) => a + s.salary, 0);
+  return { drivers, staff: +staff.toFixed(2) };
 }
 
 // --- Market -------------------------------------------------------------------
@@ -183,20 +221,58 @@ export function releaseAtSeasonEnd(p: PeopleState, driverId: string): PeopleStat
   return { ...p, drivers: { ...p.drivers, [driverId]: { ...d, contract: { ...d.contract, until: p.season } } } };
 }
 
-export function hireStaff(p: PeopleState, staffId: string, teamId: string): { people: PeopleState; cost: number; message: string } {
+export function hireStaff(p: PeopleState, staffId: string, teamId: string, years = 3): { people: PeopleState; cost: number; message: string } {
   const s = p.staff[staffId];
   if (!s || s.teamId) return { people: p, cost: 0, message: "No disponible" };
   const current = Object.values(p.staff).find((x) => x.teamId === teamId && x.role === s.role);
-  const staff = { ...p.staff, [staffId]: { ...s, teamId } };
+  const staff = { ...p.staff, [staffId]: { ...s, teamId, until: p.season + years - 1 } };
   let cost = s.salary * 0.5; // signing fee
   if (current) {
     staff[current.id] = { ...current, teamId: null };
-    cost += current.salary * 0.5; // severance
+    cost += severance(current, p.season);
   }
   return {
     people: { ...p, staff },
     cost: Math.round(cost * 10) / 10,
-    message: `${s.name} es el nuevo ${s.role === "tp" ? "jefe de equipo" : "director técnico"}${current ? ` (reemplaza a ${current.name})` : ""}`,
+    message: `${s.name} es el nuevo ${STAFF_ROLE_INFO[s.role].label.toLowerCase()} hasta ${p.season + years - 1}${current ? ` (reemplaza a ${current.name})` : ""}`,
+  };
+}
+
+/** Let someone go now, paying the rest of the contract. */
+export function fireStaff(p: PeopleState, staffId: string): { people: PeopleState; cost: number; message: string } {
+  const s = p.staff[staffId];
+  if (!s?.teamId) return { people: p, cost: 0, message: "No disponible" };
+  const cost = severance(s, p.season);
+  return {
+    people: { ...p, staff: { ...p.staff, [staffId]: { ...s, teamId: null } } },
+    cost,
+    message: `${s.name} deja el cargo de ${STAFF_ROLE_INFO[s.role].label.toLowerCase()} (indemnización US$ ${cost.toFixed(1)} M). El puesto queda vacante.`,
+  };
+}
+
+/** Extend a contract: they ask for a 10% raise. */
+export function renewStaff(p: PeopleState, staffId: string, years = 2): { people: PeopleState; message: string } {
+  const s = p.staff[staffId];
+  if (!s?.teamId) return { people: p, message: "No disponible" };
+  const until = Math.max(s.until ?? p.season, p.season) + years;
+  const salary = Math.round(s.salary * 1.1 * 10) / 10;
+  return {
+    people: { ...p, staff: { ...p.staff, [staffId]: { ...s, until, salary } } },
+    message: `${s.name} renueva hasta ${until} (US$ ${salary.toFixed(1)} M/año)`,
+  };
+}
+
+function newStaff(rng: Rng, role: StaffRole, season: number, n: number): StaffRecord {
+  const rating = Math.round(68 + rng.next() * 16);
+  return {
+    id: `st${season}-${n}`,
+    name: `${rng.pick(STAFF_FIRST)} ${rng.pick(STAFF_LAST)}`,
+    role,
+    rating,
+    nationality: rng.pick(JUNIOR_FLAGS),
+    teamId: null,
+    salary: staffSalary(role, rating),
+    fictional: true,
   };
 }
 
@@ -207,12 +283,13 @@ const capSalary = (p: PeopleState, s: number) => (p.salaryCap ? Math.min(p.salar
 const clamp = (x: number, lo = 50, hi = 99) => Math.max(lo, Math.min(hi, x));
 
 /** One year of experience: young drivers grow towards their potential, veterans decline. */
-function develop(d: DriverRecord, season: number, rng: Rng): DriverRecord {
+function develop(d: DriverRecord, season: number, rng: Rng, coach = 80): DriverRecord {
   const age = ageOf(d, season);
   const gap = Math.max(0, d.potential - d.pace);
+  const k = Math.max(0.7, Math.min(1.3, 1 + (coach - 80) * 0.02)); // race engineering boss helps them grow
   let dp: number;
-  if (age <= 23) dp = gap * (0.25 + rng.next() * 0.25);
-  else if (age <= 27) dp = gap * (0.15 + rng.next() * 0.2);
+  if (age <= 23) dp = gap * (0.25 + rng.next() * 0.25) * k;
+  else if (age <= 27) dp = gap * (0.15 + rng.next() * 0.2) * k;
   else if (age <= 31) dp = (rng.next() - 0.4) * 0.8;
   else if (age <= 35) dp = -rng.next() * 0.9;
   else dp = -(0.8 + rng.next() * 1.6);
@@ -328,11 +405,13 @@ export function advanceSeason(
   }
 
   // 3) development and retirements
+  const ratings = staffRatings(p0);
   for (const id of Object.keys(drivers)) {
     const d = drivers[id];
     if (d.status === "retired") continue;
     const before = d.pace;
-    const dev = develop(d, season, rng);
+    const coach = d.contract?.teamId ? ratings[d.contract.teamId]?.race ?? VACANT_RATING : 75;
+    const dev = develop(d, season, rng, coach);
     drivers[id] = dev;
     const age = ageOf(dev, season);
     if (dev.status === "active" && dev.pace - before >= 3) news.push(`${dev.name} da un gran salto (+${(dev.pace - before).toFixed(1)} de ritmo).`);
@@ -390,7 +469,37 @@ export function advanceSeason(
     drivers[j.id] = j;
   }
 
-  return { people: { ...p1, drivers, rngState: rng.state(), nextJunior }, news };
+  // 6) staff contracts: AI teams renew most people, the rest go to the market; empty AI posts are filled
+  const staff: Record<string, StaffRecord> = structuredClone(p0.staff);
+  for (const st of Object.values(staff)) {
+    if (!st.teamId || (st.until ?? season) >= season) continue;
+    if (st.teamId === playerTeamId) {
+      news.push(`Tu equipo: terminó el contrato de ${st.name} (${STAFF_ROLE_INFO[st.role].label.toLowerCase()}); el puesto queda vacante.`);
+      staff[st.id] = { ...st, teamId: null };
+    } else if (rng.chance(0.8)) {
+      staff[st.id] = { ...st, until: season + rng.int(1, 3) - 1 };
+    } else {
+      news.push(`${st.name} deja ${teams.find((t) => t.id === st.teamId)?.name ?? st.teamId}.`);
+      staff[st.id] = { ...st, teamId: null };
+    }
+  }
+  let n = p0.nextJunior * 10;
+  for (const role of STAFF_ROLES) for (let i = 0; i < 1; i++) {
+    const x = newStaff(rng, role, season, n++);
+    if (rng.chance(0.5)) staff[x.id] = x;
+  }
+  for (const t of teams) {
+    if (t.id === playerTeamId) continue;
+    for (const role of STAFF_ROLES) {
+      if (Object.values(staff).some((x) => x.teamId === t.id && x.role === role)) continue;
+      const pool = Object.values(staff).filter((x) => !x.teamId && x.role === role).sort((a, b) => b.rating - a.rating);
+      const pick = pool.length && rng.chance(0.7) ? pool[rng.int(0, Math.min(2, pool.length - 1))] : newStaff(rng, role, season, n++);
+      staff[pick.id] = { ...pick, teamId: t.id, until: season + rng.int(1, 3) };
+      news.push(`${t.name} contrata a ${pick.name} como ${STAFF_ROLE_INFO[role].label.toLowerCase()}.`);
+    }
+  }
+
+  return { people: { ...p1, drivers, staff, rngState: rng.state(), nextJunior }, news };
 }
 
 /** Put each season's line-ups into the team list used by the races (keeps team order). */

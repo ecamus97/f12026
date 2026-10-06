@@ -393,6 +393,8 @@ export default function F1Game() {
                   onOffer={game.offerContract}
                   onRelease={game.releaseDriver}
                   onHireStaff={game.hireStaff}
+                  onFireStaff={game.fireStaff}
+                  onRenewStaff={game.renewStaff}
                 />
               </motion.div>
             )}
