@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Pause, Play, StepForward, FastForward, Flag, Wrench, ChevronUp, ChevronDown, Minus, Siren, Star, X,
+  Pause, Play, FastForward, Flag, Wrench, ChevronUp, ChevronDown, Minus, Siren, Star, X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Race } from "@/data/f1Data";
 import {
-  COMPOUNDS, MODES, FUEL_MODES, ERS_MODES, setFuelMode, setErsMode, confirmStrategy, editNextStop, formatLap, gapToLeader, requestPit, setMode, simulateLap, simulateToEnd, tyreLife,
+  COMPOUNDS, MODES, setRedFlagTyre, FUEL_MODES, ERS_MODES, setFuelMode, setErsMode, confirmStrategy, editNextStop, formatLap, gapToLeader, requestPit, setMode, simulateLap, simulateToEnd, tyreLife,
   type CarState, type Compound, type DriverMode, type FuelMode, type ErsMode, type RaceEvent, type RaceState,
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
@@ -30,6 +30,7 @@ const SPEEDS = [
   { label: "2x", ms: 6000 },
   { label: "4x", ms: 3000 },
   { label: "16x", ms: 750 },
+  { label: "64x", ms: 190 },
 ];
 
 export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Props) {
@@ -121,7 +122,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
       const next = anim.to;
       const fresh = next.events.slice(state.events.length);
       const pause = fresh.some(
-        (e) => e.type === "sc" || e.type === "weather" || (e.type === "dnf" && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
+        (e) => e.type === "sc" || e.type === "red" || e.type === "weather" || (e.type === "dnf" && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
       );
       if (pause || next.finished) setPlaying(false);
       setAnim(null);
@@ -291,29 +292,60 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish }: Prop
           </div>
           <Button
             variant="outline"
-            size="icon"
-            onClick={() => (pausedMidLap ? resumeAnim() : startLap())}
-            disabled={playing || (!!anim && !pausedMidLap)}
-            title={pausedMidLap ? "Terminar esta vuelta" : "Una vuelta"}
-          >
-            <StepForward className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="outline"
             onClick={() => {
               setPlaying(false);
               const base = anim ? anim.to : state;
               setAnim(null);
               onUpdate(simulateToEnd(base));
             }}
-            className="ml-auto text-xs"
-            title="Simular hasta la bandera a cuadros"
+            className="ml-auto text-xs font-racing"
+            title="Simula en un instante el resto de la carrera con la estrategia actual"
           >
-            <FastForward className="w-4 h-4 mr-1" /> Al final
+            <FastForward className="w-4 h-4 mr-1" /> Simular hasta el final
           </Button>
         </div>
         </div>
       </div>
+
+      {state.redFlag && !anim && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="panel overflow-hidden border-red-500/60">
+          <div className="bg-red-600 text-white px-5 py-3 flex flex-wrap items-center gap-3">
+            <span className="font-display text-2xl">🟥 Bandera roja</span>
+            <span className="text-sm opacity-90">
+              Carrera detenida en la vuelta {state.redFlag.lap}. Todos a pits: se reanuda con largada detenida en el orden actual.
+            </span>
+          </div>
+          <div className="p-4 space-y-3">
+            <div className="text-sm text-muted-foreground">Elige los neumáticos para el relanzamiento (cambio gratis, no cuenta como parada):</div>
+            <div className="grid md:grid-cols-2 gap-3">
+              {myCars
+                .filter((c) => c.status === "running")
+                .map((car) => (
+                  <div key={car.id} className="rounded-lg border border-white/10 bg-black/30 p-3 space-y-2">
+                    <div className="font-display text-lg">
+                      P{state.cars.indexOf(car) + 1} · {car.entry.driver.name}
+                    </div>
+                    <div className="flex gap-2">
+                      {(Object.keys(COMPOUNDS) as Compound[]).map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => apply((s) => setRedFlagTyre(s, car.id, c))}
+                          className={cn("rounded-full p-1", state.redFlag!.choices[car.id] === c ? "ring-2 ring-primary" : "opacity-60 hover:opacity-100")}
+                          title={COMPOUNDS[c].name}
+                        >
+                          <TyreBadge compound={c} />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <Button onClick={() => setPlaying(true)} className="font-display">
+              <Play className="w-4 h-4 mr-1 fill-current" /> Reanudar carrera
+            </Button>
+          </div>
+        </motion.div>
+      )}
 
       {state.weather && <WeatherWidget weather={state.weather} lap={state.lap} title="Clima en pista" />}
 
@@ -716,6 +748,7 @@ const EVENT_STYLE: Record<RaceEvent["type"], string> = {
   mistake: "text-amber-400",
   finish: "text-primary font-semibold",
   weather: "text-sky-300 font-semibold",
+  red: "text-red-500 font-bold",
 };
 
 function EventRow({ e, mine }: { e: RaceEvent; mine: boolean }) {

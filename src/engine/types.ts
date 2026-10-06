@@ -59,7 +59,7 @@ export interface CarState {
 }
 
 export type RaceEventType =
-  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather";
+  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather" | "red";
 
 export interface RaceEvent {
   lap: number;
@@ -83,6 +83,9 @@ export interface RaceState {
   strategyConfirmed?: boolean; // player has reviewed the pre-race plan
   bestSectors?: ({ time: number; driverId: string } | null)[]; // overall best per sector
   weather?: import("./weather").WeatherTimeline;
+  /** Red flag: race stopped, waiting for the standing restart (tyres can be changed). */
+  redFlag?: { lap: number; choices: Record<string, Compound> } | null;
+  standingRestart?: boolean;
   rules?: { twoCompound: boolean; overtakeAid: boolean; points?: number[]; fastestLapPoint?: boolean };
 }
 

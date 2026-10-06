@@ -303,6 +303,10 @@ export default function F1Game() {
                   people={gameState.people}
                   proposals={gameState.proposals}
                   onWeekend={() => go("weekend")}
+                  onQuickSim={() => {
+                    game.quickSimWeekend();
+                    setScreen("weekend");
+                  }}
                   onNavigate={(t: NavTarget) => go(t)}
                   news={gameState.news}
                   teams={gameState.teamsData}

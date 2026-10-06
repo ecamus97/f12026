@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { races2026, teams as defaultTeams, teamInfo, type Team } from "@/data/f1Data";
 import {
   classify,
+  simulateToEnd,
+  confirmStrategy,
   computeStandings,
   createRace,
   DEFAULT_SIM_CONFIG,
@@ -316,6 +318,28 @@ function seasonStories(
   return out;
 }
 
+function openWeekend(s: GameState): GameState {
+  const race = races2026[s.currentRaceIndex];
+  if (!race) return s;
+  if (s.weekend?.raceIndex === s.currentRaceIndex) return s; // resume
+  const weather = weekendWeather(s, s.currentRaceIndex)!;
+  const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet);
+  return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather } };
+}
+
+function openRace(s: GameState): GameState {
+  const w = s.weekend;
+  if (!w || w.race) return s;
+  const race = races2026[w.raceIndex];
+  const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
+  const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
+  const r = s.rules;
+  const raceForRules = r.highDegTyres ? { ...race, track: { ...race.track, deg: +(race.track.deg * 1.2).toFixed(2) } } : race;
+  const rs = createRace(raceForRules, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather);
+  rs.rules = { twoCompound: r.twoCompound, overtakeAid: r.overtakeAid, points: POINTS_TABLES[r.points], fastestLapPoint: r.fastestLapPoint };
+  return { ...s, weekend: { ...w, race: rs } };
+}
+
 export const entriesFromTeams = (teams: Team[]): Entry[] =>
   teams.flatMap((t) => t.drivers.map((driver) => ({ driver, team: teamInfo(t) })));
 
@@ -447,14 +471,16 @@ export function useGameState() {
 
   // --- Race weekend ------------------------------------------------------------
 
-  const startWeekend = useCallback(() => {
-    setGameState((s) => {
-      const race = races2026[s.currentRaceIndex];
-      if (!race) return s;
-      if (s.weekend?.raceIndex === s.currentRaceIndex) return s; // resume
-      const weather = weekendWeather(s, s.currentRaceIndex)!;
-      const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet);
-      return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather } };
+  const startWeekend = useCallback(() => setGameState(openWeekend), []);
+
+  /** Quick weekend: qualifying and race simulated at once with the engineers' strategy. */
+  const quickSimWeekend = useCallback(() => {
+    setGameState((s0) => {
+      let s = openWeekend(s0);
+      if (!s.weekend) return s0;
+      if (!s.weekend.race) s = openRace({ ...s, weekend: { ...s.weekend, qualiRevealed: 3 } });
+      const r = s.weekend!.race!;
+      return { ...s, weekend: { ...s.weekend!, qualiRevealed: 3, race: r.finished ? r : simulateToEnd(confirmStrategy(r)) } };
     });
   }, []);
 
@@ -466,20 +492,7 @@ export function useGameState() {
     );
   }, []);
 
-  const startRace = useCallback(() => {
-    setGameState((s) => {
-      const w = s.weekend;
-      if (!w || w.race) return s;
-      const race = races2026[w.raceIndex];
-      const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
-      const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
-      const r = s.rules;
-      const raceForRules = r.highDegTyres ? { ...race, track: { ...race.track, deg: +(race.track.deg * 1.2).toFixed(2) } } : race;
-      const rs = createRace(raceForRules, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather);
-      rs.rules = { twoCompound: r.twoCompound, overtakeAid: r.overtakeAid, points: POINTS_TABLES[r.points], fastestLapPoint: r.fastestLapPoint };
-      return { ...s, weekend: { ...w, race: rs } };
-    });
-  }, []);
+  const startRace = useCallback(() => setGameState(openRace), []);
 
   const updateRace = useCallback((race: RaceState) => {
     setGameState((s) => (s.weekend ? { ...s, weekend: { ...s.weekend, race } } : s));
@@ -721,6 +734,7 @@ export function useGameState() {
     races: races2026,
     chooseTeam,
     startWeekend,
+    quickSimWeekend,
     revealSession,
     startRace,
     updateRace,

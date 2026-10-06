@@ -130,6 +130,22 @@ export function simulateLap(prev: RaceState): RaceState {
   const restart = sc.restartLap;
   sc.restartLap = false;
 
+  // restart after a red flag: tyre choices are fitted in the pit lane, then a standing start
+  const standing = lap === 1 || !!state.standingRestart;
+  if (state.redFlag) {
+    for (const car of state.cars) {
+      const c = state.redFlag.choices[car.id];
+      if (!c || car.status !== "running") continue;
+      if (c !== car.compound) car.plan = advancePlan(car, c, lap - 1, state.totalLaps);
+      car.compound = c;
+      car.tyreAge = 0;
+      if (!car.usedCompounds.includes(c)) car.usedCompounds.push(c);
+    }
+    state.redFlag = null;
+  }
+  state.standingRestart = false;
+  let newRedFlag: string | null = null;
+
   const running = state.cars.filter((c) => c.status === "running");
   const retired = state.cars.filter((c) => c.status === "dnf");
 
@@ -219,7 +235,9 @@ export function simulateLap(prev: RaceState): RaceState {
       car.dnfLap = lap;
       car.dnfReason = lap === 1 ? "Accidente en la largada" : "Accidente";
       events.push({ lap, type: "dnf", text: `${name(car)} se estrella — fuera de carrera`, drivers: [car.id] });
-      if (config.safetyCar && rng.chance(0.55)) newSafetyCar = true;
+      // a heavy crash (barriers damaged, debris everywhere) stops the race
+      if (config.safetyCar && !newRedFlag && lap < state.totalLaps - 2 && rng.chance(0.13 * (1 + wet * 1.5) * (lap === 1 ? 1.5 : 1))) newRedFlag = name(car);
+      else if (config.safetyCar && rng.chance(0.55)) newSafetyCar = true;
       return;
     }
 
@@ -251,7 +269,7 @@ export function simulateLap(prev: RaceState): RaceState {
         time = before * bf + time * (1 - bf);
       }
       time += liftAndCoast;
-      if (lap === 1) time += 2.5 + idx * 0.05; // standing start
+      if (standing) time += 2.5 + idx * 0.05; // standing start (race start or red-flag restart)
       // dirty air
       if (idx > 0) {
         const interval = prevTotals[idx] - prevTotals[idx - 1];
@@ -297,7 +315,7 @@ export function simulateLap(prev: RaceState): RaceState {
 
   // --- Order & overtakes ---
   const order = running.filter((c) => c.status === "running");
-  const bonus = lap === 1 ? 1.2 : restart ? 0.6 : 0;
+  const bonus = standing ? 1.2 : restart ? 0.6 : 0;
   for (let i = 1; i < order.length; i++) {
     let j = i;
     while (j > 0) {
@@ -352,7 +370,9 @@ export function simulateLap(prev: RaceState): RaceState {
   }
 
   // --- Safety car ---
-  if (scLap) {
+  if (newRedFlag) {
+    // handled after the timing below
+  } else if (scLap) {
     // field bunches up behind the safety car
     for (let i = 1; i < order.length; i++) {
       const interval = order[i].total - order[i - 1].total;
@@ -424,6 +444,28 @@ export function simulateLap(prev: RaceState): RaceState {
     }
   });
 
+  if (newRedFlag) {
+    // everyone back to the pit lane: gaps are wiped and the race restarts from a grid in race order
+    sc.active = false;
+    sc.lapsLeft = 0;
+    sc.restartLap = false;
+    events.push({ lap, type: "red", text: `🟥 BANDERA ROJA: fuerte accidente de ${newRedFlag}. Carrera detenida, se puede cambiar neumáticos`, drivers: [] });
+    const leaderT = order[0]?.total ?? 0;
+    const wetNow = wetEnd;
+    order.forEach((car, i) => {
+      car.total = leaderT + i * 0.22;
+      if (car.controlled) return; // the player chooses
+      const best = bestTyreFor(wetNow);
+      const next = best !== "slick" ? best : isWetTyre(car.compound) ? "M" : car.plan[1]?.compound ?? car.compound;
+      if (next !== car.compound) car.plan = advancePlan(car, next, lap, state.totalLaps);
+      car.compound = next;
+      car.tyreAge = 0;
+      if (!car.usedCompounds.includes(next)) car.usedCompounds.push(next);
+    });
+    state.redFlag = { lap, choices: Object.fromEntries(order.filter((c) => c.controlled).map((c) => [c.id, c.compound])) };
+    state.standingRestart = true;
+  }
+
   const newlyRetired = running.filter((c) => c.status === "dnf");
   state.cars = [...order, ...newlyRetired, ...retired];
   state.lap = lap;
@@ -454,6 +496,12 @@ export function simulateToEnd(state: RaceState): RaceState {
 }
 
 /** Manager controls */
+/** Tyres to fit during a red flag (applied at the restart). */
+export function setRedFlagTyre(state: RaceState, driverId: string, compound: Compound): RaceState {
+  if (!state.redFlag) return state;
+  return { ...state, redFlag: { ...state.redFlag, choices: { ...state.redFlag.choices, [driverId]: compound } } };
+}
+
 export function setMode(state: RaceState, driverId: string, mode: DriverMode): RaceState {
   return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, mode } : c)) };
 }

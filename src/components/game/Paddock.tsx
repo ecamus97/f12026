@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Play, Gavel, Wallet, Gauge, FlaskConical, Handshake, ChevronRight, Trophy, MapPin, CalendarDays } from "lucide-react";
+import { Play, FastForward, Gavel, Wallet, Gauge, FlaskConical, Handshake, ChevronRight, Trophy, MapPin, CalendarDays } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Race, Team } from "@/data/f1Data";
 import type { DriverStanding, TeamStanding, NewsItem, WeatherTimeline } from "@/engine";
@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 export type NavTarget = "weekend" | "car" | "drivers" | "finance" | "rules" | "standings" | "calendar" | "news";
 
 export function Paddock({
-  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onNavigate, news, teams, weather,
+  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather,
 }: {
   team: Team;
   season: number;
@@ -28,6 +28,7 @@ export function Paddock({
   people: PeopleState | null;
   proposals: RuleProposal[];
   onWeekend: () => void;
+  onQuickSim: () => void;
   onNavigate: (t: NavTarget) => void;
   news: NewsItem[];
   teams: Team[];
@@ -86,10 +87,19 @@ export function Paddock({
                   <WeatherDay label="Domingo · Carrera" icon={forecastIcon(raceChance)} temp={weather.airTemp} />
                 </div>
               )}
-              <div className="mt-auto">
+              <div className="mt-auto flex flex-wrap gap-2">
                 <Button onClick={onWeekend} size="lg" className="font-display text-lg h-12 px-6 shine">
                   <Play className="w-5 h-5 mr-2 fill-current" />
                   {weekendActive ? (weekendHasRace ? "Volver a la carrera" : "Volver a la clasificación") : "Comenzar fin de semana"}
+                </Button>
+                <Button
+                  onClick={onQuickSim}
+                  size="lg"
+                  variant="outline"
+                  className="font-display text-base h-12 px-5 bg-black/30"
+                  title="Clasificación y carrera se simulan al instante con la estrategia recomendada"
+                >
+                  <FastForward className="w-5 h-5 mr-2" /> Simulación rápida
                 </Button>
               </div>
             </div>
