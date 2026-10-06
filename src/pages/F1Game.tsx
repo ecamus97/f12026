@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -11,6 +11,7 @@ import { NewsScreen } from "@/components/game/NewsCenter";
 import { SeasonCalendar } from "@/components/game/AgendaCalendar";
 import { RaceCard } from "@/components/RaceCard";
 import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
+import { ProfileDialog, type ProfileTarget, type SeasonData } from "@/components/game/Profiles";
 import { ConfigDialog } from "@/components/ConfigDialog";
 import { TeamSelect } from "@/components/game/TeamSelect";
 import { QualifyingView } from "@/components/game/QualifyingView";
@@ -23,7 +24,8 @@ import {
   Newspaper, Trophy, Calendar, Play, RotateCcw, ChevronRight, Flag, Home, Building2, Users, Briefcase, Wallet, Gavel, Wrench, MoreHorizontal, X,
 } from "lucide-react";
 import { TeamHQ, money } from "@/components/game/TeamHQ";
-import { nextSeasonLineup, computeStandings, type StoredRaceResult } from "@/engine";
+import { nextSeasonLineup, computeStandings, type StoredRaceResult, type PeopleState, type ManagementState } from "@/engine";
+import type { Team } from "@/data/f1Data";
 import { cn } from "@/lib/utils";
 
 type Screen = "home" | "news" | "weekend" | "calendar" | "standings" | "car" | "facilities" | "drivers" | "staff" | "finance" | "rules";
@@ -474,6 +476,9 @@ export default function F1Game() {
                   playerTeamId={gameState.playerTeamId}
                   next={currentRace && !seasonComplete ? `${currentRace.flag} ${currentRace.country}` : null}
                   onNext={() => go("weekend")}
+                  people={gameState.people}
+                  management={gameState.management}
+                  teams={gameState.teamsData}
                 />
               </motion.div>
             )}
@@ -617,8 +622,11 @@ function EndStat({ label, value, highlight }: { label: string; value: string; hi
 }
 
 function StandingsScreen({
-  season, standings, results, archive, playerTeamId, next, onNext,
+  season, standings, results, archive, playerTeamId, next, onNext, people, management, teams,
 }: {
+  people: PeopleState | null;
+  management: ManagementState | null;
+  teams: Team[];
   season: number;
   standings: ReturnType<typeof computeStandings>;
   results: StoredRaceResult[];
@@ -632,8 +640,23 @@ function StandingsScreen({
   const st = arch ? computeStandings(arch.teams, arch.results) : standings;
   const res = arch ? arch.results : results;
   const races = arch?.calendar;
+  const [profile, setProfile] = useState<ProfileTarget>(null);
+  const seasons: SeasonData[] = useMemo(
+    () => [...archive.map((a) => ({ season: a.season, teams: a.teams, results: a.results, finished: true })), { season, teams, results, finished: false }],
+    [archive, season, teams, results],
+  );
   return (
     <div className="space-y-5">
+      <ProfileDialog
+        target={profile}
+        onClose={() => setProfile(null)}
+        onOpen={setProfile}
+        seasons={seasons}
+        people={people}
+        management={management}
+        teams={teams}
+        season={season}
+      />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <SectionTitle>Campeonato {view}</SectionTitle>
         <div className="flex flex-wrap items-center gap-2">
@@ -675,11 +698,11 @@ function StandingsScreen({
           <TabsTrigger value="teams" className="font-racing">Constructores</TabsTrigger>
         </TabsList>
         <TabsContent value="drivers" className="mt-4 space-y-2">
-          <p className="text-[11px] text-muted-foreground">El número chico azul en la esquina de una carrera es la posición en la sprint de ese fin de semana (puntúan los 8 primeros).</p>
-          <DriverChampionshipTable standings={st.drivers} results={res} playerTeamId={playerTeamId} races={races} />
+          <p className="text-[11px] text-muted-foreground">El número chico azul en la esquina de una carrera es la posición en la sprint de ese fin de semana (puntúan los 8 primeros). Toca un piloto o una escudería para ver su ficha.</p>
+          <DriverChampionshipTable standings={st.drivers} results={res} playerTeamId={playerTeamId} races={races} onSelect={(id) => setProfile({ kind: "driver", id })} />
         </TabsContent>
         <TabsContent value="teams" className="mt-4">
-          <TeamChampionshipTable standings={st.teams} results={res} playerTeamId={playerTeamId} races={races} />
+          <TeamChampionshipTable standings={st.teams} results={res} playerTeamId={playerTeamId} races={races} onSelect={(id) => setProfile({ kind: "team", id })} />
         </TabsContent>
       </Tabs>
     </div>

@@ -17,6 +17,12 @@ function cellClass(pos: number | "DNF" | undefined) {
 
 type RaceCol = { id: number; name: string; flag: string };
 
+/** Sticky cells are opaque: give them the same tint as the rest of the player's row. */
+const stickyMine = (hex: string, first = false) => ({
+  backgroundImage: `linear-gradient(${hex}1f, ${hex}1f)`,
+  ...(first ? { boxShadow: `inset 3px 0 0 ${hex}` } : {}),
+});
+
 function useRaceColumns(results: StoredRaceResult[], races?: RaceCol[]) {
   const done = (races ?? calendar()).filter((r) => results.some((x) => x.raceId === r.id));
   const byRace = new Map(results.map((r) => [r.raceId, r]));
@@ -40,9 +46,10 @@ interface DriverProps {
   results: StoredRaceResult[];
   playerTeamId?: string | null;
   compact?: boolean;
+  onSelect?: (driverId: string) => void;
 }
 
-export function DriverChampionshipTable({ standings, results, playerTeamId, compact, races }: DriverProps) {
+export function DriverChampionshipTable({ standings, results, playerTeamId, compact, races, onSelect }: DriverProps) {
   const { done, posOf, sprintOf } = useRaceColumns(results, races);
   const leader = standings[0]?.points ?? 0;
   return (
@@ -66,9 +73,14 @@ export function DriverChampionshipTable({ standings, results, playerTeamId, comp
             {standings.map((d, i) => {
               const mine = d.teamId === playerTeamId;
               return (
-                <tr key={d.driverId} className="border-t border-border/20" style={mine ? mineStyle(d.teamColor) : undefined}>
-                  <td className="px-2 py-1.5 font-racing text-xs sticky left-0 bg-background z-10">{i + 1}</td>
-                  <td className="px-2 py-1.5 sticky left-9 bg-background z-10">
+                <tr
+                  key={d.driverId}
+                  className={cn("border-t border-border/20", onSelect && "cursor-pointer hover:brightness-125")}
+                  style={mine ? mineStyle(d.teamColor) : undefined}
+                  onClick={onSelect ? () => onSelect(d.driverId) : undefined}
+                >
+                  <td className="px-2 py-1.5 font-racing text-xs sticky left-0 bg-background z-10" style={mine ? stickyMine(d.teamColor, true) : undefined}>{i + 1}</td>
+                  <td className="px-2 py-1.5 sticky left-9 bg-background z-10" style={mine ? stickyMine(d.teamColor) : undefined}>
                     <div className="flex items-center gap-2">
                       <TeamStripe color={d.teamColor} />
                       <span>{d.nationality}</span>
@@ -121,9 +133,10 @@ interface TeamProps {
   results: StoredRaceResult[];
   playerTeamId?: string | null;
   compact?: boolean;
+  onSelect?: (teamId: string) => void;
 }
 
-export function TeamChampionshipTable({ standings, results, playerTeamId, compact, races }: TeamProps) {
+export function TeamChampionshipTable({ standings, results, playerTeamId, compact, races, onSelect }: TeamProps) {
   const { done } = useRaceColumns(results, races);
   // whole weekend: Grand Prix + sprint
   const teamPointsInRace = (teamId: string, raceId: number) => {
@@ -148,9 +161,14 @@ export function TeamChampionshipTable({ standings, results, playerTeamId, compac
           </thead>
           <tbody>
             {standings.map((t, i) => (
-              <tr key={t.teamId} className="border-t border-border/20" style={t.teamId === playerTeamId ? mineStyle(t.teamColor) : undefined}>
-                <td className="px-2 py-1.5 font-racing text-xs sticky left-0 bg-background z-10">{i + 1}</td>
-                <td className="px-2 py-1.5 sticky left-9 bg-background z-10">
+              <tr
+                key={t.teamId}
+                className={cn("border-t border-border/20", onSelect && "cursor-pointer hover:brightness-125")}
+                style={t.teamId === playerTeamId ? mineStyle(t.teamColor) : undefined}
+                onClick={onSelect ? () => onSelect(t.teamId) : undefined}
+              >
+                <td className="px-2 py-1.5 font-racing text-xs sticky left-0 bg-background z-10" style={t.teamId === playerTeamId ? stickyMine(t.teamColor, true) : undefined}>{i + 1}</td>
+                <td className="px-2 py-1.5 sticky left-9 bg-background z-10" style={t.teamId === playerTeamId ? stickyMine(t.teamColor) : undefined}>
                   <div className="flex items-center gap-2">
                     <TeamStripe color={t.teamColor} />
                     <span className="text-xs font-medium truncate">{t.teamName}</span>
