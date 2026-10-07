@@ -44,7 +44,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     st.config.pauseOnIncidents !== false &&
     (e.type === "sc" ||
     e.type === "red" ||
-      ((e.type === "dnf" || e.type === "puncture") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)));
+      ((e.type === "dnf" || e.type === "puncture" || e.type === "damage") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)));
   // after the last lap the cars cross the line and the chequered flag shows before the results
   const [resultsReady, setResultsReady] = useState(state.finished);
   useEffect(() => {
@@ -553,7 +553,7 @@ function TowerRow({
   // while the car is still finishing the previous lap, show it as it was then: old tyres until the stop is done
   const before = finishingPrevLap && car.pitFrom ? car.pitFrom : null;
   const shownCompound = before?.compound ?? car.compound;
-  const shownAge = before?.tyreAge ?? car.tyreAge;
+  const shownAge = Math.round(before?.tyreAge ?? car.tyreAge);
   const shownStops = before?.stops ?? car.stops;
   const shownLast = finishingPrevLap ? car.prevLastLap : car.lastLap;
   const change = car.grid - pos;
@@ -589,6 +589,7 @@ function TowerRow({
         <span className="font-display text-base tracking-wide">{car.entry.driver.shortName}</span>
         {mine && <Star className="w-3 h-3 text-primary fill-primary" />}
         {fastest && lap > 1 && <span className="text-[9px] px-1 rounded bg-purple-600 text-white">VR</span>}
+        {car.damage && !dnf && <span className="text-[9px] px-1 rounded bg-red-600 text-white font-bold">ALERÓN</span>}
         {inPit ? (
           <span className="text-[9px] px-1 rounded bg-orange-500 text-black font-bold animate-pulse">EN BOXES</span>
         ) : (
@@ -633,7 +634,8 @@ function PitWallCard({
   // until the stop is really done the car still has its old tyres
   const pf = finishing && car.pitFrom ? car.pitFrom : null;
   const tyre = pf?.compound ?? car.compound;
-  const tyreAge = pf?.tyreAge ?? car.tyreAge;
+  const tyreAgeRaw = pf?.tyreAge ?? car.tyreAge;
+  const tyreAge = Math.round(tyreAgeRaw);
   const stops = pf?.stops ?? car.stops;
   const preRace = state.lap === 0 && !state.strategyConfirmed;
   const life = tyreLife(tyre, state.track, car.entry.driver.tyreMgmt, state.weather?.trackTemp[state.lap]);
@@ -650,7 +652,7 @@ function PitWallCard({
   const batteryBase = live?.to ? lerp(car.battery ?? 80, live.to.battery ?? 80) : car.battery ?? 80;
   const battery = Math.max(0, Math.min(100, batteryBase + (live ? wave * amp * Math.min(1, f * 8, (1 - f) * 8) : 0)));
   const ersState = !live ? null : Math.cos(2 * Math.PI * 4 * f) > 0 ? "⚡ desplegando" : "🔋 recuperando";
-  const wear = Math.min(1.3, tyreAge / life);
+  const wear = Math.min(1.3, tyreAgeRaw / life);
   const wearColor = wear < 0.6 ? "bg-green-500" : wear < 0.9 ? "bg-yellow-400" : "bg-red-500";
   const next = car.plan.length > 1 ? { lap: car.plan[0].untilLap, compound: car.plan[1].compound } : null;
   const compounds = Object.keys(COMPOUNDS) as Compound[];
@@ -667,6 +669,7 @@ function PitWallCard({
             {dnf ? "—" : `P${pos}`} · {car.entry.driver.name}
             {!dnf && (car.penalty ?? 0) > 0 && <span className="text-[9px] px-1 rounded bg-amber-400 text-black font-bold">+{car.penalty}s</span>}
             {!dnf && car.pitRequest && <span className="text-[9px] px-1 rounded bg-orange-500 text-black font-bold">BOX</span>}
+            {!dnf && car.damage && <span className="text-[9px] px-1 rounded bg-red-600 text-white font-bold">ALERÓN</span>}
           </div>
           <div className="text-[11px] text-muted-foreground">
             {dnf ? `Abandono: ${car.dnfReason}` : preRace ? `Sale desde P${car.grid}` : `${stops} parada${stops === 1 ? "" : "s"}`}
@@ -681,6 +684,23 @@ function PitWallCard({
         {open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
       </button>
 
+      {!dnf && car.damage && (
+        <div className="rounded-md border border-red-500/60 bg-red-500/10 px-2 py-1.5 text-[11px] text-red-200 flex items-center gap-2">
+          <span className="flex-1">
+            🔧 Alerón delantero dañado: pierde {car.damage.pace.toFixed(1)}s por vuelta.{" "}
+            {car.pitRequest ? "Entra a box en esta vuelta." : "Hay que entrar a box para cambiarlo."}
+          </span>
+          {!car.pitRequest && (
+            <Button
+              size="sm"
+              className="h-7 text-xs bg-red-600 hover:bg-red-500 text-white"
+              onClick={() => onApply((s) => requestPit(s, car.id, car.plan[1]?.compound ?? car.compound))}
+            >
+              Box ahora
+            </Button>
+          )}
+        </div>
+      )}
       {!open && !dnf && !preRace && (
         <button className="w-full grid grid-cols-4 gap-1.5 text-[10px] text-left" onClick={onToggle}>
           <Stat label="Neum." value={`${tyreAge}v · ${Math.round(wear * 100)}%`} tone={wear > 0.9 ? "text-red-400" : wear > 0.6 ? "text-yellow-300" : undefined} />
@@ -892,6 +912,7 @@ const EVENT_STYLE: Record<RaceEvent["type"], string> = {
   green: "text-emerald-400 font-semibold",
   puncture: "text-orange-400 font-semibold",
   penalty: "text-amber-300 font-semibold",
+  damage: "text-orange-400 font-semibold",
 };
 
 /** Big moments get a banner over the track for a few seconds. */
@@ -903,12 +924,13 @@ const FLASH: Partial<Record<RaceEvent["type"], { label: string; cls: string }>> 
   green: { label: "Bandera verde", cls: "bg-emerald-500/95 border-emerald-200 text-black" },
   puncture: { label: "Pinchazo", cls: "bg-orange-500/95 border-orange-200 text-black" },
   penalty: { label: "Penalización", cls: "bg-amber-400/95 border-amber-100 text-black" },
+  damage: { label: "Contacto", cls: "bg-orange-600/95 border-orange-200 text-white" },
   weather: { label: "Clima", cls: "bg-sky-500/95 border-sky-200 text-black" },
   finish: { label: "Bandera a cuadros", cls: "bg-white/95 border-zinc-900 text-black" },
 };
 
 const FLASH_PRIORITY: Partial<Record<RaceEvent["type"], number>> = {
-  red: 6, finish: 5, sc: 4, green: 4, sc_end: 3, dnf: 2, puncture: 2, penalty: 1, weather: 1,
+  red: 6, finish: 5, sc: 4, green: 4, sc_end: 3, dnf: 2, puncture: 2, damage: 2, penalty: 1, weather: 1,
 };
 const flashKey = (e: RaceEvent) => `${e.lap}-${e.type}-${e.text}`;
 

@@ -120,6 +120,11 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
     car.penalty = 0;
     events.push({ lap, type: "penalty", text: `⚖️ ${name(car)} cumple su penalización de ${served}s en boxes`, drivers: [car.id], at: 0.97 });
   }
+  if (car.damage) {
+    stationary += 4 + rng.next() * 2; // new nose and front wing
+    slow += " · cambia el alerón delantero";
+    car.damage = undefined;
+  }
   const pitTime = track.pitLoss * scFactor + stationary;
   car.pitFrom = { compound: car.compound, tyreAge: car.tyreAge, stops: car.stops };
   car.total += pitTime;
@@ -212,7 +217,7 @@ export function simulateLap(prev: RaceState): RaceState {
     car.lastPitTime = 0;
     car.pitFrom = undefined;
     car.prevLastLap = car.lastLap;
-    car.tyreAge += 1;
+    car.tyreAge = +(car.tyreAge + (scLap ? 0.25 : 1)).toFixed(2); // behind the safety car the tyres hardly wear
     const e = car.entry;
 
     // --- Battles: instructions to attack the car ahead or defend from the one behind ---
@@ -330,6 +335,7 @@ export function simulateLap(prev: RaceState): RaceState {
         time = before * bf + time * (1 - bf);
       }
       time += liftAndCoast;
+      if (car.damage) time += car.damage.pace; // broken front wing
       if (attacking) time -= 0.05; // pushing to stay in the slipstream
       if (defending) time += 0.06; // defensive lines cost time
       if (standing) time += 2.5 + idx * 0.05; // standing start (race start or red-flag restart)
@@ -467,24 +473,54 @@ export function simulateLap(prev: RaceState): RaceState {
           if (rng.chance(pc)) {
             contacted.add(behind.id);
             contacted.add(ahead.id);
+            const at = +(0.2 + rng.next() * 0.7).toFixed(3);
+            const who = `${name(behind)} y ${name(ahead)}${sameTeam ? " (¡compañeros de equipo!)" : ""}`;
+            const roll = rng.next();
             const victim = rng.chance(0.5) ? behind : ahead;
             const other = victim === behind ? ahead : behind;
-            const loss = 3 + rng.next() * 5;
-            victim.total += loss;
-            other.total += 0.5 + rng.next();
-            if (lap < state.totalLaps - 1) victim.pitRequest = victim.pitRequest ?? victim.plan[1]?.compound ?? victim.compound;
+            const hurt = (c: CarState) => {
+              // a broken front wing: time lost now and every lap until it's changed
+              c.damage = { part: "wing", pace: +(0.8 + rng.next() * 1.4).toFixed(2) };
+              c.total += 1.5 + rng.next() * 2;
+              if (!c.controlled && lap < state.totalLaps - 1) c.pitRequest = c.pitRequest ?? c.plan[1]?.compound ?? c.compound;
+            };
+            let retiredHere: CarState | null = null;
+            if (roll < 0.1) {
+              // one of them is out (broken suspension, puncture and floor damage...)
+              retiredHere = victim;
+              victim.status = "dnf";
+              victim.dnfLap = lap;
+              victim.dnfReason = `Accidente: contacto con ${name(other)}`;
+              victim.dnfAt = at;
+              events.push({ lap, type: "dnf", text: `💥 Choque entre ${who}: ${name(victim)} abandona`, drivers: [victim.id, other.id], at });
+              if (rng.chance(0.5)) {
+                hurt(other);
+                events.push({ lap, type: "damage", text: `🔧 ${name(other)} sigue con el alerón dañado (−${other.damage!.pace.toFixed(1)}s por vuelta)`, drivers: [other.id], at: Math.min(0.99, at + 0.01) });
+              } else other.total += 0.5 + rng.next();
+            } else if (roll < 0.35) {
+              hurt(behind);
+              hurt(ahead);
+              events.push({ lap, type: "damage", text: `💥 Contacto entre ${who}: los dos dañan el alerón delantero`, drivers: [behind.id, ahead.id], at });
+            } else if (roll < 0.8) {
+              hurt(victim);
+              other.total += 0.5 + rng.next();
+              events.push({ lap, type: "damage", text: `💥 Contacto entre ${who}: ${name(victim)} daña el alerón delantero (−${victim.damage!.pace.toFixed(1)}s por vuelta)`, drivers: [victim.id, other.id], at });
+            } else {
+              behind.total += 0.4 + rng.next() * 0.8;
+              ahead.total += 0.4 + rng.next() * 0.8;
+              events.push({ lap, type: "mistake", text: `💥 Toque entre ${who}, sin daños: pierden algo de tiempo`, drivers: [behind.id, ahead.id], at });
+            }
             // the stewards look at it: usually the attacker is to blame
             if (rng.chance(0.55)) {
               const guilty = rng.chance(def && !atk ? 0.45 : 0.7) ? behind : ahead;
-              givePenalty(guilty, rng.chance(0.3) ? 10 : 5, guilty === behind ? `provocar un choque con ${name(ahead)}` : `cambiar de trayectoria al defenderse de ${name(behind)}`, lap, events, 0.95);
+              if (guilty.status === "running")
+                givePenalty(guilty, rng.chance(0.3) ? 10 : 5, guilty === behind ? `provocar un choque con ${name(ahead)}` : `cambiar de trayectoria al defenderse de ${name(behind)}`, lap, events, Math.min(0.99, at + 0.05));
             }
-            events.push({
-              lap,
-              type: "mistake",
-              text: `💥 Contacto entre ${name(behind)} y ${name(ahead)}${sameTeam ? " (¡compañeros de equipo!)" : ""}: ${name(victim)} daña el alerón y pierde ${loss.toFixed(0)}s`,
-              drivers: [victim.id, other.id], // the damaged car first
-              at: +(0.2 + rng.next() * 0.7).toFixed(3),
-            });
+            if (retiredHere) {
+              order.splice(order.indexOf(retiredHere), 1);
+              i--;
+              break;
+            }
             if (behind.total >= ahead.total + MIN_GAP) break;
             continue;
           }

@@ -74,12 +74,12 @@ describe("manager controls", () => {
         s = editNextStop(s, c.id, { remove: true });
       });
       const end = simulateToEnd(s);
-      // the only exceptions: a puncture on worn-out tyres or a broken wing after contact force a stop
+      // the only exception: a puncture on worn-out tyres forces a stop
       const forced = (id: string) =>
         end.events.filter(
           (e) =>
             e.drivers[0] === id &&
-            ((e.type === "puncture" && e.lap < end.totalLaps) || (e.text.includes("alerón") && e.lap < end.totalLaps - 1)),
+            e.type === "puncture" && e.lap < end.totalLaps, // a broken wing does not send the player's car in by itself
         ).length;
       end.cars.filter((c) => c.controlled).forEach((c) => expect(c.stops).toBeLessThanOrEqual(forced(c.id)));
       end.cars.filter((c) => c.controlled && !forced(c.id)).forEach((c) => expect(c.stops).toBe(0));
@@ -256,5 +256,57 @@ describe("penalties", () => {
     expect(served + added).toBeLessThanOrEqual(given);
     expect(served).toBeGreaterThan(0);
     expect(added).toBeGreaterThan(0);
+  });
+});
+
+describe("contact and damage", () => {
+  it("contacts can damage one car, both, nobody, or put one out; the player decides when to change the wing", () => {
+    const kinds = { one: 0, both: 0, none: 0, out: 0 };
+    let playerDamagedLaps = 0;
+    for (let seed = 1; seed <= 150; seed++) {
+      let s = createRace(race, allEntries(), seed, { ...DEFAULT_SIM_CONFIG, incidents: 3 }, "williams");
+      while (!s.finished) {
+        const prev = s;
+        s = simulateLap(s);
+        for (const e of s.events.filter((x) => x.lap === s.lap)) {
+          if (e.text.includes("los dos dañan")) kinds.both++;
+          else if (e.type === "damage" && e.text.startsWith("💥")) kinds.one++;
+          else if (e.text.includes("sin daños")) kinds.none++;
+          else if (e.text.startsWith("💥 Choque entre")) kinds.out++;
+        }
+        // a damaged player car is never sent in automatically
+        for (const c of s.cars.filter((c) => c.controlled && c.damage && c.status === "running")) {
+          playerDamagedLaps++;
+          expect(c.pitRequest).toBeNull();
+          const before = prev.cars.find((x) => x.id === c.id)!;
+          if (before.damage) expect(c.pittedThisLap).toBe(false);
+        }
+      }
+      // the AI changes the wing at once (unless it happened right at the end)
+      for (const c of s.cars) if (c.status === "running" && c.damage && !c.controlled) expect(s.events.some((e) => e.type === "damage" && e.drivers.includes(c.id) && e.lap >= s.totalLaps - 2)).toBe(true);
+    }
+    expect(kinds.one).toBeGreaterThan(0);
+    expect(kinds.both).toBeGreaterThan(0);
+    expect(kinds.none).toBeGreaterThan(0);
+    expect(kinds.out).toBeGreaterThan(0);
+    expect(playerDamagedLaps).toBeGreaterThan(0);
+  });
+
+  it("tyres hardly wear behind the safety car", () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 60 && checked < 5; seed++) {
+      let s = createRace(race, allEntries(), seed);
+      while (!s.finished) {
+        const prev = s;
+        s = simulateLap(s);
+        if (!prev.safetyCar.active) continue;
+        for (const c of s.cars.filter((c) => c.status === "running" && !c.pittedThisLap)) {
+          const b = prev.cars.find((x) => x.id === c.id)!;
+          expect(c.tyreAge - b.tyreAge).toBeCloseTo(0.25, 5);
+        }
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(0);
   });
 });
