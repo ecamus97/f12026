@@ -30,6 +30,7 @@ import {
   startNewSeason,
   type FacilityKey,
   type ManagementState,
+  type DriverRecord,
   FIRST_SEASON,
   initPeople,
   staffRatings,
@@ -168,11 +169,18 @@ export interface GameState {
 }
 
 /** The weather of a weekend is decided in advance so every forecast is consistent. */
-export function weekendWeather(s: Pick<GameState, "seed" | "season">, raceIndex: number) {
+/** The track as the settings want it: more or less rain, more or less tyre wear. */
+export const tunedTrack = (track: Race["track"], cfg?: SimConfig): Race["track"] => ({
+  ...track,
+  rain: Math.min(0.95, (track.rain ?? 0.15) * (cfg?.rain ?? 1)),
+  deg: +(track.deg * (cfg?.tyreWear ?? 1)).toFixed(3),
+});
+
+export function weekendWeather(s: Pick<GameState, "seed" | "season"> & { simConfig?: SimConfig }, raceIndex: number) {
   const race = calendar()[raceIndex];
   if (!race) return null;
   const seed = (Math.imul(s.seed ^ (s.season * 2654435761), 1) + raceIndex * 40503) >>> 0;
-  return generateWeather(race.track, race.track.laps, seed);
+  return generateWeather(tunedTrack(race.track, s.simConfig), race.track.laps, seed);
 }
 
 /** Bump when the built-in team ratings change, so saved games pick them up for a new career. */
@@ -568,8 +576,9 @@ function openSprint(s: GameState): GameState {
   const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
   const grid = w.sprint.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
-  const weather = generateWeather(race.track, race.track.laps, ((w.weather?.seed ?? 1) ^ 0x51) >>> 0);
-  const rs = createRace(race, grid, randomSeed(), s.simConfig, s.playerTeamId, weather);
+  const tuned = { ...race, track: tunedTrack(race.track, s.simConfig) };
+  const weather = generateWeather(tuned.track, race.track.laps, ((w.weather?.seed ?? 1) ^ 0x51) >>> 0);
+  const rs = createRace(tuned, grid, randomSeed(), s.simConfig, s.playerTeamId, weather);
   const laps = race.track.laps;
   rs.cars = rs.cars.map((c, i) => {
     const wet = c.plan[0] && (c.plan[0].compound === "I" || c.plan[0].compound === "W");
@@ -588,7 +597,8 @@ function openRace(s: GameState): GameState {
   const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
   const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
-  const raceForRules = r.highDegTyres ? { ...race, track: { ...race.track, deg: +(race.track.deg * 1.2).toFixed(2) } } : race;
+  const tuned = { ...race, track: tunedTrack(race.track, s.simConfig) };
+  const raceForRules = r.highDegTyres ? { ...tuned, track: { ...tuned.track, deg: +(tuned.track.deg * 1.2).toFixed(2) } } : tuned;
   const rs = createRace(raceForRules, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather);
   rs.rules = { twoCompound: r.twoCompound, overtakeAid: r.overtakeAid, points: POINTS_TABLES[r.points], fastestLapPoint: r.fastestLapPoint };
   return { ...s, weekend: { ...w, race: rs } };
@@ -965,6 +975,12 @@ function simWeekendFull(s0: GameState): GameState {
   return finishRaceState(s);
 }
 
+export interface ConfigEdits {
+  simConfig: SimConfig;
+  teams: { id: string; name: string; hex: string; aero: number; powerUnit: number; chassis: number; reliability: number; pitCrew: number }[];
+  drivers: Record<string, Partial<Pick<DriverRecord, "name" | "shortName" | "number" | "nationality" | "pace" | "racecraft" | "defending" | "consistency" | "tyreMgmt" | "potential">>>;
+}
+
 export interface SimRun {
   target: number; // race index to stop at (that race is not played)
   from: number;
@@ -1035,7 +1051,7 @@ export function useGameState() {
   const chooseTeam = useCallback((teamId: string) => {
     setGameState((s) => {
       const people = initPeople(s.teamsData, randomSeed());
-      let management = { ...withStaff(initManagement(s.teamsData, teamId, randomSeed()), people), regs: regsOf(s.rules) };
+      let management = { ...withStaff(initManagement(s.teamsData, teamId, randomSeed()), people), regs: regsOf(s.rules), aiDevRate: s.simConfig.aiDev ?? 1 };
       if (management.player) management = { ...management, player: { ...management.player, salaryFund: totalPayroll(people, teamId) } };
       return withAgenda({
         ...s,
@@ -1442,7 +1458,43 @@ export function useGameState() {
   }, []);
 
   const updateSimConfig = useCallback((simConfig: SimConfig) => {
-    setGameState((s) => ({ ...s, simConfig }));
+    setGameState((s) => ({ ...s, simConfig, management: s.management ? { ...s.management, aiDevRate: simConfig.aiDev ?? 1 } : s.management }));
+  }, []);
+
+  /**
+   * Settings edits: team names/colours and car areas, driver ratings (the career's real records,
+   * so they survive transfers and new seasons) and the simulation options.
+   */
+  const applyConfig = useCallback((cfg: ConfigEdits) => {
+    setGameState((s) => {
+      let teamsData = s.teamsData.map((t) => {
+        const e = cfg.teams.find((x) => x.id === t.id);
+        return e ? { ...t, name: e.name, hex: e.hex } : t;
+      });
+      let management = s.management;
+      if (management) {
+        const dev = { ...management.dev };
+        for (const e of cfg.teams) if (dev[e.id]) dev[e.id] = { aero: e.aero, powerUnit: e.powerUnit, chassis: e.chassis, reliability: e.reliability, pitCrew: e.pitCrew };
+        management = { ...management, dev, aiDevRate: cfg.simConfig.aiDev ?? 1 };
+      } else {
+        teamsData = teamsData.map((t) => {
+          const e = cfg.teams.find((x) => x.id === t.id);
+          if (!e) return t;
+          return { ...t, aero: e.aero, powerUnit: e.powerUnit, chassis: e.chassis, reliability: e.reliability, pitCrew: e.pitCrew, pace: Math.round(carPace(e)) };
+        });
+      }
+      let people = s.people;
+      if (people) {
+        const drivers = { ...people.drivers };
+        for (const [id, patch] of Object.entries(cfg.drivers)) if (drivers[id]) drivers[id] = { ...drivers[id], ...patch };
+        people = { ...people, drivers };
+      } else {
+        teamsData = teamsData.map((t) => ({ ...t, drivers: t.drivers.map((d) => (cfg.drivers[d.id] ? { ...d, ...cfg.drivers[d.id] } : d)) }));
+      }
+      if (management) teamsData = applyDevToTeams(teamsData, management);
+      if (people) teamsData = applyLineups(teamsData, people);
+      return { ...s, simConfig: cfg.simConfig, teamsData, management, people };
+    });
   }, []);
 
   const updateTeamsData = useCallback((teamsData: Team[]) => {
@@ -1491,6 +1543,7 @@ export function useGameState() {
     resetSeason,
     updateSimConfig,
     updateTeamsData,
+    applyConfig,
     startProject,
     upgradeFacility,
     signSponsor,

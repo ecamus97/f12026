@@ -39,9 +39,10 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
   const handledStops = useRef(new Set<string>());
   const eventKey = (e: RaceEvent) => `${e.lap}-${e.type}-${e.text}`;
   const stopsRace = (e: RaceEvent, st: RaceState) =>
-    e.type === "sc" ||
+    st.config.pauseOnIncidents !== false &&
+    (e.type === "sc" ||
     e.type === "red" ||
-    ((e.type === "dnf" || e.type === "puncture") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId));
+      ((e.type === "dnf" || e.type === "puncture") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)));
   // after the last lap the cars cross the line and the chequered flag shows before the results
   const [resultsReady, setResultsReady] = useState(state.finished);
   useEffect(() => {
@@ -141,7 +142,9 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
       const next = anim.to;
       const fresh = next.events.slice(state.events.length);
       // incidents pause the race the moment they happen (see below); the weather only at the end of the lap
-      const pause = fresh.some((e) => e.type === "weather" || (stopsRace(e, next) && !handledStops.current.has(eventKey(e))));
+      const pause = fresh.some(
+        (e) => (e.type === "weather" && next.config.pauseOnIncidents !== false) || (stopsRace(e, next) && !handledStops.current.has(eventKey(e))),
+      );
       if (pause || next.finished) setPlaying(false);
       setAnim(null);
       onUpdate(next);

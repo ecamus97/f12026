@@ -180,6 +180,7 @@ export interface ManagementState {
   staffRatings?: Record<string, { tp: number; td: number; aero?: number; pu?: number; sport?: number; race?: number; reserve?: number }>; // staff per team
   regs?: { budgetCap: number | null; puFreeze: boolean; flatPrize: boolean }; // regulations that affect development and money
   lastAiPackages?: { teamId: string; area: DevArea; gain: number }[]; // big upgrades of the last round
+  aiDevRate?: number; // difficulty: how fast the AI teams develop (1 = normal)
 }
 
 /** R&D + facilities spent this season (the ledger restarts every season). */
@@ -486,7 +487,7 @@ function developAi(m: ManagementState, teams: Team[], rng: Rng): { dev: Record<s
     if (!d) continue;
     const cap = m.regs?.budgetCap;
     const budget = Math.min(m.aiBudget[t.id] ?? 40, cap ? cap * 0.8 : Infinity);
-    const budgetFactor = Math.max(0.6, budget / 45);
+    const budgetFactor = Math.max(0.6, budget / 45) * (m.aiDevRate ?? 1);
     const behind = best > worst ? (best - carPace(d)) / (best - worst) : 0; // 0 = leader, 1 = last
     const areas = (["aero", "powerUnit", "chassis"] as DevArea[]).filter((a) => !(a === "powerUnit" && m.regs?.puFreeze));
     let next = d;

@@ -146,9 +146,11 @@ export default function F1Game() {
   const config = (
     <ConfigDialog
       simConfig={gameState.simConfig}
-      onSimConfigChange={game.updateSimConfig}
       teamsData={gameState.teamsData}
-      onTeamsDataChange={game.updateTeamsData}
+      management={gameState.management}
+      people={gameState.people}
+      season={gameState.season}
+      onSave={game.applyConfig}
     />
   );
 

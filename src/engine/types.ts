@@ -14,12 +14,20 @@ export interface SimConfig {
   randomness: number; // 0.5 - 1.5 multiplier on lap-time noise
   incidents: number; // 0 - 2 multiplier on DNFs / mistakes
   safetyCar: boolean;
+  rain?: number; // 0 - 2 multiplier on the chance of rain
+  tyreWear?: number; // 0.7 - 1.5 multiplier on tyre degradation
+  aiDev?: number; // 0.5 - 1.5 multiplier on the AI teams' development
+  pauseOnIncidents?: boolean; // stop the race for safety cars and your cars' problems
 }
 
 export const DEFAULT_SIM_CONFIG: SimConfig = {
   randomness: 1,
   incidents: 1,
   safetyCar: true,
+  rain: 1,
+  tyreWear: 1,
+  aiDev: 1,
+  pauseOnIncidents: true,
 };
 
 export interface Stint {
