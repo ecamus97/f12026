@@ -181,6 +181,7 @@ export interface ManagementState {
   regs?: { budgetCap: number | null; puFreeze: boolean; flatPrize: boolean }; // regulations that affect development and money
   lastAiPackages?: { teamId: string; area: DevArea; gain: number }[]; // big upgrades of the last round
   aiDevRate?: number; // difficulty: how fast the AI teams develop (1 = normal)
+  champOrder?: string[]; // constructors' championship order (current season; last season's final order before the first race)
 }
 
 /** R&D + facilities spent this season (the ledger restarts every season). */
@@ -269,8 +270,8 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
   const used = new Set<string>();
   const offers = pt
     ? [
-        ...generateOffers(rng, { slot: "principal", count: 3, pace: pt.pace, carRank, racesLeftInSeason: calendar().length, usedNames: used, uidStart: 1 }),
-        ...generateOffers(rng, { slot: "secundario", count: 4, pace: pt.pace, carRank, racesLeftInSeason: calendar().length, usedNames: used, uidStart: 10 }),
+        ...generateOffers(rng, { slot: "principal", count: 3, champRank: carRank, racesLeftInSeason: calendar().length, usedNames: used, uidStart: 1 }),
+        ...generateOffers(rng, { slot: "secundario", count: 4, champRank: carRank, racesLeftInSeason: calendar().length, usedNames: used, uidStart: 10 }),
       ]
     : [];
   return {
@@ -417,12 +418,21 @@ export function carRankOf(m: ManagementState, teamId: string) {
   return 1 + ids.filter((id) => carPace(m.dev[id]) > carPace(m.dev[teamId])).length;
 }
 
+/**
+ * Position in the constructors' championship (1 = leader): what sponsors and the commercial rights look at.
+ * Before any standings exist (first race of a new game) the car's level stands in.
+ */
+export function champRankOf(m: ManagementState, teamId: string) {
+  const i = m.champOrder?.indexOf(teamId) ?? -1;
+  return i >= 0 ? i + 1 : carRankOf(m, teamId);
+}
+
 export function canSignSponsor(m: ManagementState, offerId: string): string | null {
   const p = m.player;
   const o = p?.offers.find((x) => x.id === offerId);
   if (!p || !o) return "Oferta no disponible";
   if (p.sponsors.filter((s) => s.slot === o.slot).length >= SLOT_INFO[o.slot].count) return "Espacio ocupado";
-  if (o.minRank !== null && carRankOf(m, p.teamId) > o.minRank) return `Requiere auto top ${o.minRank}`;
+  if (o.minRank !== null && champRankOf(m, p.teamId) > o.minRank) return `Requiere ser top ${o.minRank} en constructores`;
   return null;
 }
 
@@ -445,13 +455,12 @@ export function signSponsor(m: ManagementState, offerId: string, round: number):
 }
 
 function refreshSlotOffers(m: ManagementState, p: PlayerEconomy, slot: SponsorSlot, round: number, rng: Rng, teams: Team[]): PlayerEconomy {
-  const team = teams.find((t) => t.id === p.teamId)!;
+  void teams;
   const used = new Set([...p.sponsors.map((s) => s.name), ...p.offers.map((s) => s.name)]);
   const fresh = generateOffers(rng, {
     slot,
     count: slot === "principal" ? 3 : 4,
-    pace: team.pace,
-    carRank: carRankOf(m, p.teamId),
+    champRank: champRankOf(m, p.teamId),
     racesLeftInSeason: Math.max(1, calendar().length - round),
     usedNames: used,
     uidStart: m.nextUid + round * 20 + (slot === "principal" ? 0 : 10),
@@ -520,7 +529,9 @@ export function processRaceWeekend(
   round: number,
   pole?: string,
   payrollPerSeason?: number,
+  constructorsOrder?: string[],
 ): ManagementState {
+  if (constructorsOrder?.length) m = { ...m, champOrder: constructorsOrder };
   const rng = createRng(m.rngState);
   const inbox: InboxMessage[] = [];
   const ai = developAi(m, teams, rng);
@@ -540,7 +551,7 @@ export function processRaceWeekend(
       dnfs: dnfs.length,
     };
     const ledger: LedgerEntry[] = [];
-    ledger.push({ race: round, concept: "Derechos comerciales y TV", amount: tvRights(carRankOf(m, player.teamId)), category: "tv" });
+    ledger.push({ race: round, concept: "Derechos comerciales y TV", amount: tvRights(champRankOf(m, player.teamId)), category: "tv" });
     // sponsors pay and count down
     const sponsors: SponsorDeal[] = [];
     const expiredSlots = new Set<SponsorSlot>();
@@ -642,7 +653,7 @@ export function processRaceWeekend(
 export function baseRaceBalance(m: ManagementState, round: number, payrollPerSeason = 0) {
   const p = m.player!;
   const n = calendar().length;
-  const income = tvRights(carRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0);
+  const income = tvRights(champRankOf(m, p.teamId)) + p.sponsors.reduce((a, s) => a + s.base, 0);
   return { income, costs: raceRunningCost(Math.max(1, round)) + payrollPerSeason / n };
 }
 
@@ -705,7 +716,7 @@ export function startNewSeason(m: ManagementState, teams: Team[], constructorsOr
   for (const id of ids) aiBudget[id] = startBudget(carPace(dev[id])) + Math.round(constructorsPrize(posOf(id), m.regs?.flatPrize) * 0.3);
   let player = m.player;
   const inbox: InboxMessage[] = [{ race: 0, tone: "info", text: `Comienza la temporada ${season}. Las diferencias entre autos se reducen un poco con la estabilidad del reglamento.` }];
-  let nm: ManagementState = { ...m, dev, aiBudget, nextUid: m.nextUid + 1000 };
+  let nm: ManagementState = { ...m, dev, aiBudget, nextUid: m.nextUid + 1000, champOrder: constructorsOrder };
   if (player) {
     const pos = posOf(player.teamId);
     const prize = constructorsPrize(pos, m.regs?.flatPrize);

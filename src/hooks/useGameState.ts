@@ -662,7 +662,8 @@ function finishRaceState(s: GameState): GameState {
   };
   const round = w.raceIndex + 1;
   const pay = s.people && s.playerTeamId ? totalPayroll(s.people, s.playerTeamId) : undefined;
-  let management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, round, result.pole, pay) : null;
+  const champOrder = computeStandings(s.teamsData, [...s.results, result]).teams.map((t) => t.teamId);
+  let management = s.management ? processRaceWeekend(s.management, s.teamsData, result.rows, round, result.pole, pay, champOrder) : null;
   // contract reminders
   if (management && s.people && s.playerTeamId && (round === 1 || round === 12 || round === 20)) {
     const ending = lineup(s.people, s.playerTeamId)

@@ -18,7 +18,7 @@ export interface SponsorDeal {
   perDnf: number; // penalty (negative) per retirement
   duration: number; // races
   racesLeft: number;
-  minRank: number | null; // car must be at least this rank (1 = best) to sign
+  minRank: number | null; // team must be at least this high in the constructors' championship to sign
   earned: number; // total paid so far
 }
 
@@ -31,7 +31,7 @@ export const STYLE_INFO: Record<SponsorStyle, { label: string; desc: string }> =
   estable: { label: "Estable", desc: "Pago fijo alto, sin bonos." },
   rendimiento: { label: "Por rendimiento", desc: "Pago fijo bajo, grandes bonos por puntos, podios y victorias." },
   firma: { label: "Prima de firma", desc: "Gran pago al firmar y contrato largo, pero multa por abandonos." },
-  premium: { label: "Premium", desc: "El que más paga, pero exige un auto competitivo y penaliza abandonos." },
+  premium: { label: "Premium", desc: "El que más paga, pero exige mantenerse arriba en el campeonato de constructores y penaliza abandonos." },
 };
 
 const NAMES = [
@@ -41,20 +41,20 @@ const NAMES = [
   "Saffron Foods", "Helios Solar", "Vantage Software", "Riviera Resorts",
 ];
 
-/** Reference per-race value of a principal sponsor for a given car rating. */
-export const sponsorReference = (pace: number) => Math.max(0.6, 0.8 + (pace - 78) * 0.05);
+/** Reference per-race value of a principal sponsor by constructors' championship position (1 = leader). */
+export const sponsorReference = (champRank: number) => +(1.75 - (Math.min(11, Math.max(1, champRank)) - 1) * 0.075).toFixed(3);
 
-/** TV / commercial rights from the sport, by car rank (1 = best). */
+/** TV / commercial rights from the sport, by constructors' championship position (1 = leader). */
 export const tvRights = (carRank: number) => +(2.6 + (11 - Math.min(11, carRank)) * 0.13).toFixed(2);
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 
 export function generateOffers(
   rng: Rng,
-  opts: { slot: SponsorSlot; count: number; pace: number; carRank: number; racesLeftInSeason: number; usedNames: Set<string>; uidStart: number },
+  opts: { slot: SponsorSlot; count: number; champRank: number; racesLeftInSeason: number; usedNames: Set<string>; uidStart: number },
 ): SponsorDeal[] {
-  const { slot, count, pace, carRank, racesLeftInSeason, usedNames } = opts;
-  const R = sponsorReference(pace) * (slot === "principal" ? 1 : 0.3);
+  const { slot, count, champRank, racesLeftInSeason, usedNames } = opts;
+  const R = sponsorReference(champRank) * (slot === "principal" ? 1 : 0.3);
   const k = R / 1.9; // bonus scale
   const styles: SponsorStyle[] = ["estable", "rendimiento", "firma", "premium"];
   const out: SponsorDeal[] = [];
@@ -86,7 +86,7 @@ export function generateOffers(
         break;
       case "premium":
       default:
-        d = { ...base, base: R * 1.45 * v, signing: R * v, perDnf: -0.6 * k, minRank: Math.max(1, carRank - rng.int(0, 2)), duration: dur(6, 10) };
+        d = { ...base, base: R * 1.45 * v, signing: R * v, perDnf: -0.6 * k, minRank: Math.max(1, champRank - rng.int(0, 2)), duration: dur(6, 10) };
         break;
     }
     out.push({

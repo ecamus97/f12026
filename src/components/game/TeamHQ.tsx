@@ -8,7 +8,7 @@ import {
   AREA_INFO, CATEGORY_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, SLOT_INFO, STYLE_INFO,
   areaRanks, baseRaceBalance, isInvestment, ledgerCategory, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
   expectedPerRace, facilityUpgradeCost, facilityBuildRaces, maxProjects, projectRaces, successChance, payroll,
-  seasonInvestment, constructorsPrize, carRankOf,
+  seasonInvestment, constructorsPrize, carRankOf, champRankOf,
   type PeopleState,
   type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot,
 } from "@/engine";
@@ -404,7 +404,7 @@ function SeasonOutlook({ management, round, payrollYear }: { management: Managem
   const income = Math.max(0, incPer * left);
   const costs = costPer * left;
   const end = p.budget + income - costs;
-  const rank = carRankOf(management, p.teamId);
+  const rank = champRankOf(management, p.teamId);
   const prize = constructorsPrize(rank, management.regs?.flatPrize);
   const row = (label: string, value: number, hint?: string, strong = false) => (
     <div className={cn("flex justify-between items-baseline gap-3 text-sm", strong && "border-t border-border pt-2")}>
@@ -433,7 +433,7 @@ function SeasonOutlook({ management, round, payrollYear }: { management: Managem
       <div className="flex justify-between items-baseline gap-3 text-sm pt-1">
         <span className="text-muted-foreground">
           Premio de constructores esperado
-          <span className="block text-[11px]">Con el auto P{rank} de la parrilla; se cobra al empezar la próxima temporada</span>
+          <span className="block text-[11px]">Si terminas P{rank} en constructores (posición actual); se cobra al empezar la próxima temporada</span>
         </span>
         <span className="font-mono text-emerald-300">+{prize} M</span>
       </div>
@@ -603,7 +603,8 @@ function Sponsors({ management, onSignSponsor }: { management: ManagementState; 
         <h3 className="font-display text-lg">Patrocinadores</h3>
         <p className="text-[11px] text-muted-foreground">
           1 principal y 2 secundarios. Cada contrato tiene un estilo distinto: pago fijo, bonos por resultado, prima de firma o
-          exigencias de rendimiento. Llegan ofertas nuevas cada 6 carreras o cuando termina un contrato.
+          exigencias de rendimiento. Lo que ofrecen depende de tu posición en el campeonato de constructores (ahora
+          P{champRankOf(management, p.teamId)}). Llegan ofertas nuevas cada 6 carreras o cuando termina un contrato.
         </p>
       </div>
 
@@ -666,7 +667,7 @@ function SponsorCard({ s, signed, blocked, onSign }: { s: SponsorDeal; signed?: 
           </span>
         ))}
         {s.perDnf < 0 && <span className="rounded bg-red-500/15 text-red-300 px-1.5 py-0.5">Multa {s.perDnf.toFixed(2)} M por abandono</span>}
-        {s.minRank !== null && <span className="rounded bg-yellow-500/15 text-yellow-300 px-1.5 py-0.5">Requiere auto top {s.minRank}</span>}
+        {s.minRank !== null && <span className="rounded bg-yellow-500/15 text-yellow-300 px-1.5 py-0.5">Requiere top {s.minRank} en constructores</span>}
       </div>
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>

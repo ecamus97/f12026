@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { races2026, teams as baseTeams } from "@/data/f1Data";
 import {
   applyDevToTeams, canStartProject, carPace, classify, createRace, initManagement, processRaceWeekend,
-  PROJECTS, canSignSponsor, signSponsor, runQualifying, simulateToEnd, startProject, upgradeFacility, type ManagementState,
+  PROJECTS, canSignSponsor, signSponsor, runQualifying, simulateToEnd, startProject, upgradeFacility, champRankOf, type ManagementState,
 } from "..";
 import { entriesFromTeamsForTest } from "./helpers";
 
@@ -74,5 +74,22 @@ describe("sponsors", () => {
     const r = season("haas", "idle", 2);
     expect(r.m.history.length).toBe(races2026.length + 1);
     expect(r.m.player!.ledger.some((l) => l.category === "tv")).toBe(true);
+  });
+});
+
+describe("sponsors follow the constructors' championship", () => {
+  it("offers more to a team leading the championship than to one at the back, whatever its car", () => {
+    const m0 = initManagement(baseTeams, "haas", 3);
+    const ids = baseTeams.map((t) => t.id);
+    const leading = ["haas", ...ids.filter((id) => id !== "haas")];
+    const last = [...ids.filter((id) => id !== "haas"), "haas"];
+    // round 6 refreshes every slot
+    const rows = classify(simulateToEnd(createRace(races2026[0], entriesFromTeamsForTest(baseTeams), 3)));
+    const top = processRaceWeekend(m0, baseTeams, rows, 6, undefined, undefined, leading);
+    const bottom = processRaceWeekend(m0, baseTeams, rows, 6, undefined, undefined, last);
+    expect(champRankOf(top, "haas")).toBe(1);
+    expect(champRankOf(bottom, "haas")).toBe(ids.length);
+    const principal = (m: ManagementState) => m.player!.offers.filter((x) => x.slot === "principal").reduce((a, x) => a + x.base, 0);
+    expect(principal(top)).toBeGreaterThan(principal(bottom) * 1.3);
   });
 });
