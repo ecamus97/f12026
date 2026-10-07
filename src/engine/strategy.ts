@@ -2,7 +2,7 @@
 import type { Track } from "@/data/f1Data";
 import type { Rng } from "./rng";
 import type { CarState, Compound, Stint } from "./types";
-import { bestTyreFor, DRY_COMPOUNDS, isWetTyre, raceLapTime, tyreLife } from "./model";
+import { bestTyreFor, DRY_COMPOUNDS, isWetTyre, raceLapTime, tyreLife, wetPenalty } from "./model";
 import type { Entry } from "./types";
 import { DEFAULT_SIM_CONFIG } from "./types";
 
@@ -122,11 +122,19 @@ export const planLabel = (plan: Stint[]) =>
   `${plan.map((s) => s.compound).join("→")} · ${plan.length - 1} parada${plan.length === 2 ? "" : "s"}`;
 
 /** Best plan for each tyre sequence (1 and 2 stops), sorted by expected time. */
-export function recommendPlans(entry: Entry, track: Track, max = 4): PlanOption[] {
+export function recommendPlans(entry: Entry, track: Track, max = 4, noStopAllowed = false): PlanOption[] {
   const C = DRY_COMPOUNDS;
   const laps = track.laps;
   const options: PlanOption[] = [];
   const minStint = 5;
+
+  // no stop at all (sprints, or when two compounds aren't compulsory)
+  if (noStopAllowed) {
+    for (const a of C) {
+      const plan = [{ compound: a, untilLap: laps }];
+      options.push({ plan, time: estimatePlanTime(entry, track, plan), label: planLabel(plan) });
+    }
+  }
 
   // one stop
   for (const a of C) for (const b of C) {
@@ -207,16 +215,39 @@ export function replan(fitted: Compound, lap: number, totalLaps: number, track: 
  * `wetSoon` is what the team's radar expects for the next laps. Each driver reacts
  * a little differently (`jitter` in [-1, 1]).
  */
-export function aiWeatherPit(car: CarState, wetNow: number, wetSoon: number, lapsLeft: number, track: Track, jitter: number): Compound | null {
+export function aiWeatherPit(
+  car: CarState,
+  wet: number[], // track wetness per lap (what the team's weather service expects)
+  lap: number, // lap just completed
+  lapsLeft: number,
+  track: Track,
+  jitter: number, // -1..1: each team reads the forecast a little differently
+  scActive = false,
+): Compound | null {
   if (lapsLeft <= 2) return null;
-  const target = bestTyreFor(wetNow * 0.5 + wetSoon * 0.5 + jitter * 0.04);
-  const onWet = isWetTyre(car.compound);
-  if (!onWet && target !== "slick") return target;
-  if (onWet && target === "slick") return dryCompoundFor(lapsLeft, track, car.entry.driver.tyreMgmt);
-  if (onWet && target !== "slick" && target !== car.compound) {
-    // only swap between inters and wets when clearly worth it
-    if (target === "W" && wetNow > 0.68) return "W";
-    if (target === "I" && wetNow < 0.55) return "I";
+  // look ahead over the next laps: stopping only pays if the tyre is clearly better until the
+  // conditions change again, by more than the time lost in the pit lane
+  const horizon = Math.min(lapsLeft, 12);
+  const ahead = Array.from({ length: horizon }, (_, k) => Math.max(0, Math.min(1, (wet[Math.min(lap + k, wet.length - 1)] ?? 0) * (1 + jitter * 0.12))));
+  const costOver = (c: Compound) => ahead.reduce((a, w) => a + wetPenalty(c, w), 0);
+  const dry = dryCompoundFor(lapsLeft, track, car.entry.driver.tyreMgmt);
+  const options: Compound[] = [dry, "I", "W"];
+  const stay = costOver(car.compound);
+  const pitLoss = track.pitLoss * (scActive ? 0.55 : 1) + 2.5;
+  let best: Compound | null = null;
+  let bestGain = 0;
+  for (const c of options) {
+    const same = c === car.compound || (!isWetTyre(c) && !isWetTyre(car.compound));
+    if (same) continue;
+    // and only once the new tyre is already the quicker one: no point fitting it laps too early
+    const soon = ahead.slice(0, 2);
+    if (!soon.some((w) => wetPenalty(c, w) < wetPenalty(car.compound, w))) continue;
+    const gain = stay - costOver(c) - pitLoss;
+    if (gain > bestGain) {
+      best = c;
+      bestGain = gain;
+    }
   }
-  return null;
+  // a margin so they don't flip-flop on small differences
+  return bestGain > 3 + pitLoss * 0.25 ? best : null;
 }

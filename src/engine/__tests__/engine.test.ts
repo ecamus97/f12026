@@ -171,4 +171,14 @@ describe("sectors", () => {
       }
     }
   });
+
+  it("AI keeps rain tyres through a short dry spell instead of flip-flopping", () => {
+    const r = races2026[3];
+    const L = r.track.laps;
+    const s0 = createRace(r, allEntries(), 3);
+    const wet = Array.from({ length: L + 1 }, (_, i) => (i < 10 ? 0 : i < 22 ? 0.45 : i < 26 ? 0.12 : i < 40 ? 0.45 : 0));
+    const end = simulateToEnd({ ...s0, weather: { ...s0.weather!, wet, rain: wet.map((w) => (w > 0.3 ? 0.5 : 0)) } });
+    const avgStops = end.cars.reduce((a, c) => a + c.stops, 0) / end.cars.length;
+    expect(avgStops).toBeLessThan(3);
+  });
 });

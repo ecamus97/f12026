@@ -36,7 +36,8 @@ export function StrategyPlanner({ state, cars, onApply }: Props) {
 function CarPlanner({ car, state, onApply }: { car: CarState; state: RaceState; onApply: Props["onApply"] }) {
   const track = state.track;
   const laps = state.totalLaps;
-  const options = useMemo(() => recommendPlans(car.entry, track, 4), [car.entry, track]);
+  const twoRule = state.rules?.twoCompound !== false;
+  const options = useMemo(() => recommendPlans(car.entry, track, 4, !twoRule), [car.entry, track, twoRule]);
   const best = options[0]?.time ?? 0;
   const plan = car.plan;
   const current = estimatePlanTime(car.entry, track, plan);
@@ -163,7 +164,7 @@ function CarPlanner({ car, state, onApply }: { car: CarState; state: RaceState; 
         )}
       </div>
 
-      {!twoCompounds && (
+      {twoRule && !twoCompounds && (
         <div className="flex items-center gap-1 text-[11px] text-orange-400">
           <AlertTriangle className="w-3 h-3" /> Debe usar al menos 2 compuestos distintos o recibe 30 s de penalización.
         </div>

@@ -327,7 +327,7 @@ export function simulateLap(prev: RaceState): RaceState {
     if (lap < state.totalLaps) {
       const jitter = ((car.id.charCodeAt(0) * 31 + car.id.charCodeAt(1) * 7 + lap) % 21) / 10 - 1;
       const weatherCall =
-        !car.controlled && wx ? aiWeatherPit(car, wetEnd, wetSoon, state.totalLaps - lap, track, jitter) : null;
+        !car.controlled && wx ? aiWeatherPit(car, wx.wet, lap, state.totalLaps - lap, track, jitter, scLap) : null;
       const call = car.pitRequest ?? weatherCall ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
       if (call) {
         const manual = !!car.pitRequest;
