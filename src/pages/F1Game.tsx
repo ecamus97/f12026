@@ -13,6 +13,7 @@ import { RaceCard } from "@/components/RaceCard";
 import { DriverChampionshipTable, TeamChampionshipTable } from "@/components/ChampionshipTables";
 import { ProfileDialog, type ProfileTarget, type SeasonData } from "@/components/game/Profiles";
 import { ConfigDialog } from "@/components/ConfigDialog";
+import { SavesDialog } from "@/components/SavesDialog";
 import { TeamSelect } from "@/components/game/TeamSelect";
 import { QualifyingView } from "@/components/game/QualifyingView";
 import { RaceView } from "@/components/game/RaceView";
@@ -154,6 +155,17 @@ export default function F1Game() {
     />
   );
 
+  const saves = (
+    <SavesDialog
+      game={gameState}
+      onLoad={(raw) => {
+        const ok = game.loadGame(raw);
+        if (ok) setScreen("home");
+        return ok;
+      }}
+    />
+  );
+
   // ---- No team yet: full-screen team selection ----------------------------------
   if (!playerTeam) {
     return (
@@ -163,7 +175,7 @@ export default function F1Game() {
             <span className="font-display text-2xl">
               F1 <span className="text-primary">Manager</span>
             </span>
-            <div className="flex items-center gap-1">{config}</div>
+            <div className="flex items-center gap-1">{saves}{config}</div>
           </div>
         </header>
         <main className="max-w-7xl mx-auto px-4 py-8 space-y-8">
@@ -246,6 +258,7 @@ export default function F1Game() {
             </div>
           )}
           <div className={cn("flex items-center gap-1", !focusMode && "px-1")}>
+            {saves}
             {config}
             {resetDialog(
               <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive" title="Nueva partida">
@@ -282,7 +295,7 @@ export default function F1Game() {
                   <span className="hidden sm:inline">{weekend ? "Volver al" : "Ir al"} GP</span> {currentRace.flag}
                 </Button>
               )}
-              <div className="lg:hidden flex items-center">{config}</div>
+              <div className="lg:hidden flex items-center">{saves}{config}</div>
             </div>
           </div>
         </header>

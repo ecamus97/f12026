@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { races2026, teams as defaultTeams, teamInfo, type Race, type Team } from "@/data/f1Data";
 import { calendar, setActiveCalendar, SPRINTS_2026, datesForSeason } from "@/data/calendar";
+import { autoBackup, getSave, mirrorCurrent } from "@/lib/saves";
 import {
   classify,
   type ClassifiedRow,
@@ -98,6 +99,7 @@ import {
 } from "@/engine";
 
 const STORAGE_KEY = "f1-manager-2026-v2";
+const IN_IDB_KEY = "f1-manager-2026-in-idb"; // the game didn't fit in localStorage: it lives in IndexedDB
 
 export interface NegotiationAnswer {
   ok: boolean;
@@ -343,8 +345,23 @@ function loadState(): GameState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return initialState();
-    const parsed = JSON.parse(raw) as GameState;
-    if (parsed?.version !== 2 || !Array.isArray(parsed.teamsData)) return initialState();
+    return hydrate(JSON.parse(raw)) ?? initialState();
+  } catch {
+    return initialState();
+  }
+}
+
+/** Is this a saved game of this app (any data version we can migrate)? */
+export function isGameState(x: unknown): x is GameState {
+  const o = x as GameState | null;
+  return !!o && typeof o === "object" && o.version === 2 && Array.isArray(o.teamsData);
+}
+
+/** A saved game made ready to play: older saves are migrated to the current format. */
+export function hydrate(raw: unknown): GameState | null {
+  if (!isGameState(raw)) return null;
+  const parsed = structuredClone(raw);
+  try {
     const state = { ...initialState(), ...parsed };
     // a career not started yet uses the current built-in ratings
     if (parsed.teamsVersion !== TEAMS_VERSION && !parsed.playerTeamId) {
@@ -401,7 +418,7 @@ function loadState(): GameState {
     }
     return withAgenda(state);
   } catch {
-    return initialState();
+    return null;
   }
 }
 
@@ -1105,11 +1122,63 @@ export function useGameState() {
     saveTimer.current = window.setTimeout(() => {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(gameState));
+        localStorage.removeItem(IN_IDB_KEY);
       } catch {
-        /* storage unavailable: game keeps working in memory */
+        // localStorage full or unavailable: keep the game in IndexedDB instead
+        mirrorCurrent(gameState)
+          .then(() => {
+            try {
+              localStorage.setItem(IN_IDB_KEY, "1");
+            } catch {
+              /* nothing else we can do */
+            }
+          })
+          .catch(() => undefined);
       }
     }, 400);
   }, [gameState]);
+
+  // a game too big for localStorage comes back from IndexedDB
+  useEffect(() => {
+    let flagged = false;
+    try {
+      flagged = !!localStorage.getItem(IN_IDB_KEY);
+    } catch {
+      flagged = true;
+    }
+    if (!flagged) return;
+    getSave("current")
+      .then((rec) => {
+        const st = rec ? hydrate(JSON.parse(rec.data)) : null;
+        if (st) setGameState(st);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  // automatic backup after every race weekend and at the start of each season
+  const backupKey = `${gameState.playerTeamId}-${gameState.season}-${gameState.results.length}`;
+  const lastBackupKey = useRef(backupKey);
+  useEffect(() => {
+    if (lastBackupKey.current === backupKey) return;
+    lastBackupKey.current = backupKey;
+    const s = stateRef.current;
+    if (!s.playerTeamId) return;
+    const n = s.results.length;
+    const race = n > 0 ? calendar()[n - 1] : null;
+    const reason = race ? `Tras ${race.name} (R${n})` : `Inicio de temporada ${s.season}`;
+    autoBackup(s, reason).catch(() => undefined);
+  }, [backupKey]);
+
+  /** Replace the game with a saved one (a copy of the current game is kept first). */
+  const loadGame = useCallback((raw: unknown): boolean => {
+    const next = hydrate(raw);
+    if (!next) return false;
+    autoBackup(stateRef.current, "Antes de cargar otra partida").catch(() => undefined);
+    lastBackupKey.current = `${next.playerTeamId}-${next.season}-${next.results.length}`;
+    setSimRun(null);
+    setGameState(next);
+    return true;
+  }, []);
 
   const standings = useMemo(
     () => computeStandings(gameState.teamsData, gameState.results),
@@ -1542,6 +1611,7 @@ export function useGameState() {
   }, []);
 
   const resetSeason = useCallback(() => {
+    autoBackup(stateRef.current, "Antes de una partida nueva").catch(() => undefined);
     // a new game starts from the current built-in ratings unless the teams were edited for this data version
     setGameState((s) => initialState(s.teamsVersion === TEAMS_VERSION ? s.baseTeams ?? s.teamsData : defaultTeams, s.simConfig));
   }, []);
@@ -1631,6 +1701,7 @@ export function useGameState() {
     finishRace,
     startNextSeason,
     resetSeason,
+    loadGame,
     updateSimConfig,
     updateTeamsData,
     applyConfig,
