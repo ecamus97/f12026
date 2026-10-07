@@ -194,6 +194,8 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
     markers = target.cars
       .filter((c) => c.status === "running")
       .map((c) => ({ car: c, frac: prog[c.id].frac, pos: target.cars.indexOf(c) + 1, inPit: prog[c.id].inPit }));
+    // live positions: who is ahead on track right now (not the order at the end of the lap)
+    if (anim) [...markers].sort((a, b) => b.frac - a.frac).forEach((m, i) => (m.pos = i + 1));
   }
 
   const centre: [number, number] = [shape.width / 2, shape.height / 2];

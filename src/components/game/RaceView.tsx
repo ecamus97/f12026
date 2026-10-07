@@ -95,7 +95,12 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
               : gapToLeader(state, car, leader),
       }));
     }
-    const lapTime = (id: string) => Math.max(1, (liveCars.get(id)?.total ?? 0) - (anim.from[id] ?? 0));
+    // one reference lap for everyone (the leader's lap without pit stops), so gaps follow the order on track
+    const refLap = (() => {
+      const lead = anim.to.cars.find((c) => c.status === "running");
+      return Math.max(1, lead?.lastLap ?? 90); // lastLap never includes the pit stop
+    })();
+    const lapTime = (_id: string) => refLap;
     const isRunning = (c: CarState) => liveCars.get(c.id)?.status === "running";
     const running = state.cars.filter(isRunning).sort((a, b) => progress[b.id] - progress[a.id]);
     const out = state.cars.filter((c) => !isRunning(c)).map((c) => liveCars.get(c.id) ?? c);
