@@ -10,8 +10,14 @@ import {
   createRace,
   DEFAULT_SIM_CONFIG,
   randomSeed,
-  runQualifying,
   generateWeather,
+  generateDayWeather,
+  startQualifying,
+  finishQualifying,
+  nextSession,
+  type DayWeather,
+  type QualiCtx,
+  type QualiLive,
   type Entry,
   type QualifyingResult,
   type RaceState,
@@ -103,6 +109,8 @@ export interface NegotiationAnswer {
 export interface SprintWeekend {
   quali: QualifyingResult;
   qualiRevealed: number;
+  qualiLive?: QualiLive | null; // session in progress
+  qualiWeather?: DayWeather; // Friday
   race: RaceState | null;
   rows?: ClassifiedRow[]; // set when the sprint is over
 }
@@ -119,7 +127,9 @@ export interface Weekend {
   sprint?: SprintWeekend;
   raceIndex: number;
   quali: QualifyingResult;
-  qualiRevealed: number; // sessions shown to the player (0-3)
+  qualiRevealed: number; // completed sessions (0-3)
+  qualiLive?: QualiLive | null; // session in progress
+  qualiWeather?: DayWeather; // Saturday
   race: RaceState | null;
   weather?: WeatherTimeline; // Sunday's real weather (the player only sees the forecast)
 }
@@ -181,6 +191,51 @@ export function weekendWeather(s: Pick<GameState, "seed" | "season"> & { simConf
   if (!race) return null;
   const seed = (Math.imul(s.seed ^ (s.season * 2654435761), 1) + raceIndex * 40503) >>> 0;
   return generateWeather(tunedTrack(race.track, s.simConfig), race.track.laps, seed);
+}
+
+/** Weather of the qualifying days: Friday (sprint qualifying, sprint weekends only) and Saturday. */
+export function qualiDays(s: Pick<GameState, "seed" | "season" | "sprints"> & { simConfig?: SimConfig }, raceIndex: number) {
+  const race = calendar()[raceIndex];
+  const w = weekendWeather(s, raceIndex);
+  if (!race || !w) return null;
+  const track = tunedTrack(race.track, s.simConfig);
+  const rainy = w.rain.some((r) => r > 0.05);
+  return {
+    fri: s.sprints.includes(race.id) ? generateDayWeather(track, (w.seed ^ 0x7f1) >>> 0, rainy) : undefined,
+    sat: generateDayWeather(track, (w.seed ^ 0x9a1) >>> 0, rainy),
+  };
+}
+
+/** Everything the qualifying engine needs for the session being run (sprint or Grand Prix). */
+export function qualiContext(s: GameState): QualiCtx | null {
+  const w = s.weekend;
+  if (!w) return null;
+  const race = calendar()[w.raceIndex];
+  const sprint = inSprint(w);
+  const weather = sprint ? w.sprint!.qualiWeather : w.qualiWeather;
+  if (!race || !weather) return null;
+  return {
+    track: tunedTrack(race.track, s.simConfig),
+    entries: new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e])),
+    cfg: s.simConfig,
+    weather,
+  };
+}
+
+/** Finish whatever is left of the qualifying in progress (sprint or Grand Prix). */
+function completeQuali(s: GameState): GameState {
+  const w = s.weekend;
+  const ctx = qualiContext(s);
+  if (!w || !ctx) return s;
+  if (inSprint(w)) {
+    const sp = w.sprint!;
+    if (sp.quali.grid.length) return s;
+    const quali = finishQualifying(ctx, sp.qualiLive ?? null, sp.quali);
+    return { ...s, weekend: { ...w, sprint: { ...sp, quali, qualiLive: null, qualiRevealed: 3 } } };
+  }
+  if (w.quali.grid.length) return s;
+  const quali = finishQualifying(ctx, w.qualiLive ?? null, w.quali);
+  return { ...s, weekend: { ...w, quali, qualiLive: null, qualiRevealed: 3 } };
 }
 
 /** Bump when the built-in team ratings change, so saved games pick them up for a new career. */
@@ -306,6 +361,11 @@ function loadState(): GameState {
     if (!Array.isArray(parsed.news)) state.news = [];
     if (!Array.isArray(parsed.activities)) state.activities = [];
     if (!Array.isArray(parsed.agendaRounds)) state.agendaRounds = [];
+    // weekends saved with the old qualifying (all sessions pre-computed): straight to the grid
+    if (state.weekend && !state.weekend.qualiWeather) {
+      const w = state.weekend;
+      state.weekend = { ...w, qualiRevealed: 3, qualiLive: null, sprint: w.sprint ? { ...w.sprint, qualiRevealed: 3, qualiLive: null } : undefined };
+    }
     // saves from before team management existed
     if (state.playerTeamId && !state.management) {
       state.management = initManagement(state.teamsData, state.playerTeamId, randomSeed());
@@ -561,15 +621,27 @@ function openWeekend(s0: GameState): GameState {
     if (a.season === s0.season && a.beforeRound <= s0.currentRaceIndex + 1 && a.chosen === undefined) s = applyActivity(s, a.id, a.choices.length - 1, true);
   }
   const weather = weekendWeather(s, s.currentRaceIndex)!;
-  const quali = runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet);
-  const sprint = s.sprints.includes(race.id)
-    ? { quali: runQualifying(race, entriesFromTeams(s.teamsData), randomSeed(), s.simConfig, weather.qualiWet), qualiRevealed: 0, race: null }
+  const days = qualiDays(s, s.currentRaceIndex)!;
+  const ctx = (w: DayWeather): QualiCtx => ({
+    track: tunedTrack(race.track, s.simConfig),
+    entries: new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e])),
+    cfg: s.simConfig,
+    weather: w,
+  });
+  const gp = startQualifying(ctx(days.sat), race.id, randomSeed());
+  const sq = days.fri ? startQualifying(ctx(days.fri), race.id, randomSeed(), true) : null;
+  const sprint = sq
+    ? { quali: sq.result, qualiLive: sq.live, qualiWeather: days.fri, qualiRevealed: 0, race: null }
     : undefined;
-  return { ...s, weekend: { raceIndex: s.currentRaceIndex, quali, qualiRevealed: 0, race: null, weather, sprint } };
+  return {
+    ...s,
+    weekend: { raceIndex: s.currentRaceIndex, quali: gp.result, qualiLive: gp.live, qualiWeather: days.sat, qualiRevealed: 0, race: null, weather, sprint },
+  };
 }
 
 /** Sprint race: short, no mandatory stop, everyone on one set of tyres unless they decide otherwise. */
-function openSprint(s: GameState): GameState {
+function openSprint(s0: GameState): GameState {
+  const s = completeQuali(s0);
   const w = s.weekend;
   if (!w?.sprint || w.sprint.race) return s;
   const race = sprintOf(calendar()[w.raceIndex]);
@@ -589,9 +661,10 @@ function openSprint(s: GameState): GameState {
   return { ...s, weekend: { ...w, sprint: { ...w.sprint, qualiRevealed: 3, race: rs } } };
 }
 
-function openRace(s: GameState): GameState {
+function openRace(s0: GameState): GameState {
+  if (inSprint(s0.weekend)) return openSprint(s0);
+  const s = completeQuali(s0);
   const w = s.weekend;
-  if (inSprint(w)) return openSprint(s);
   if (!w || w.race) return s;
   const race = calendar()[w.raceIndex];
   const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
@@ -1244,15 +1317,30 @@ export function useGameState() {
     });
   }, []);
 
-  const revealSession = useCallback((all = false) => {
+  /** Close the qualifying session in progress (or the whole qualifying with `all`). */
+  const qualiNext = useCallback((all = false) => {
+    setGameState((s) => {
+      const w = s.weekend;
+      const ctx = qualiContext(s);
+      if (!w || !ctx) return s;
+      if (all) return completeQuali(s);
+      const sprint = inSprint(w);
+      const live = sprint ? w.sprint!.qualiLive : w.qualiLive;
+      const quali = sprint ? w.sprint!.quali : w.quali;
+      if (!live) return s;
+      const step = nextSession(ctx, live, quali);
+      const patch = { quali: step.result, qualiLive: step.live, qualiRevealed: step.result.sessions.length };
+      return sprint ? { ...s, weekend: { ...w, sprint: { ...w.sprint!, ...patch } } } : { ...s, weekend: { ...w, ...patch } };
+    });
+  }, []);
+
+  /** Save the session in progress (clock and the player's decisions). */
+  const updateQualiLive = useCallback((live: QualiLive) => {
     setGameState((s) => {
       const w = s.weekend;
       if (!w) return s;
-      if (inSprint(w)) {
-        const sp = w.sprint!;
-        return { ...s, weekend: { ...w, sprint: { ...sp, qualiRevealed: all ? 3 : Math.min(3, sp.qualiRevealed + 1) } } };
-      }
-      return { ...s, weekend: { ...w, qualiRevealed: all ? 3 : Math.min(3, w.qualiRevealed + 1) } };
+      if (inSprint(w)) return w.sprint!.qualiLive?.session === live.session ? { ...s, weekend: { ...w, sprint: { ...w.sprint!, qualiLive: live } } } : s;
+      return w.qualiLive?.session === live.session ? { ...s, weekend: { ...w, qualiLive: live } } : s;
     });
   }, []);
 
@@ -1536,7 +1624,8 @@ export function useGameState() {
     stopSim,
     simRun,
     chooseActivity,
-    revealSession,
+    qualiNext,
+    updateQualiLive,
     startRace,
     updateRace,
     finishRace,

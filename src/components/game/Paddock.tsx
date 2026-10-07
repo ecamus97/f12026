@@ -2,8 +2,8 @@ import { motion } from "framer-motion";
 import { Play, FastForward, Gavel, Wallet, Gauge, FlaskConical, Handshake, ChevronRight, Trophy, MapPin, CalendarDays, UserPlus, Briefcase, Info, ClipboardList } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { Race, Team } from "@/data/f1Data";
-import type { DriverStanding, TeamStanding, NewsItem, WeatherTimeline } from "@/engine";
-import { forecast, forecastIcon } from "@/engine";
+import type { DriverStanding, TeamStanding, NewsItem, WeatherTimeline, DayWeather } from "@/engine";
+import { daySummary, forecast, forecastIcon } from "@/engine";
 import { NewsFeed } from "./NewsCenter";
 import { AgendaCard } from "./AgendaCalendar";
 import type { Activity } from "@/engine";
@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 export type NavTarget = "weekend" | "car" | "drivers" | "staff" | "finance" | "rules" | "standings" | "calendar" | "news";
 
 export function Paddock({
-  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, activities, onChooseActivity, isSprint, notices = [],
+  team, season, race, round, totalRaces, weekendActive, weekendHasRace, drivers, teamsStanding, management, people, proposals, onWeekend, onQuickSim, onNavigate, news, teams, weather, days, activities, onChooseActivity, isSprint, notices = [],
 }: {
   team: Team;
   season: number;
@@ -36,6 +36,7 @@ export function Paddock({
   news: NewsItem[];
   teams: Team[];
   weather: WeatherTimeline | null;
+  days?: { fri?: DayWeather; sat: DayWeather } | null; // qualifying days
   activities: Activity[];
   isSprint?: boolean;
   notices?: string[]; // things that happened to your team in the off-season
@@ -43,8 +44,8 @@ export function Paddock({
 }) {
   const fc = weather ? forecast(weather, 0, Math.max(3, Math.round(weather.rain.length / 10))) : [];
   const raceChance = fc.reduce((a, f) => Math.max(a, f.chance), 0);
-  const satWet = weather?.qualiWet ?? 0;
-  const satIcon = satWet >= 0.45 ? "🌧️" : satWet > 0.05 ? "🌦️" : raceChance >= 40 ? "⛅" : "☀️";
+  const sat = days ? daySummary(days.sat) : null;
+  const fri = days?.fri ? daySummary(days.fri) : null;
   const teamPos = teamsStanding.findIndex((t) => t.teamId === team.id) + 1;
   const myTeam = teamsStanding.find((t) => t.teamId === team.id);
   const myDrivers = drivers.map((d, i) => ({ ...d, pos: i + 1 })).filter((d) => d.teamId === team.id);
@@ -92,7 +93,8 @@ export function Paddock({
               </div>
               {weather && (
                 <div className="flex gap-2">
-                  <WeatherDay label="Sábado · Clasificación" icon={satIcon} temp={weather.airTemp - 1} />
+                  {fri && <WeatherDay label="Viernes · Clasif. sprint" icon={fri.icon} temp={fri.airTemp} />}
+                  {sat && <WeatherDay label={fri ? "Sábado · Sprint y clasif." : "Sábado · Clasificación"} icon={sat.icon} temp={sat.airTemp} />}
                   <WeatherDay label="Domingo · Carrera" icon={forecastIcon(raceChance)} temp={weather.airTemp} />
                 </div>
               )}

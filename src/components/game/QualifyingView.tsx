@@ -1,154 +1,343 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Flag, Timer, FastForward, Pause, Play, Star, SkipForward } from "lucide-react";
+import {
+  Flag,
+  Timer,
+  FastForward,
+  Pause,
+  Play,
+  Star,
+  SkipForward,
+  Thermometer,
+  Droplets,
+  LogOut,
+  Home,
+  Wand2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Race } from "@/data/f1Data";
-import { formatLap, wetLabel, type Entry, type QualifyingResult, type WeatherTimeline } from "@/engine";
+import {
+  advanceTo,
+  autoPlan,
+  canGoOut,
+  carPhase,
+  dayConditions,
+  dayForecast,
+  formatLap,
+  goOut,
+  lastCall,
+  MAX_RUNS,
+  QUALI_FORMAT,
+  runOutlook,
+  sectorsDone,
+  sessionEnd,
+  SKY_INFO,
+  skyFor,
+  stayIn,
+  trackEvolution,
+  wetLabel,
+  type Entry,
+  type QualiCtx,
+  type QualifyingResult,
+  type QualiLive,
+  type QualiRun,
+  type WeatherTimeline,
+} from "@/engine";
 import { WeatherWidget } from "./WeatherWidget";
-import { PositionBadge, TeamStripe, mineStyle } from "./common";
+import { CircuitMap, type MapMarker } from "./TrackMap";
+import { PositionBadge, TeamStripe, TyreBadge, mineStyle } from "./common";
 import { cn } from "@/lib/utils";
 
 interface Props {
   race: Race;
-  quali: QualifyingResult;
-  revealed: number; // completed sessions (0-3)
+  quali: QualifyingResult; // completed sessions
+  live: QualiLive | null; // session in progress
+  ctx: QualiCtx | null;
   entryMap: Map<string, Entry>;
   playerTeamId: string | null;
-  onReveal: (all?: boolean) => void;
+  onLive: (live: QualiLive) => void; // save clock and decisions
+  onNext: (all?: boolean) => void; // close the session (or the whole qualifying)
   onStartRace: () => void;
-  weather?: WeatherTimeline; // Sunday's weather (shown as a forecast)
+  weather?: WeatherTimeline; // the race's weather (shown as a forecast)
   sprint?: boolean; // sprint qualifying (SQ1-SQ3)
 }
 
-type Row = QualifyingResult["sessions"][number]["rows"][number];
+const INFO = {
+  gp: [
+    { out: 6, text: "22 autos · los 6 más lentos quedan eliminados" },
+    { out: 6, text: "16 autos · otros 6 quedan eliminados" },
+    { out: 0, text: "Top 10 · pelean la pole position" },
+  ],
+  sprint: [
+    {
+      out: 6,
+      text: "Clasificación sprint · los 6 más lentos quedan eliminados",
+    },
+    { out: 6, text: "16 autos · otros 6 quedan eliminados" },
+    { out: 0, text: "Top 10 · pelean la pole del sprint" },
+  ],
+};
 
-const SESSION_INFO = [
-  { name: "Q1", out: 6, text: "22 autos · los 6 más lentos quedan eliminados", minutes: 18 },
-  { name: "Q2", out: 6, text: "16 autos · otros 6 quedan eliminados", minutes: 15 },
-  { name: "Q3", out: 0, text: "Top 10 · pelean la pole position", minutes: 12 },
-];
-
-const SPRINT_INFO = [
-  { name: "SQ1", out: 6, text: "Clasificación sprint · los 6 más lentos quedan eliminados", minutes: 12 },
-  { name: "SQ2", out: 6, text: "16 autos · otros 6 quedan eliminados", minutes: 10 },
-  { name: "SQ3", out: 0, text: "Top 10 · pelean la pole del sprint", minutes: 8 },
-];
-
+// session seconds per real second
 const SPEEDS = [
-  { label: "1x", ms: 900 },
-  { label: "4x", ms: 260 },
-  { label: "16x", ms: 70 },
+  { label: "1x", rate: 5 },
+  { label: "2x", rate: 10 },
+  { label: "4x", rate: 20 },
+  { label: "16x", rate: 80 },
+  { label: "64x", rate: 320 },
 ];
 
-interface Step {
-  driverId: string;
-  run: number;
+const mmss = (sec: number) => {
+  const s = Math.max(0, Math.ceil(sec));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
+
+type Tone = "purple" | "green" | "yellow" | "red" | "old" | "empty";
+const TONE: Record<Tone, string> = {
+  purple: "text-purple-400 font-semibold",
+  green: "text-green-400",
+  yellow: "text-yellow-300",
+  red: "text-red-400 line-through",
+  old: "text-muted-foreground/50",
+  empty: "",
+};
+
+/** Overall and personal best sectors and laps completed by session time `t`. */
+function timingAt(live: QualiLive, t: number) {
+  const overall: { t: number; id: string }[] = [
+    { t: Infinity, id: "" },
+    { t: Infinity, id: "" },
+    { t: Infinity, id: "" },
+  ];
+  const personal = new Map<string, number[]>();
+  const bestLap = new Map<string, number>();
+  let sessionBest = Infinity;
+  for (const c of live.cars) {
+    const pb = [Infinity, Infinity, Infinity];
+    for (const r of c.runs) {
+      if (r.flyStart > live.duration) continue;
+      sectorsDone(r, t).forEach((s, k) => {
+        pb[k] = Math.min(pb[k], s);
+        if (s < overall[k].t) overall[k] = { t: s, id: c.id };
+      });
+      if (r.flyEnd <= t && r.time > 0) {
+        bestLap.set(c.id, Math.min(bestLap.get(c.id) ?? Infinity, r.time));
+        sessionBest = Math.min(sessionBest, r.time);
+      }
+    }
+    personal.set(c.id, pb);
+  }
+  return { overall, personal, bestLap, sessionBest };
 }
 
-/** Deterministic run order: everyone does a first attempt, then a second one. */
-function buildSequence(rows: Row[], salt: number): Step[] {
-  const hash = (s: string) => {
-    let h = salt * 2654435761;
-    for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
-    return h >>> 0;
-  };
-  const order = (run: number) =>
-    [...rows].sort((a, b) => hash(a.driverId + run) - hash(b.driverId + run)).map((r) => ({ driverId: r.driverId, run }));
-  return [...order(0), ...order(1)];
+type Timing = ReturnType<typeof timingAt>;
+
+function sectorTone(tm: Timing, id: string, k: number, v: number): Tone {
+  if (tm.overall[k].id === id && Math.abs(tm.overall[k].t - v) < 1e-9)
+    return "purple";
+  if (Math.abs((tm.personal.get(id)?.[k] ?? Infinity) - v) < 1e-9)
+    return "green";
+  return "yellow";
 }
 
-export function QualifyingView({ sprint, weather, race, quali, revealed, entryMap, playerTeamId, onReveal, onStartRace }: Props) {
-  const INFO = sprint ? SPRINT_INFO : SESSION_INFO;
-  const done = revealed >= 3;
-  const liveIndex = done ? -1 : revealed; // session that is next / in progress
-  const [tab, setTab] = useState<string>(done ? "grid" : `${revealed}`);
-  const [step, setStep] = useState(-1); // -1 = session not started
-  const [playing, setPlaying] = useState(false);
-  const [speed, setSpeed] = useState(0);
-
-  useEffect(() => {
-    setTab(done ? "grid" : `${revealed}`);
-    setStep(-1);
-    setPlaying(false);
-  }, [revealed, done]);
-
-  const liveSession = liveIndex >= 0 ? quali.sessions[liveIndex] : null;
-  const sequence = useMemo(
-    () => (liveSession ? buildSequence(liveSession.rows, quali.raceId * 7 + liveIndex) : []),
-    [liveSession, quali.raceId, liveIndex],
+/** What the timing screen shows for a car: the lap being driven, or the last one. */
+function carTiming(live: QualiLive, id: string, t: number, tm: Timing) {
+  const car = live.cars.find((c) => c.id === id)!;
+  const ph = carPhase(live, id, t);
+  const valid = (r: QualiRun) => r.flyStart <= live.duration && !r.aborted;
+  const lastDone = [...car.runs]
+    .reverse()
+    .find((r) => valid(r) && r.flyEnd <= t);
+  let run: QualiRun | undefined;
+  let old = false;
+  if (ph.phase === "push" && ph.run) run = ph.run;
+  else if (lastDone) {
+    run = lastDone;
+    old = ph.phase === "out"; // a new run has started: the previous lap is greyed out
+  }
+  const done = run ? sectorsDone(run, t) : [];
+  const sectors = [0, 1, 2].map((k) =>
+    k < done.length
+      ? {
+          text: done[k].toFixed(3),
+          tone: (old ? "old" : sectorTone(tm, id, k, done[k])) as Tone,
+        }
+      : { text: "", tone: "empty" as Tone },
   );
+  let last: { text: string; tone: Tone } = { text: "", tone: "empty" };
+  if (lastDone) {
+    if (!lastDone.time) last = { text: "ANULADA", tone: "red" };
+    else
+      last = {
+        text: formatLap(lastDone.time),
+        tone:
+          Math.abs(lastDone.time - tm.sessionBest) < 1e-9
+            ? "purple"
+            : Math.abs(lastDone.time - (tm.bestLap.get(id) ?? 0)) < 1e-9
+              ? "green"
+              : "yellow",
+      };
+  }
+  const started = car.runs.filter((r) => r.start <= t).length;
+  return {
+    ph,
+    sectors,
+    last,
+    started,
+    car,
+    compound: ph.run?.compound ?? lastDone?.compound ?? "S",
+  };
+}
 
-  // Playback
-  const [stepAt, setStepAt] = useState(() => performance.now());
-  useEffect(() => setStepAt(performance.now()), [step]);
+export function QualifyingView({
+  sprint,
+  weather,
+  race,
+  quali,
+  live,
+  ctx,
+  entryMap,
+  playerTeamId,
+  onLive,
+  onNext,
+  onStartRace,
+}: Props) {
+  const fmt = sprint ? QUALI_FORMAT.sprint : QUALI_FORMAT.gp;
+  const info = sprint ? INFO.sprint : INFO.gp;
+  const done = quali.grid.length > 0;
+  const [tab, setTab] = useState<string>(done ? "grid" : "live");
+  const [lv, setLv] = useState<QualiLive | null>(live);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(1);
+  const lastSave = useRef(performance.now());
+
+  // a new session from the game state
   useEffect(() => {
-    if (!playing || step < 0 || step >= sequence.length - 1) return;
-    const t = window.setTimeout(() => setStep((s) => s + 1), SPEEDS[speed].ms);
-    return () => window.clearTimeout(t);
-  }, [playing, step, sequence.length, speed]);
+    setLv(live);
+    setPlaying(false);
+    setTab(live ? "live" : "grid");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live?.session, live?.sprint, done]);
 
-  // session clock: runs smoothly between laps (the laps themselves are the simulated attempts)
-  const [now, setNow] = useState(() => performance.now());
+  const end = lv ? sessionEnd(lv) : 0;
+  const over = !!lv && lv.clock >= end;
+
+  // the session clock
   useEffect(() => {
-    if (!playing) return;
-    const id = window.setInterval(() => setNow(performance.now()), 100);
-    return () => window.clearInterval(id);
-  }, [playing]);
-  const sessionSecs = liveIndex >= 0 ? INFO[liveIndex].minutes * 60 : 0;
-  const partial = playing && step >= 0 && step < sequence.length - 1 ? Math.min(1, (now - stepAt) / SPEEDS[speed].ms) : 0;
-  const clockSec =
-    step < 0 ? sessionSecs : step >= sequence.length - 1 ? 0 : Math.max(0, sessionSecs * (1 - (step + 1 + partial) / sequence.length));
+    if (!playing || !lv || !ctx) return;
+    let raf = 0;
+    let prev = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const dt = Math.min(0.25, (now - prev) / 1000);
+      prev = now;
+      setLv((cur) => {
+        if (!cur) return cur;
+        const target = Math.min(
+          sessionEnd(cur),
+          cur.clock + dt * SPEEDS[speed].rate,
+        );
+        return advanceTo(ctx, cur, target);
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, speed, ctx, lv?.session]);
 
-  const sessionOver = step >= 0 && step >= sequence.length - 1;
+  // stop at the flag (once the last laps are in) and save now and then
+  useEffect(() => {
+    if (!lv) return;
+    if (over && playing) {
+      setPlaying(false);
+      onLive(lv);
+      return;
+    }
+    if (performance.now() - lastSave.current > 3000) {
+      lastSave.current = performance.now();
+      onLive(lv);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lv?.clock, over]);
+
+  const act = (fn: (l: QualiLive) => QualiLive) => {
+    if (!lv) return;
+    const next = fn(lv);
+    setLv(next);
+    onLive(next);
+  };
+
+  const finishSession = () => {
+    if (!lv || !ctx) return;
+    setPlaying(false);
+    let next = advanceTo(ctx, lv, lv.duration);
+    next = { ...next, clock: Math.max(next.clock, sessionEnd(next)) };
+    setLv(next);
+    onLive(next);
+  };
 
   const pole = entryMap.get(quali.grid[0]);
-  const viewingLive = !done && tab === `${liveIndex}`;
+  const sessionName = (i: number) => fmt.names[i];
+  const started = !!lv && (lv.clock > 0 || playing);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="text-center space-y-1">
-        <p className="text-xs uppercase tracking-widest text-muted-foreground">{sprint ? "Clasificación sprint · viernes" : "Clasificación"}</p>
+        <p className="text-xs uppercase tracking-widest text-muted-foreground">
+          {sprint ? "Viernes · Clasificación sprint" : "Sábado · Clasificación"}
+        </p>
         <h2 className="font-display text-4xl md:text-5xl">
           {race.flag} {race.name}
         </h2>
         <p className="text-xs text-muted-foreground">{race.circuit}</p>
-        {quali.wet ? (
-          <p className="text-xs text-sky-300">🌧️ Clasificación con pista {wetLabel(quali.wet).toLowerCase()}</p>
-        ) : null}
       </div>
-
-      {weather && (
-        <WeatherWidget weather={weather} lap={0} preview title="Pronóstico para la carrera" />
-      )}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="w-full grid grid-cols-4">
-          {quali.sessions.map((s, i) => (
-            <TabsTrigger key={s.name} value={`${i}`} disabled={i > revealed} className="font-racing text-xs">
-              {sprint ? `S${s.name}` : s.name}
-              {i === liveIndex && step >= 0 && <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />}
-            </TabsTrigger>
-          ))}
-          <TabsTrigger value="grid" disabled={!done} className="font-racing text-xs">
+          {[0, 1, 2].map((i) => {
+            const isLive = lv?.session === i && !done;
+            const has = !!quali.sessions[i];
+            return (
+              <TabsTrigger
+                key={i}
+                value={isLive ? "live" : `${i}`}
+                disabled={!isLive && !has}
+                className="font-racing text-xs"
+              >
+                {sessionName(i)}
+                {isLive && playing && (
+                  <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                )}
+              </TabsTrigger>
+            );
+          })}
+          <TabsTrigger
+            value="grid"
+            disabled={!done}
+            className="font-racing text-xs"
+          >
             Parrilla
           </TabsTrigger>
         </TabsList>
       </Tabs>
 
-      {viewingLive && liveSession && (
+      {tab === "live" && lv && ctx && (
         <LiveSession
-          info={INFO[liveIndex]}
-          rows={liveSession.rows}
-          sequence={sequence}
-          step={step}
-          over={sessionOver}
+          name={sessionName(lv.session)}
+          info={info[lv.session]}
+          live={lv}
+          ctx={ctx}
+          raceId={race.id}
           entryMap={entryMap}
           playerTeamId={playerTeamId}
-         clockSec={clockSec}/>
+          over={over}
+          onAct={act}
+        />
       )}
 
-      {!viewingLive && tab !== "grid" && (
+      {tab !== "live" && tab !== "grid" && quali.sessions[Number(tab)] && (
         <SessionTable
           key={tab}
           rows={quali.sessions[Number(tab)].rows}
@@ -161,7 +350,9 @@ export function QualifyingView({ sprint, weather, race, quali, revealed, entryMa
         <div className="space-y-3">
           {pole && (
             <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 p-3 text-center text-sm">
-              🏆 Pole position: <span className="font-racing">{pole.driver.name}</span> ({pole.team.name})
+              🏆 Pole position:{" "}
+              <span className="font-racing">{pole.driver.name}</span> (
+              {pole.team.name})
             </div>
           )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
@@ -172,7 +363,10 @@ export function QualifyingView({ sprint, weather, race, quali, revealed, entryMa
               return (
                 <motion.div
                   key={id}
-                  className={cn("flex items-center gap-2 rounded-md border border-border/40 bg-card/50 px-2 py-1.5 text-sm", i % 2 === 1 && "mt-4")}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md border border-border/40 bg-card/50 px-2 py-1.5 text-sm",
+                    i % 2 === 1 && "mt-4",
+                  )}
                   style={mine ? mineStyle(e.team.hex) : undefined}
                   initial={{ opacity: 0, y: 6 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -180,9 +374,15 @@ export function QualifyingView({ sprint, weather, race, quali, revealed, entryMa
                 >
                   <PositionBadge pos={i + 1} />
                   <TeamStripe color={e.team.hex} />
-                  <span className="font-racing text-xs">{e.driver.shortName}</span>
-                  {mine && <Star className="w-3 h-3 text-primary fill-primary" />}
-                  <span className="text-[10px] text-muted-foreground truncate">{e.team.shortName}</span>
+                  <span className="font-racing text-xs">
+                    {e.driver.shortName}
+                  </span>
+                  {mine && (
+                    <Star className="w-3 h-3 text-primary fill-primary" />
+                  )}
+                  <span className="text-[10px] text-muted-foreground truncate">
+                    {e.team.shortName}
+                  </span>
                 </motion.div>
               );
             })}
@@ -193,37 +393,61 @@ export function QualifyingView({ sprint, weather, race, quali, revealed, entryMa
       {/* Controls */}
       <div className="flex flex-wrap gap-2">
         {done ? (
-          <Button onClick={onStartRace} className="flex-1 font-racing" size="lg">
+          <Button
+            onClick={onStartRace}
+            className="flex-1 font-racing"
+            size="lg"
+          >
             <Flag className="w-4 h-4 mr-2" />
             {sprint ? "Ir a la carrera sprint" : "Ir a la carrera"}
           </Button>
-        ) : step < 0 ? (
+        ) : !lv ? null : over ? (
+          <Button
+            onClick={() => onNext(false)}
+            className="flex-1 font-racing"
+            size="lg"
+          >
+            <SkipForward className="w-4 h-4 mr-2" />
+            {lv.session < 2
+              ? `Siguiente: ${sessionName(lv.session + 1)}`
+              : "Ver parrilla de salida"}
+          </Button>
+        ) : !started ? (
           <>
             <Button
               onClick={() => {
-                setTab(`${liveIndex}`);
-                setStep(0);
+                setTab("live");
                 setPlaying(true);
               }}
               className="flex-1 font-racing"
               size="lg"
             >
               <Timer className="w-4 h-4 mr-2" />
-              Iniciar {INFO[liveIndex].name}
+              Iniciar {sessionName(lv.session)}
             </Button>
-            <Button onClick={() => onReveal(true)} variant="outline" size="lg" title="Simular toda la clasificación">
+            <Button
+              onClick={() => {
+                onLive(lv);
+                onNext(true);
+              }}
+              variant="outline"
+              size="lg"
+              title="Simular toda la clasificación"
+            >
               <FastForward className="w-4 h-4" />
             </Button>
           </>
-        ) : sessionOver ? (
-          <Button onClick={() => onReveal(false)} className="flex-1 font-racing" size="lg">
-            <SkipForward className="w-4 h-4 mr-2" />
-            {liveIndex < 2 ? `Siguiente: ${INFO[liveIndex + 1].name}` : "Ver parrilla de salida"}
-          </Button>
         ) : (
           <>
-            <Button onClick={() => setPlaying((p) => !p)} className="font-racing min-w-28">
-              {playing ? <Pause className="w-4 h-4 mr-1" /> : <Play className="w-4 h-4 mr-1" />}
+            <Button
+              onClick={() => setPlaying((p) => !p)}
+              className="font-racing min-w-28"
+            >
+              {playing ? (
+                <Pause className="w-4 h-4 mr-1" />
+              ) : (
+                <Play className="w-4 h-4 mr-1" />
+              )}
               {playing ? "Pausa" : "Seguir"}
             </Button>
             <div className="flex rounded-md border border-border overflow-hidden">
@@ -231,7 +455,12 @@ export function QualifyingView({ sprint, weather, race, quali, revealed, entryMa
                 <button
                   key={s.label}
                   onClick={() => setSpeed(i)}
-                  className={cn("px-3 py-2 text-xs font-racing", i === speed ? "bg-primary text-primary-foreground" : "hover:bg-muted")}
+                  className={cn(
+                    "px-3 py-2 text-xs font-racing",
+                    i === speed
+                      ? "bg-primary text-primary-foreground"
+                      : "hover:bg-muted",
+                  )}
                 >
                   {s.label}
                 </button>
@@ -239,140 +468,586 @@ export function QualifyingView({ sprint, weather, race, quali, revealed, entryMa
             </div>
             <Button
               variant="outline"
+              onClick={finishSession}
+              className="ml-auto text-xs"
+              title="Simular lo que queda de la sesión"
+            >
+              <SkipForward className="w-4 h-4 mr-1" /> Terminar{" "}
+              {sessionName(lv.session)}
+            </Button>
+            <Button
+              variant="outline"
               onClick={() => {
                 setPlaying(false);
-                setStep(sequence.length - 1);
+                onLive(lv);
+                onNext(true);
               }}
-              className="ml-auto text-xs"
-              title="Mostrar todos los tiempos de la sesión"
+              className="text-xs"
+              title="Simular toda la clasificación"
             >
-              <SkipForward className="w-4 h-4 mr-1" /> Terminar {INFO[liveIndex].name}
+              <FastForward className="w-4 h-4" />
             </Button>
           </>
         )}
       </div>
+
+      {weather && (
+        <WeatherWidget
+          weather={weather}
+          lap={0}
+          preview
+          title={
+            sprint
+              ? "Pronóstico para el sprint (sábado)"
+              : "Pronóstico para la carrera (domingo)"
+          }
+        />
+      )}
     </div>
   );
 }
 
 function LiveSession({
+  name,
   info,
-  rows,
-  sequence,
-  step,
-  over,
+  live,
+  ctx,
+  raceId,
   entryMap,
   playerTeamId,
-  clockSec,
+  over,
+  onAct,
 }: {
-  clockSec: number;
-  info: (typeof SESSION_INFO)[number];
-  rows: Row[];
-  sequence: Step[];
-  step: number;
-  over: boolean;
+  name: string;
+  info: { out: number; text: string };
+  live: QualiLive;
+  ctx: QualiCtx;
+  raceId: number;
   entryMap: Map<string, Entry>;
   playerTeamId: string | null;
+  over: boolean;
+  onAct: (fn: (l: QualiLive) => QualiLive) => void;
 }) {
-  const rowMap = new Map(rows.map((r) => [r.driverId, r]));
-  const doneSteps = sequence.slice(0, step + 1);
-  const last = step >= 0 ? sequence[step] : null;
-
-  // best valid time so far per driver
-  const best = new Map<string, number>();
-  for (const s of doneSteps) {
-    const t = rowMap.get(s.driverId)!.runs[s.run];
-    if (t > 0 && (!best.has(s.driverId) || t < best.get(s.driverId)!)) best.set(s.driverId, t);
-  }
-  // drivers without a time yet stay in team order (no spoilers of the final result)
-  const teamOrder = Array.from(entryMap.keys());
-  const board = rows
-    .map((r) => ({ id: r.driverId, t: best.get(r.driverId) ?? 0 }))
-    .sort((a, b) => (a.t || 9999) - (b.t || 9999) || teamOrder.indexOf(a.id) - teamOrder.indexOf(b.id));
-  const leaderT = board[0]?.t ?? 0;
-  const cutoff = rows.length - info.out; // positions > cutoff are in the drop zone
-
-  // last lap description
-  let ticker: { text: string; tone: string } | null = null;
-  if (last) {
-    const e = entryMap.get(last.driverId)!;
-    const t = rowMap.get(last.driverId)!.runs[last.run];
-    const prevSteps = doneSteps.slice(0, -1);
-    const prevBestSession = Math.min(
-      ...prevSteps.map((s) => rowMap.get(s.driverId)!.runs[s.run]).filter((x) => x > 0),
-      Infinity,
+  const t = live.clock;
+  const tm = useMemo(() => timingAt(live, t), [live, t]);
+  const teamOrder = useMemo(() => Array.from(entryMap.keys()), [entryMap]);
+  const board = live.cars
+    .map((c) => ({ id: c.id, best: tm.bestLap.get(c.id) ?? 0 }))
+    .sort(
+      (a, b) =>
+        (a.best || 9999) - (b.best || 9999) ||
+        teamOrder.indexOf(a.id) - teamOrder.indexOf(b.id),
     );
-    const prevPersonal = Math.min(
-      ...prevSteps.filter((s) => s.driverId === last.driverId).map((s) => rowMap.get(s.driverId)!.runs[s.run]).filter((x) => x > 0),
-      Infinity,
-    );
-    const pos = board.findIndex((b) => b.id === last.driverId) + 1;
-    if (t === 0) ticker = { text: `${e.driver.shortName} se sale de pista: vuelta anulada`, tone: "text-orange-400" };
-    else if (t < prevBestSession) ticker = { text: `${e.driver.shortName} ${formatLap(t)} · ¡mejor tiempo de la sesión!`, tone: "text-purple-400" };
-    else if (t < prevPersonal) ticker = { text: `${e.driver.shortName} ${formatLap(t)} · mejora, sube a P${pos}`, tone: "text-green-400" };
-    else ticker = { text: `${e.driver.shortName} ${formatLap(t)} · no mejora (P${pos})`, tone: "text-yellow-300" };
-  }
+  const leader = board[0]?.best ?? 0;
+  const cutoff = live.cars.length - info.out;
+  const remaining = live.duration - t;
+  const flag = t >= live.duration;
+
+  const markers: MapMarker[] = live.cars.flatMap((c) => {
+    const e = entryMap.get(c.id);
+    const ph = carPhase(live, c.id, t);
+    if (!e || ph.phase === "garage") return [];
+    const pos = board.findIndex((b) => b.id === c.id);
+    return [
+      {
+        id: c.id,
+        hex: e.team.hex,
+        short: e.driver.shortName,
+        mine: e.team.id === playerTeamId,
+        frac: ph.frac,
+        inPit: ph.inPit,
+        pos: board[pos]?.best ? pos + 1 : undefined,
+        dim: ph.phase !== "push",
+        tag: ph.phase === "push" ? "⏱" : undefined,
+        label: ph.phase === "push",
+      },
+    ];
+  });
+
+  // weather now and ahead
+  const T = live.offset + Math.min(t, live.duration);
+  const cond = dayConditions(ctx.weather, T);
+  const sky = skyFor(cond.rain, cond.cloud > 0.5);
+  const evo = trackEvolution(live, T, cond.wet);
+  const nowMin = Math.floor(T / 60);
+  const endMin = (live.offset + live.duration) / 60;
+  const fc = dayForecast(ctx.weather, nowMin, 3).filter(
+    (f) => f.fromLap <= endMin,
+  );
+
+  // session log
+  const log = useMemo(() => {
+    const out: { at: number; text: string; tone: string }[] = [];
+    for (const c of live.cars) {
+      const e = entryMap.get(c.id);
+      if (!e) continue;
+      for (const r of c.runs) {
+        if (r.start <= t)
+          out.push({
+            at: r.start,
+            text: `${e.driver.shortName} sale a pista (${r.compound === "S" ? "blandos" : r.compound === "I" ? "intermedios" : "lluvia"})`,
+            tone: "text-muted-foreground",
+          });
+        if (r.aborted && r.flyStart <= t)
+          out.push({
+            at: r.flyStart,
+            text: `${e.driver.shortName}: ${r.note}`,
+            tone: "text-orange-300",
+          });
+        if (!r.aborted && r.flyStart <= live.duration && r.flyEnd <= t) {
+          const pb = tm.bestLap.get(c.id);
+          const isBest = r.time > 0 && Math.abs(r.time - tm.sessionBest) < 1e-9;
+          const text = r.time
+            ? `${e.driver.shortName} ${formatLap(r.time)}${isBest ? " · ¡mejor tiempo!" : r.time === pb ? " · mejora" : ""}${r.note ? ` (${r.note.toLowerCase()})` : ""}`
+            : `${e.driver.shortName}: ${r.note ?? "vuelta anulada"}`;
+          out.push({
+            at: r.flyEnd,
+            text,
+            tone: !r.time
+              ? "text-red-400"
+              : isBest
+                ? "text-purple-400"
+                : r.time === pb
+                  ? "text-green-400"
+                  : "text-yellow-300",
+          });
+        }
+      }
+    }
+    // rain starting / stopping during the session
+    for (
+      let m = Math.ceil(live.offset / 60) + 1;
+      m <= Math.min(nowMin, endMin);
+      m++
+    ) {
+      const a = ctx.weather.rain[m - 1] ?? 0;
+      const b = ctx.weather.rain[m] ?? 0;
+      if (a < 0.08 && b >= 0.08)
+        out.push({
+          at: m * 60 - live.offset,
+          text: "🌧️ Empieza a llover",
+          tone: "text-sky-300 font-semibold",
+        });
+      if (a >= 0.08 && b < 0.08)
+        out.push({
+          at: m * 60 - live.offset,
+          text: "🌤️ Deja de llover",
+          tone: "text-sky-300 font-semibold",
+        });
+    }
+    if (flag)
+      out.push({
+        at: live.duration,
+        text: "🏁 Bandera a cuadros: solo cuentan las vueltas ya abiertas",
+        tone: "text-white font-semibold",
+      });
+    return out.sort((a, b) => b.at - a.at).slice(0, 40);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live, Math.floor(t)]);
+
+  const mine = live.cars.filter(
+    (c) => entryMap.get(c.id)?.team.id === playerTeamId,
+  );
 
   return (
     <div className="space-y-3">
-      <div className="panel p-3 flex flex-wrap items-center gap-3 justify-between">
+      {/* session header: clock and conditions */}
+      <div className="panel p-3 flex flex-wrap items-center gap-4 justify-between">
         <div>
-          <div className="font-display text-2xl">{info.name}</div>
+          <div className="font-display text-2xl">{name}</div>
           <div className="text-xs text-muted-foreground">{info.text}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 text-xs">
+          <span className="text-lg leading-none" title={SKY_INFO[sky].label}>
+            {SKY_INFO[sky].icon}
+          </span>
+          <span>{SKY_INFO[sky].label}</span>
+          <span className="flex items-center gap-1 text-muted-foreground">
+            <Thermometer className="w-3.5 h-3.5" /> Aire {ctx.weather.airTemp}°
+            · Pista {Math.round(cond.trackTemp)}°
+          </span>
+          <span className="flex items-center gap-1 text-muted-foreground">
+            <Droplets className="w-3.5 h-3.5" /> {wetLabel(cond.wet)}
+          </span>
+          <span
+            className="rounded bg-white/5 px-2 py-0.5"
+            title="Agarre ganado por el caucho en la pista (menos tiempo por vuelta)"
+          >
+            Agarre de pista <b className="text-green-400">-{evo.toFixed(2)}s</b>
+          </span>
         </div>
         <div className="text-right">
           <div className="flex items-center justify-end gap-2">
-            <span className="tv-label text-muted-foreground">{over ? "🏁 Sesión terminada" : step < 0 ? "Esperando" : "Tiempo restante"}</span>
+            <span className="tv-label text-muted-foreground">
+              {over
+                ? "🏁 Sesión terminada"
+                : flag
+                  ? "🏁 Últimas vueltas"
+                  : t <= 0
+                    ? "Esperando"
+                    : "Tiempo restante"}
+            </span>
             <span
               className={cn(
                 "font-display text-3xl tabular-nums rounded-md px-2 py-0.5 bg-black/50 border border-white/10",
-                !over && clockSec < 120 && step >= 0 && "text-red-400",
+                !flag && remaining < 120 && t > 0 && "text-red-400",
               )}
             >
-              {String(Math.floor(clockSec / 60)).padStart(2, "0")}:{String(Math.floor(clockSec % 60)).padStart(2, "0")}
+              {mmss(remaining)}
             </span>
           </div>
-          {ticker && <div className={cn("text-sm font-medium", ticker.tone)}>{ticker.text}</div>}
         </div>
       </div>
 
-      <div className="rounded-xl border border-border overflow-hidden">
-        {board.map((b, i) => {
-          const e = entryMap.get(b.id);
-          if (!e) return null;
-          const mine = e.team.id === playerTeamId;
-          const isLast = last?.driverId === b.id;
-          const inDrop = info.out > 0 && i >= cutoff;
-          return (
-            <motion.div
-              layout
-              transition={{ type: "spring", stiffness: 500, damping: 40 }}
-              key={b.id}
+      {/* rain forecast for what is left of the session */}
+      {fc.some((f) => f.chance >= 15) && (
+        <div className="panel px-3 py-2 flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="text-muted-foreground mr-1">
+            Radar (prob. de lluvia):
+          </span>
+          {fc.map((f) => (
+            <span
+              key={f.fromLap}
               className={cn(
-                "flex items-center gap-2 px-3 py-1.5 text-sm border-b border-border/30 last:border-0",
-                inDrop && "bg-destructive/10",
-                i === cutoff && info.out > 0 && "border-t-2 border-t-destructive/60",
+                "rounded px-1.5 py-0.5 font-mono",
+                f.chance >= 70
+                  ? "bg-blue-500/80 text-white"
+                  : f.chance >= 40
+                    ? "bg-sky-500/50 text-white"
+                    : f.chance >= 20
+                      ? "bg-sky-500/20 text-sky-200"
+                      : "bg-muted/40 text-muted-foreground",
               )}
-              style={mine ? mineStyle(e.team.hex) : undefined}
             >
-              <span className="w-6 font-racing text-xs">{i + 1}</span>
-              <TeamStripe color={e.team.hex} />
-              <span className="font-racing text-xs w-10">{e.driver.shortName}</span>
-              {mine && <Star className="w-3 h-3 text-primary fill-primary" />}
-              <span className="text-xs text-muted-foreground flex-1 truncate">{e.driver.name}</span>
-              {isLast && <span className="w-2 h-2 rounded-full bg-primary animate-pulse" />}
-              <span className="font-mono text-xs w-20 text-right">{b.t ? formatLap(b.t) : "—"}</span>
-              <span className="font-mono text-xs w-16 text-right text-muted-foreground">
-                {i === 0 || !b.t ? "" : `+${(b.t - leaderT).toFixed(3)}`}
-              </span>
-              {info.out > 0 && (
-                <span className="text-[10px] uppercase text-destructive w-10 text-right">{over && inDrop ? "Fuera" : ""}</span>
+              {f.fromLap * 60 <= T + 1
+                ? "ahora"
+                : `+${Math.round(f.fromLap - T / 60)}'`}{" "}
+              {f.chance}%
+            </span>
+          ))}
+        </div>
+      )}
+
+      <CircuitMap
+        raceId={raceId}
+        markers={markers}
+        highlight={flag ? "BANDERA A CUADROS" : undefined}
+      />
+
+      <div className="grid lg:grid-cols-[1fr_340px] gap-4 items-start">
+        {/* timing tower */}
+        <div className="panel overflow-hidden">
+          <div className="flex items-center gap-2 px-3 py-2 tv-label text-muted-foreground border-b border-white/10 bg-black/40">
+            <span className="w-6">Pos</span>
+            <span className="flex-1">Piloto</span>
+            <span className="w-[54px] text-right hidden md:block">S1</span>
+            <span className="w-[54px] text-right hidden md:block">S2</span>
+            <span className="w-[54px] text-right hidden md:block">S3</span>
+            <span className="w-20 text-right hidden sm:block">Última</span>
+            <span className="w-20 text-right">Mejor</span>
+            <span className="w-16 text-right">Gap</span>
+          </div>
+          {board.map((b, i) => {
+            const e = entryMap.get(b.id);
+            if (!e) return null;
+            const isMine = e.team.id === playerTeamId;
+            const ct = carTiming(live, b.id, t, tm);
+            const inDrop = info.out > 0 && i >= cutoff && leader > 0;
+            const status =
+              ct.ph.phase === "push"
+                ? { text: "VUELTA RÁPIDA", cls: "bg-purple-600 text-white" }
+                : ct.ph.phase === "out"
+                  ? { text: "SALIDA", cls: "bg-white/15 text-white" }
+                  : ct.ph.phase === "in"
+                    ? {
+                        text: "ENTRANDO",
+                        cls: "bg-white/10 text-muted-foreground",
+                      }
+                    : null;
+            return (
+              <motion.div
+                layout
+                transition={{ type: "spring", stiffness: 500, damping: 40 }}
+                key={b.id}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 text-sm border-b border-white/[0.04] last:border-0",
+                  inDrop && "bg-destructive/10",
+                  i === cutoff &&
+                    info.out > 0 &&
+                    leader > 0 &&
+                    "border-t-2 border-t-destructive/60",
+                )}
+                style={isMine ? mineStyle(e.team.hex) : undefined}
+              >
+                <span
+                  className={cn(
+                    "w-6 h-5 grid place-items-center font-display text-sm tabular-nums rounded-sm",
+                    !b.best
+                      ? "text-muted-foreground"
+                      : i < 3
+                        ? "bg-white text-black"
+                        : "bg-white/10",
+                  )}
+                >
+                  {b.best ? i + 1 : "–"}
+                </span>
+                <TeamStripe color={e.team.hex} />
+                <span className="flex-1 min-w-0 flex items-center gap-1.5">
+                  <span className="font-display text-base tracking-wide">
+                    {e.driver.shortName}
+                  </span>
+                  {isMine && (
+                    <Star className="w-3 h-3 text-primary fill-primary" />
+                  )}
+                  {status && (
+                    <span
+                      className={cn(
+                        "text-[9px] px-1 rounded font-bold",
+                        status.cls,
+                      )}
+                    >
+                      {status.text}
+                    </span>
+                  )}
+                  {ct.ph.phase !== "garage" && (
+                    <TyreBadge compound={ct.compound} />
+                  )}
+                  {over && inDrop && (
+                    <span className="text-[10px] uppercase text-destructive">
+                      Fuera
+                    </span>
+                  )}
+                </span>
+                {ct.sectors.map((c, k) => (
+                  <span
+                    key={k}
+                    className={cn(
+                      "w-[54px] text-right font-mono text-[11px] tabular-nums hidden md:block",
+                      TONE[c.tone],
+                    )}
+                  >
+                    {c.text}
+                  </span>
+                ))}
+                <span
+                  className={cn(
+                    "w-20 text-right font-mono text-[11px] tabular-nums hidden sm:block",
+                    TONE[ct.last.tone],
+                  )}
+                >
+                  {ct.last.text}
+                </span>
+                <span className="w-20 text-right font-mono text-xs tabular-nums">
+                  {b.best ? formatLap(b.best) : "—"}
+                </span>
+                <span className="w-16 text-right font-mono text-xs tabular-nums text-muted-foreground">
+                  {i === 0 || !b.best ? "" : `+${(b.best - leader).toFixed(3)}`}
+                </span>
+              </motion.div>
+            );
+          })}
+        </div>
+
+        <div className="space-y-3">
+          {mine.length > 0 && (
+            <div className="panel p-3 space-y-3">
+              <div className="tv-label bg-primary text-primary-foreground w-fit px-3 py-1 clip-slant pr-6">
+                Muro de boxes
+              </div>
+              {mine.map((c) => (
+                <PlayerCar
+                  key={c.id}
+                  id={c.id}
+                  live={live}
+                  ctx={ctx}
+                  entry={entryMap.get(c.id)!}
+                  pos={board.findIndex((b) => b.id === c.id) + 1}
+                  hasTime={!!tm.bestLap.get(c.id)}
+                  inDrop={
+                    info.out > 0 &&
+                    board.findIndex((b) => b.id === c.id) >= cutoff
+                  }
+                  onAct={onAct}
+                />
+              ))}
+              <p className="text-[11px] text-muted-foreground">
+                Cada salida es una vuelta de calentamiento, una vuelta rápida y
+                la vuelta a boxes. La pista gana agarre con el caucho, así que
+                las últimas vueltas suelen ser las más rápidas, pero la lluvia o
+                una pista que se seca pueden cambiarlo todo. Si la bandera cae
+                antes de abrir vuelta, esa salida no cuenta.
+              </p>
+            </div>
+          )}
+          <div className="panel">
+            <div className="px-3 py-2 border-b border-border tv-label bg-white/10 w-fit clip-slant pr-6">
+              Dirección de carrera
+            </div>
+            <div className="max-h-[320px] overflow-y-auto p-2 space-y-0.5">
+              {log.length === 0 && (
+                <p className="text-xs text-muted-foreground p-1.5">
+                  Los autos esperan en boxes.
+                </p>
               )}
-            </motion.div>
-          );
-        })}
+              {log.map((l, i) => (
+                <div key={i} className="flex gap-2 text-xs px-1.5 py-1">
+                  <span className="w-10 shrink-0 font-mono text-muted-foreground">
+                    {l.at > live.duration ? "🏁" : mmss(live.duration - l.at)}
+                  </span>
+                  <span className={l.tone}>{l.text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
-      {info.out > 0 && !over && <p className="text-[11px] text-muted-foreground">La zona roja queda eliminada al terminar la sesión.</p>}
+    </div>
+  );
+}
+
+function PlayerCar({
+  id,
+  live,
+  ctx,
+  entry,
+  pos,
+  hasTime,
+  inDrop,
+  onAct,
+}: {
+  id: string;
+  live: QualiLive;
+  ctx: QualiCtx;
+  entry: Entry;
+  pos: number;
+  hasTime: boolean;
+  inDrop: boolean;
+  onAct: (fn: (l: QualiLive) => QualiLive) => void;
+}) {
+  const t = live.clock;
+  const car = live.cars.find((c) => c.id === id)!;
+  const ph = carPhase(live, id, t);
+  const used = car.runs.filter((r) => r.start <= t).length;
+  const next = car.runs.find((r) => r.start > t);
+  const blocked = canGoOut(ctx, live, id);
+  const last = lastCall(ctx, live, id);
+  const closed = t > last; // too late to start another flying lap
+
+  // the engineer's read of the conditions: now vs. later
+  const advice = useMemo(() => {
+    if (t > last) return null;
+    const now = runOutlook(ctx, live, id, t);
+    let best = { s: t, v: now };
+    for (let s = t + 30; s <= last; s += 30) {
+      const v = runOutlook(ctx, live, id, s);
+      if (v > best.v) best = { s, v };
+    }
+    if (best.v - now > 0.3)
+      return {
+        text: `La pista va a estar mejor en unos ${Math.round((best.s - t) / 60)} min.`,
+        tone: "text-sky-300",
+      };
+    if (now - runOutlook(ctx, live, id, Math.min(last, t + 240)) > 0.3)
+      return {
+        text: "Conviene salir ya: las condiciones empeoran.",
+        tone: "text-amber-300",
+      };
+    return {
+      text: "Pista estable: lo ideal es marcar al final, con más agarre.",
+      tone: "text-muted-foreground",
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [live.session, Math.floor(t / 15), car.runs.length]);
+
+  const phaseText =
+    ph.phase === "push"
+      ? "En vuelta rápida"
+      : ph.phase === "out"
+        ? "Vuelta de calentamiento"
+        : ph.phase === "in"
+          ? "Volviendo a boxes"
+          : "En boxes";
+
+  return (
+    <div
+      className="rounded-lg border border-border bg-background/40 p-2.5 space-y-2"
+      style={mineStyle(entry.team.hex)}
+    >
+      <div className="flex items-center justify-between">
+        <div className="font-racing text-sm">
+          {hasTime ? `P${pos}` : "Sin tiempo"} · {entry.driver.name}
+        </div>
+        {inDrop && hasTime && (
+          <span className="text-[10px] text-destructive uppercase">
+            Zona de eliminación
+          </span>
+        )}
+      </div>
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+        <span>{phaseText}</span>
+        <span>
+          Blandos nuevos: {Math.max(0, MAX_RUNS - used)}/{MAX_RUNS}
+        </span>
+      </div>
+      <div className="text-[11px]">
+        {next ? (
+          <span>
+            Próxima salida: <b>{mmss(live.duration - next.start)}</b>{" "}
+            {car.manual ? "" : "(plan del ingeniero)"}
+          </span>
+        ) : closed ? (
+          <span className="text-muted-foreground">
+            Ya no hay tiempo para otra salida.
+          </span>
+        ) : car.manual ? (
+          <span className="text-muted-foreground">
+            Control manual: espera tu orden en boxes.
+          </span>
+        ) : (
+          <span className="text-muted-foreground">
+            Sin más salidas planificadas.
+          </span>
+        )}
+      </div>
+      {advice && ph.phase === "garage" && (
+        <div className={cn("text-[11px]", advice.tone)}>🎧 {advice.text}</div>
+      )}
+      {!closed && (
+        <div className="flex flex-wrap gap-1.5">
+          <Button
+            size="sm"
+            className="text-xs h-7 flex-1"
+            disabled={!!blocked}
+            onClick={() => onAct((l) => goOut(ctx, l, id))}
+            title={blocked ?? "Sale ahora a pista"}
+          >
+            <LogOut className="w-3.5 h-3.5 mr-1" />{" "}
+            {blocked && ph.phase !== "garage" ? "En pista" : "Salir ahora"}
+          </Button>
+          {next && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs h-7"
+              onClick={() => onAct((l) => stayIn(l, id))}
+              title="Cancela las salidas planificadas"
+            >
+              <Home className="w-3.5 h-3.5 mr-1" /> Esperar
+            </Button>
+          )}
+          {car.manual && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-xs h-7"
+              onClick={() => onAct((l) => autoPlan(ctx, l, id))}
+              title="Que el ingeniero decida cuándo salir"
+            >
+              <Wand2 className="w-3.5 h-3.5 mr-1" /> Ingeniero
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -382,7 +1057,7 @@ function SessionTable({
   entryMap,
   playerTeamId,
 }: {
-  rows: Row[];
+  rows: QualifyingResult["sessions"][number]["rows"];
   entryMap: Map<string, Entry>;
   playerTeamId: string | null;
 }) {
@@ -407,14 +1082,25 @@ function SessionTable({
           >
             <span className="w-6 font-racing text-xs">{i + 1}</span>
             <TeamStripe color={e.team.hex} />
-            <span className="font-racing text-xs w-10">{e.driver.shortName}</span>
+            <span className="font-racing text-xs w-10">
+              {e.driver.shortName}
+            </span>
             {mine && <Star className="w-3 h-3 text-primary fill-primary" />}
-            <span className="text-xs text-muted-foreground flex-1 truncate">{e.driver.name}</span>
-            <span className="font-mono text-xs w-20 text-right">{r.best ? formatLap(r.best) : "Sin tiempo"}</span>
+            <span className="text-xs text-muted-foreground flex-1 truncate">
+              {e.driver.name}
+            </span>
+            <span className="text-[10px] text-muted-foreground hidden sm:block">
+              {r.runs.map((x) => (x ? formatLap(x) : "anulada")).join(" · ")}
+            </span>
+            <span className="font-mono text-xs w-20 text-right">
+              {r.best ? formatLap(r.best) : "Sin tiempo"}
+            </span>
             <span className="font-mono text-xs w-16 text-right text-muted-foreground">
               {i === 0 || !r.best ? "" : `+${(r.best - best).toFixed(3)}`}
             </span>
-            <span className="text-[10px] uppercase text-destructive w-10 text-right">{r.eliminated ? "Fuera" : ""}</span>
+            <span className="text-[10px] uppercase text-destructive w-10 text-right">
+              {r.eliminated ? "Fuera" : ""}
+            </span>
           </motion.div>
         );
       })}

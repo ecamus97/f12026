@@ -6,7 +6,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { useGameState, weekendWeather, inSprint, sprintOf, type SeasonArchive } from "@/hooks/useGameState";
+import { useGameState, weekendWeather, inSprint, sprintOf, qualiContext, qualiDays, type SeasonArchive } from "@/hooks/useGameState";
 import { NewsScreen } from "@/components/game/NewsCenter";
 import { SeasonCalendar } from "@/components/game/AgendaCalendar";
 import { RaceCard } from "@/components/RaceCard";
@@ -331,6 +331,7 @@ export default function F1Game() {
                   notices={gameState.seasonNews}
                   onChooseActivity={game.chooseActivity}
                   weather={seasonComplete ? null : weekend?.weather ?? weekendWeather(gameState, gameState.currentRaceIndex)}
+                  days={seasonComplete ? null : qualiDays(gameState, gameState.currentRaceIndex)}
                 />
 
                 {gameState.pastSeasons.length > 0 && (
@@ -406,11 +407,12 @@ export default function F1Game() {
                       sprint
                       race={weekendRace}
                       quali={weekend.sprint!.quali}
-                      weather={weekend.weather}
-                      revealed={weekend.sprint!.qualiRevealed}
+                      live={weekend.sprint!.qualiLive ?? null}
+                      ctx={qualiContext(gameState)}
                       entryMap={entryMap}
                       playerTeamId={gameState.playerTeamId}
-                      onReveal={game.revealSession}
+                      onLive={game.updateQualiLive}
+                      onNext={game.qualiNext}
                       onStartRace={game.startRace}
                     />
                   )
@@ -433,10 +435,12 @@ export default function F1Game() {
                     race={weekendRace}
                     quali={weekend.quali}
                     weather={weekend.weather}
-                    revealed={weekend.qualiRevealed}
+                    live={weekend.qualiLive ?? null}
+                    ctx={qualiContext(gameState)}
                     entryMap={entryMap}
                     playerTeamId={gameState.playerTeamId}
-                    onReveal={game.revealSession}
+                    onLive={game.updateQualiLive}
+                    onNext={game.qualiNext}
                     onStartRace={game.startRace}
                   />
                 )}

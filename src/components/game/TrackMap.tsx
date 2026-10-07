@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { circuits } from "@/data/circuits";
 import type { CarState, RaceState } from "@/engine";
+import { cn } from "@/lib/utils";
 
 export interface LapAnimation {
   from: Record<string, number>; // total race time per car at the start of the animated lap
@@ -168,10 +169,7 @@ function carFraction(from: number, to: number, t: number) {
 }
 
 export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
-  const shape = circuits[raceId];
-  const geo = useMemo(() => (shape ? buildGeometry(shape.points) : null), [shape]);
   const [now, setNow] = useState(() => performance.now());
-  const [allLabels, setAllLabels] = useState(false);
   const raf = useRef<number>();
 
   useEffect(() => {
@@ -186,36 +184,69 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
     };
   }, [anim]);
 
+  const sc = (anim?.to ?? state).safetyCar.active;
+
+  // Positions
+  const target = anim ? anim.to : state;
+  let markers: MapMarker[] = [];
+  const mk = (car: CarState, frac: number, pos: number, inPit?: boolean, stopped?: boolean): MapMarker => ({
+    id: car.id,
+    hex: car.entry.team.hex,
+    short: car.entry.driver.shortName,
+    mine: car.entry.team.id === playerTeamId,
+    frac,
+    pos,
+    inPit,
+    stopped,
+  });
+
+  if (target.lap === 0 && !anim) {
+    // on the grid, just behind the line
+    markers = target.cars.map((c, i) => mk(c, -0.004 - i * 0.0035, i + 1));
+  } else {
+    const prog = lapProgressDetailed(target, anim, now, anim ? state : null);
+    markers = target.cars
+      .filter((c) => prog[c.id])
+      .map((c) => mk(c, prog[c.id].frac, target.cars.indexOf(c) + 1, prog[c.id].inPit, prog[c.id].stopped));
+    // live positions: who is ahead on track right now (not the order at the end of the lap)
+    if (anim) [...markers].filter((m) => !m.stopped).sort((a, b) => b.frac - a.frac).forEach((m, i) => (m.pos = i + 1));
+  }
+  return <CircuitMap raceId={raceId} markers={markers} highlight={sc ? "SAFETY CAR" : undefined} />;
+}
+
+export interface MapMarker {
+  id: string;
+  hex: string;
+  short: string;
+  mine: boolean;
+  frac: number;
+  pos?: number; // shown in the label (and used to draw the leaders on top)
+  inPit?: boolean;
+  stopped?: boolean;
+  tag?: string; // extra label text (e.g. "OUT", "VR")
+  dim?: boolean; // not on a timed lap
+  label?: boolean; // force the name label
+}
+
+/** The circuit with cars on it (shared by the race and the qualifying). */
+export function CircuitMap({ raceId, markers: input, highlight }: { raceId: number; markers: MapMarker[]; highlight?: string }) {
+  const shape = circuits[raceId];
+  const geo = useMemo(() => (shape ? buildGeometry(shape.points) : null), [shape]);
+  const [allLabels, setAllLabels] = useState(false);
   if (!shape || !geo) return null;
 
   const pad = 70;
   const vb = `${-pad} ${-pad} ${shape.width + pad * 2} ${shape.height + pad * 2}`;
   const pathD = "M" + geo.points.map((p) => `${p[0]},${p[1]}`).join("L") + "Z";
-  const sc = (anim?.to ?? state).safetyCar.active;
-
-  // Positions
-  const target = anim ? anim.to : state;
-  let markers: { car: CarState; frac: number; pos: number; inPit?: boolean; stopped?: boolean }[] = [];
-
-  if (target.lap === 0 && !anim) {
-    // on the grid, just behind the line
-    markers = target.cars.map((c, i) => ({ car: c, frac: -0.004 - i * 0.0035, pos: i + 1 }));
-  } else {
-    const prog = lapProgressDetailed(target, anim, now, anim ? state : null);
-    markers = target.cars
-      .filter((c) => prog[c.id])
-      .map((c) => ({ car: c, frac: prog[c.id].frac, pos: target.cars.indexOf(c) + 1, inPit: prog[c.id].inPit, stopped: prog[c.id].stopped }));
-    // live positions: who is ahead on track right now (not the order at the end of the lap)
-    if (anim) [...markers].filter((m) => !m.stopped).sort((a, b) => b.frac - a.frac).forEach((m, i) => (m.pos = i + 1));
-  }
-
+  const sc = highlight === "SAFETY CAR";
+  const markers = [...input];
   const centre: [number, number] = [shape.width / 2, shape.height / 2];
   const laneSamples = Array.from({ length: 14 }, (_, i) => PIT_ENTRY - 0.01 + ((1.012 - PIT_ENTRY) * i) / 13);
   const laneD = "M" + laneSamples.map((f) => pitLanePoint(geo, f, centre).join(",")).join("L");
   const box = pitLanePoint(geo, PIT_BOX, centre);
 
   // draw back markers first so the leader is on top
-  markers.sort((a, b) => b.pos - a.pos);
+  markers.sort((a, b) => (b.pos ?? 99) - (a.pos ?? 99));
   const [sx, sy] = geo.points[0];
   const [nx, ny] = geo.points[1];
   const ang = Math.atan2(ny - sy, nx - sx) + Math.PI / 2;
@@ -257,32 +288,32 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
         <text x={sx + 14} y={sy - 30} fontSize={22} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="white">
           S1
         </text>
-        {markers.map(({ car, frac, pos, inPit, stopped }) => {
+        {markers.map(({ id, hex, short, mine, frac, pos, inPit, stopped, tag, dim, label }) => {
           const inLane = !!inPit;
           const [x, y] = inLane ? pitLanePoint(geo, frac, centre) : pointAt(geo, frac);
-          const mine = car.entry.team.id === playerTeamId;
           if (stopped)
             return (
-              <g key={car.id} transform={`translate(${x},${y})`} opacity={0.75}>
-                <circle r={mine ? 22 : 17} fill="#3f3f46" stroke={car.entry.team.hex} strokeWidth={5} />
+              <g key={id} transform={`translate(${x},${y})`} opacity={0.75}>
+                <circle r={mine ? 22 : 17} fill="#3f3f46" stroke={hex} strokeWidth={5} />
                 <text x={0} y={8} textAnchor="middle" fontSize={22} fontWeight={800} fill="#f87171">✕</text>
                 <g transform="translate(24,-22)">
                   <rect x={0} y={-24} width={108} height={34} rx={8} fill="#7f1d1d" fillOpacity={0.9} />
                   <text x={10} y={1} fontSize={24} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="white">
-                    {car.entry.driver.shortName} OUT
+                    {short} OUT
                   </text>
                 </g>
               </g>
             );
-          const showLabel = allLabels || mine || pos <= 3;
+          const showLabel = allLabels || mine || label || (pos ?? 99) <= 3;
+          const text = `${pos != null ? `${pos} ` : ""}${short}${tag ? ` ${tag}` : ""}`;
           return (
-            <g key={car.id} transform={`translate(${x},${y})`}>
-              <circle r={mine ? 22 : 17} fill={car.entry.team.hex} stroke={mine ? "white" : "#0b0d12"} strokeWidth={mine ? 6 : 4} />
+            <g key={id} transform={`translate(${x},${y})`} opacity={dim ? 0.55 : 1}>
+              <circle r={mine ? 22 : 17} fill={hex} stroke={mine ? "white" : "#0b0d12"} strokeWidth={mine ? 6 : 4} />
               {showLabel && (
                 <g transform="translate(24,-22)">
-                  <rect x={0} y={-24} width={pos >= 10 ? 112 : 98} height={34} rx={8} fill="#0b0d12" fillOpacity={0.85} />
+                  <rect x={0} y={-24} width={22 + text.length * 12.5} height={34} rx={8} fill="#0b0d12" fillOpacity={0.85} />
                   <text x={10} y={1} fontSize={24} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill={mine ? "white" : "#cbd5e1"}>
-                    {pos} {car.entry.driver.shortName}
+                    {text}
                   </text>
                 </g>
               )}
@@ -296,8 +327,8 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
       >
         {allLabels ? "Ocultar nombres" : "Ver todos los nombres"}
       </button>
-      {sc && (
-        <div className="absolute top-2 left-2 rounded bg-yellow-400 text-black text-[11px] font-racing px-2 py-0.5">SAFETY CAR</div>
+      {highlight && (
+        <div className={cn("absolute top-2 left-2 rounded text-[11px] font-racing px-2 py-0.5", sc ? "bg-yellow-400 text-black" : "bg-white/90 text-black")}>{highlight}</div>
       )}
     </div>
   );
