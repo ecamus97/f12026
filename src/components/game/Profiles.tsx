@@ -6,6 +6,7 @@ import { STAFF_ROLES, STAFF_ROLE_INFO } from "@/data/peopleData";
 import { ageOf, computeStandings, teamStaff, whereIs, reserveDevBonus, type ManagementState, type PeopleState, type StoredRaceResult } from "@/engine";
 import { TeamLogo } from "./visuals";
 import { cn } from "@/lib/utils";
+import { MoodDetail } from "./DriverMood";
 
 export interface SeasonData {
   season: number;
@@ -263,6 +264,13 @@ function DriverProfile({
         <Bar label="Neumáticos" value={d.tyreMgmt} color={color} />
         {rec && ageOf(rec, season) <= 25 && <Bar label="Potencial" value={rec.potential} color="#a78bfa" />}
       </div>
+
+      {rec && (rec.status === "active" || rec.formLog?.length) && (
+        <div className="space-y-2">
+          <div className="tv-label text-muted-foreground">Estado anímico y forma</div>
+          <MoodDetail d={rec} />
+        </div>
+      )}
 
       <div className="space-y-2">
         <div className="tv-label text-muted-foreground">Temporada por temporada</div>

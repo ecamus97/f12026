@@ -35,6 +35,10 @@ import {
   chargePlayer,
   carRankOf,
   startNewSeason,
+  moodAfterRace,
+  moraleOf,
+  BASE_MORALE,
+  withMood,
   type FacilityKey,
   type ManagementState,
   type DriverRecord,
@@ -218,7 +222,7 @@ export function qualiContext(s: GameState): QualiCtx | null {
   if (!race || !weather) return null;
   return {
     track: tunedTrack(race.track, s.simConfig),
-    entries: new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e])),
+    entries: new Map(raceEntries(s).map((e) => [e.driver.id, e])),
     cfg: s.simConfig,
     weather,
   };
@@ -641,7 +645,7 @@ function openWeekend(s0: GameState): GameState {
   const days = qualiDays(s, s.currentRaceIndex)!;
   const ctx = (w: DayWeather): QualiCtx => ({
     track: tunedTrack(race.track, s.simConfig),
-    entries: new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e])),
+    entries: new Map(raceEntries(s).map((e) => [e.driver.id, e])),
     cfg: s.simConfig,
     weather: w,
   });
@@ -662,12 +666,13 @@ function openSprint(s0: GameState): GameState {
   const w = s.weekend;
   if (!w?.sprint || w.sprint.race) return s;
   const race = sprintOf(calendar()[w.raceIndex]);
-  const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
+  const map = new Map(raceEntries(s).map((e) => [e.driver.id, e]));
   const grid = w.sprint.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
   const tuned = { ...race, track: tunedTrack(race.track, s.simConfig) };
   const weather = generateWeather(tuned.track, race.track.laps, ((w.weather?.seed ?? 1) ^ 0x51) >>> 0);
   const rs = createRace(tuned, grid, randomSeed(), s.simConfig, s.playerTeamId, weather);
+  rs.cars = rs.cars.map((c) => ({ ...c, morale: moraleOf(s.people?.drivers[c.id]) }));
   const laps = race.track.laps;
   rs.cars = rs.cars.map((c, i) => {
     const wet = c.plan[0] && (c.plan[0].compound === "I" || c.plan[0].compound === "W");
@@ -684,12 +689,13 @@ function openRace(s0: GameState): GameState {
   const w = s.weekend;
   if (!w || w.race) return s;
   const race = calendar()[w.raceIndex];
-  const map = new Map(entriesFromTeams(s.teamsData).map((e) => [e.driver.id, e]));
+  const map = new Map(raceEntries(s).map((e) => [e.driver.id, e]));
   const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
   const tuned = { ...race, track: tunedTrack(race.track, s.simConfig) };
   const raceForRules = r.highDegTyres ? { ...tuned, track: { ...tuned.track, deg: +(tuned.track.deg * 1.2).toFixed(2) } } : tuned;
   const rs = createRace(raceForRules, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather);
+  rs.cars = rs.cars.map((c) => ({ ...c, morale: moraleOf(s.people?.drivers[c.id]) }));
   rs.rules = { twoCompound: r.twoCompound, overtakeAid: r.overtakeAid, points: POINTS_TABLES[r.points], fastestLapPoint: r.fastestLapPoint };
   return { ...s, weekend: { ...w, race: rs } };
 }
@@ -706,8 +712,34 @@ function pickSprints(cal: Race[], prev: number[], seed: number): number[] {
   return ids.filter((id) => keep.includes(id));
 }
 
-/** Close a race (or the sprint) of the weekend. */
-function finishRaceState(s: GameState): GameState {
+/** Close a race (or the sprint) of the weekend: the drivers' morale and form move with the result. */
+function finishRaceState(s0: GameState): GameState {
+  return finishRaceCore(withRaceMood(s0));
+}
+
+function withRaceMood(s: GameState): GameState {
+  const w = s.weekend;
+  if (!w || !s.people) return s;
+  const sprint = inSprint(w);
+  const race = sprint ? w.sprint!.race : w.race;
+  if (!race?.finished) return s;
+  const m = s.management;
+  const res = moodAfterRace(s.people, classify(race), {
+    season: s.season,
+    round: w.raceIndex + 1,
+    sprint,
+    orders: race.orderLog,
+    playerTeamId: s.playerTeamId,
+    carRank: (teamId) => (m ? carRankOf(m, teamId) : 6),
+  });
+  const management = m && res.notes.length ? { ...m, inbox: [...m.inbox, ...res.notes.map((n) => ({ race: w.raceIndex + 1, ...n }))].slice(-60) } : m;
+  return { ...s, people: res.people, management };
+}
+
+/** Morale and form applied to the drivers' stats for a session. */
+const raceEntries = (s: GameState): Entry[] => withMood(entriesFromTeams(s.teamsData), s.people);
+
+function finishRaceCore(s: GameState): GameState {
   const w0 = s.weekend;
   if (w0 && inSprint(w0)) {
     const sr = w0.sprint!.race;
@@ -1457,6 +1489,13 @@ export function useGameState() {
       const adv = advanceSeason({ ...s.people, salaryCap: rules.salaryCap }, s.teamsData, s.playerTeamId, carRanks, form);
       const news = adv.news;
       let people = adv.people;
+      // the winter break calms everyone down: morale halfway back to normal
+      people = {
+        ...people,
+        drivers: Object.fromEntries(
+          Object.entries(people.drivers).map(([id, d]) => [id, d.morale == null ? d : { ...d, morale: +(BASE_MORALE + (d.morale - BASE_MORALE) * 0.5).toFixed(1) }]),
+        ),
+      };
       if (rules.salaryCap) {
         const cap = rules.salaryCap;
         const clip = (c: typeof people.drivers[string]["contract"]) => (c && c.salary > cap ? { ...c, salary: cap } : c);

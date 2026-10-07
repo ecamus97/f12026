@@ -2,7 +2,8 @@
 import type { Race } from "@/data/f1Data";
 import { pointsSystem } from "@/data/f1Data";
 import { createRng, type Rng } from "./rng";
-import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, ErsMode, FuelMode, RaceEvent, RaceState, SimConfig, Stint } from "./types";
+import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, ErsMode, FuelMode, Instruction, RaceEvent, RaceState, SimConfig, Stint, TeamOrder } from "./types";
+import { obeyChance } from "./mood";
 import { DEFAULT_SIM_CONFIG } from "./types";
 import {
   bestTyreFor, COMPOUNDS, DIRTY_AIR_WINDOW, ERS_MODES, FUEL_MARGIN, FUEL_MODES, isWetTyre, MIN_GAP, MODES,
@@ -189,6 +190,18 @@ export function simulateLap(prev: RaceState): RaceState {
     car.tyreAge += 1;
     const e = car.entry;
 
+    // --- Battles: instructions to attack the car ahead or defend from the one behind ---
+    const gapAheadNow = idx > 0 ? prevTotals[idx] - prevTotals[idx - 1] : 99;
+    const gapBehindNow = idx < running.length - 1 ? prevTotals[idx + 1] - prevTotals[idx] : 99;
+    if (!car.controlled) {
+      // the AI fights hard near the end, or when someone is right behind
+      const late = state.totalLaps - lap < 15;
+      car.instruction = late && gapAheadNow < 1.0 ? "attack" : gapBehindNow < 0.7 || (late && gapBehindNow < 1.0) ? "defend" : "free";
+    }
+    const attacking = !scLap && !standing && car.instruction === "attack" && gapAheadNow < 1.0;
+    const defending = !scLap && !standing && car.instruction === "defend" && gapBehindNow < 1.0;
+    const battleRisk = (attacking ? 1.4 : 1) * (defending ? 1.3 : 1);
+
     // --- Energy (ERS) and fuel ---
     if (!car.controlled) {
       const gapAhead = idx > 0 ? prevTotals[idx] - prevTotals[idx - 1] : 99;
@@ -201,7 +214,9 @@ export function simulateLap(prev: RaceState): RaceState {
     const bf = blend ? Math.max(0, Math.min(1, blend.frac)) : 0; // share of the lap run with the previous modes
     const batteryBefore = car.battery ?? 80;
     const charge = blend ? ERS_MODES[blend.ersMode].charge * bf + ERS_MODES[ers].charge * (1 - bf) : ERS_MODES[ers].charge;
-    car.battery = Math.max(0, Math.min(100, batteryBefore + (scLap ? 15 : charge)));
+    // fighting wheel to wheel uses extra energy
+    const battleDrain = attacking ? 4 : defending ? 3 : 0;
+    car.battery = Math.max(0, Math.min(100, batteryBefore + (scLap ? 15 : charge) - battleDrain));
     const lapsToGo = state.totalLaps - lap + 1;
     const burnRate = blend
       ? FUEL_MODES[blend.fuelMode].burn * bf + FUEL_MODES[car.fuelMode ?? "normal"].burn * (1 - bf)
@@ -228,7 +243,7 @@ export function simulateLap(prev: RaceState): RaceState {
 
     // --- Retirements ---
     const slickOnWet = !isWetTyre(car.compound) && wet > 0.3 ? 1 + 8 * (wet - 0.3) : 1;
-    const risk = MODES[car.mode].risk * (1 + 2 * wet) * slickOnWet;
+    const risk = MODES[car.mode].risk * (1 + 2 * wet) * slickOnWet * battleRisk;
     const lap1 = lap === 1 ? 4 : 1;
     const mech = (100 - e.team.reliability) * 0.00011 * config.incidents;
     const crash = (100 - e.driver.consistency) * 0.00004 * config.incidents * lap1 * risk * (scLap ? 0.1 : 1);
@@ -290,6 +305,8 @@ export function simulateLap(prev: RaceState): RaceState {
         time = before * bf + time * (1 - bf);
       }
       time += liftAndCoast;
+      if (attacking) time -= 0.05; // pushing to stay in the slipstream
+      if (defending) time += 0.08; // defensive lines cost time
       if (standing) time += 2.5 + idx * 0.05; // standing start (race start or red-flag restart)
       // dirty air
       if (idx > 0) {
@@ -366,6 +383,8 @@ export function simulateLap(prev: RaceState): RaceState {
 
   // --- Order & overtakes ---
   const order = running.filter((c) => c.status === "running");
+  applyTeamOrders(state, order, lap, rng, events, scLap);
+  const contacted = new Set<string>();
   const bonus = standing ? 1.2 : restart ? 0.6 : 0;
   for (let i = 1; i < order.length; i++) {
     let j = i;
@@ -393,12 +412,50 @@ export function simulateLap(prev: RaceState): RaceState {
         }
         break;
       }
+      const sameTeam = behind.entry.team.id === ahead.entry.team.id;
+      if (sameTeam && behind.total < ahead.total && state.teamOrders?.[behind.entry.team.id]?.kind === "hold") {
+        // team order: hold positions
+        behind.total = ahead.total + MIN_GAP + rng.next() * 0.3;
+        break;
+      }
       if (behind.total < ahead.total) {
         const delta = ahead.total - behind.total;
+        const atk = behind.instruction === "attack" ? 0.7 * (behind.entry.driver.racecraft / 90) : 0;
+        const def = ahead.instruction === "defend" ? 1.0 * (ahead.entry.driver.defending / 90) : 0;
+        // wheel to wheel: hard fights (and teammates racing each other) can end in contact
+        if ((atk || def || sameTeam) && !contacted.has(behind.id) && !standing) {
+          const cons = (200 - behind.entry.driver.consistency - ahead.entry.driver.consistency) / 40;
+          const pc = 0.0015 * (atk ? 1.8 : 1) * (def ? 1.8 : 1) * (sameTeam ? 1.5 : 1) * config.incidents * (1 + wet) * (1 + cons);
+          if (rng.chance(pc)) {
+            contacted.add(behind.id);
+            contacted.add(ahead.id);
+            const victim = rng.chance(0.5) ? behind : ahead;
+            const other = victim === behind ? ahead : behind;
+            const loss = 3 + rng.next() * 5;
+            victim.total += loss;
+            other.total += 0.5 + rng.next();
+            if (lap < state.totalLaps - 1) victim.pitRequest = victim.pitRequest ?? victim.plan[1]?.compound ?? victim.compound;
+            events.push({
+              lap,
+              type: "mistake",
+              text: `💥 Contacto entre ${name(behind)} y ${name(ahead)}${sameTeam ? " (¡compañeros de equipo!)" : ""}: ${name(victim)} daña el alerón y pierde ${loss.toFixed(0)}s`,
+              drivers: [victim.id, other.id], // the damaged car first
+              at: +(0.2 + rng.next() * 0.7).toFixed(3),
+            });
+            if (behind.total >= ahead.total + MIN_GAP) break;
+            continue;
+          }
+        }
         const ersBonus =
           (behind.ersMode === "deploy" && (behind.battery ?? 0) > 10 ? 0.6 : 0) -
           (ahead.ersMode === "deploy" && (ahead.battery ?? 0) > 10 ? 0.4 : 0);
-        const p = overtakeChance({ delta, attacker: behind.entry, defender: ahead.entry, track, bonus: bonus + ersBonus + (state.rules?.overtakeAid ? 0.6 : 0) });
+        const p = overtakeChance({
+          delta,
+          attacker: behind.entry,
+          defender: ahead.entry,
+          track,
+          bonus: bonus + ersBonus + (state.rules?.overtakeAid ? 0.6 : 0) + atk - def,
+        });
         if (rng.chance(p)) {
           order[j] = ahead;
           order[j - 1] = behind;
@@ -555,7 +612,74 @@ export function simulateToEnd(state: RaceState): RaceState {
   return s;
 }
 
+/**
+ * Team orders that act at the end of a lap: a driver lets his teammate through when told to
+ * (if he's close enough, and if his morale lets him accept it). After the swap, positions are held.
+ */
+function applyTeamOrders(state: RaceState, order: CarState[], lap: number, rng: Rng, events: RaceEvent[], scLap: boolean) {
+  if (!state.teamOrders) return;
+  for (const [teamId, ord] of Object.entries(state.teamOrders)) {
+    if (ord.kind !== "swap" || !ord.favored) continue;
+    const f = order.find((c) => c.id === ord.favored);
+    const y = order.find((c) => c.entry.team.id === teamId && c.id !== ord.favored);
+    if (!f || !y) {
+      state.teamOrders[teamId] = { kind: "free", since: lap };
+      continue;
+    }
+    if (f.total <= y.total) {
+      state.teamOrders[teamId] = { kind: "hold", since: lap }; // already ahead
+      continue;
+    }
+    const fi = order.indexOf(f);
+    const yi = order.indexOf(y);
+    const between = order.some((c) => c !== f && c !== y && c.total > y.total && c.total < f.total);
+    if (scLap || between || fi !== yi + 1 || f.total - y.total > 2.5) {
+      if (lap - ord.since >= 5) {
+        state.teamOrders[teamId] = { kind: "free", since: lap };
+        events.push({ lap, type: "mistake", text: `📻 Orden de equipo cancelada: ${name(f)} no logró acercarse a ${name(y)}`, drivers: [f.id, y.id], at: 0.9 });
+      }
+      continue;
+    }
+    const obeyed = rng.chance(obeyChance(y.morale ?? 65));
+    state.orderLog = [...(state.orderLog ?? []), { lap, teamId, kind: "swap", yielded: y.id, favored: f.id, obeyed }];
+    if (obeyed) {
+      f.total = Math.min(f.total, y.total - 0.05);
+      y.total = f.total + MIN_GAP + 0.35;
+      order[yi] = f;
+      order[fi] = y;
+      events.push({ lap, type: "overtake", text: `🔁 ${name(y)} deja pasar a ${name(f)} (orden de equipo)`, drivers: [f.id, y.id], at: 0.7 });
+      state.teamOrders[teamId] = { kind: "hold", since: lap };
+    } else {
+      events.push({ lap, type: "mistake", text: `📻 ${name(y)} ignora la orden de equipo y no deja pasar a ${name(f)}`, drivers: [y.id, f.id], at: 0.7 });
+      state.teamOrders[teamId] = { kind: "free", since: lap };
+    }
+  }
+}
+
 /** Manager controls */
+export function setInstruction(state: RaceState, driverId: string, instruction: Instruction): RaceState {
+  return { ...state, cars: state.cars.map((c) => (c.id === driverId ? { ...c, instruction } : c)) };
+}
+export function setTeamOrder(state: RaceState, teamId: string, order: Omit<TeamOrder, "since">): RaceState {
+  const prev = state.teamOrders?.[teamId];
+  const log =
+    order.kind === "hold" && prev?.kind !== "hold"
+      ? (() => {
+          // the car behind is held back: noted for morale if he was the quicker one
+          const cars = state.cars.filter((c) => c.entry.team.id === teamId && c.status === "running");
+          if (cars.length < 2) return [];
+          const [a, b] = cars;
+          return b.lastLap < a.lastLap - 0.2
+            ? [{ lap: state.lap, teamId, kind: "hold" as const, yielded: b.id, favored: a.id, obeyed: true }]
+            : [];
+        })()
+      : [];
+  return {
+    ...state,
+    teamOrders: { ...(state.teamOrders ?? {}), [teamId]: { ...order, since: state.lap } },
+    orderLog: [...(state.orderLog ?? []), ...log],
+  };
+}
 /** Tyres to fit during a red flag (applied at the restart). */
 export function setRedFlagTyre(state: RaceState, driverId: string, compound: Compound): RaceState {
   if (!state.redFlag) return state;

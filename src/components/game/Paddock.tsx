@@ -11,6 +11,7 @@ import { carRankOf, ageOf, teamStaff, signedFor, pendingMega, MEGA_PREP_MAX, typ
 import { STAFF_ROLES, STAFF_ROLE_INFO } from "@/data/peopleData";
 import { CarSilhouette, CircuitOutline, DriverNumber, SectionTitle, StatTile, TeamLogo } from "./visuals";
 import { InboxList, money } from "./TeamHQ";
+import { MoodSummary } from "./DriverMood";
 import { cn } from "@/lib/utils";
 
 export type NavTarget = "weekend" | "car" | "drivers" | "staff" | "finance" | "rules" | "standings" | "calendar" | "news";
@@ -201,6 +202,11 @@ export function Paddock({
                     <div className="text-[11px] text-muted-foreground mt-2">
                       {ageOf(rec, season)} años · ritmo {rec.pace.toFixed(0)} · contrato hasta {rec.contract?.until ?? "—"}
                       {rec.contract && rec.contract.until <= season && !rec.nextContract && <span className="text-yellow-300"> · termina este año</span>}
+                    </div>
+                  )}
+                  {rec && (
+                    <div className="mt-2 max-w-sm">
+                      <MoodSummary d={rec} />
                     </div>
                   )}
                 </div>

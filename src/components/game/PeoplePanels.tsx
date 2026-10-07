@@ -12,6 +12,7 @@ import {
 } from "@/engine";
 import { TeamStripe } from "./common";
 import { cn } from "@/lib/utils";
+import { MoodSummary } from "./DriverMood";
 
 const m1 = (x: number) => `US$ ${x.toFixed(1)} M`;
 
@@ -129,6 +130,9 @@ export function DriversPanel({
                 </span>
               </div>
               <Ratings d={d} season={season} />
+              <div className="mt-3 rounded-md bg-black/20 p-2">
+                <MoodSummary d={d} />
+              </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                 {renewed ? (
                   <span className="text-green-400 flex items-center gap-1">

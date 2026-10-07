@@ -13,6 +13,8 @@ import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
 import { TrackMap, lapProgressDetailed, type LapAnimation } from "./TrackMap";
 import { StrategyPlanner } from "./StrategyPlanner";
+import { DuelPanel, TeamOrdersPanel } from "./RaceInstructions";
+import { moraleLabel } from "@/engine";
 import { WeatherWidget } from "./WeatherWidget";
 import { cn } from "@/lib/utils";
 
@@ -414,6 +416,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
         {myCars.length > 0 && (state.lap > 0 || anim) && (
           <div className="panel p-3 space-y-3 lg:col-start-2">
             <div className="tv-label bg-primary text-primary-foreground w-fit px-3 py-1 clip-slant pr-6">Muro de boxes</div>
+            {playerTeamId && <TeamOrdersPanel state={state} teamId={playerTeamId} onApply={apply} />}
             {myCars.map((car) => (
               <PitWallCard
                 key={car.id}
@@ -642,7 +645,7 @@ function PitWallCard({
   const compounds = Object.keys(COMPOUNDS) as Compound[];
   const sc = state.safetyCar.active;
   const plannedCompounds = new Set([...car.usedCompounds, ...car.plan.map((s) => s.compound)]);
-  const ruleRisk = plannedCompounds.size < 2;
+  const ruleRisk = state.rules?.twoCompound !== false && plannedCompounds.size < 2;
 
   return (
     <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-3">
@@ -654,6 +657,11 @@ function PitWallCard({
           </div>
           <div className="text-[11px] text-muted-foreground">
             {dnf ? `Abandono: ${car.dnfReason}` : preRace ? `Sale desde P${car.grid}` : `${stops} parada${stops === 1 ? "" : "s"}`}
+            {car.morale != null && (
+              <span className={cn("ml-2", moraleLabel(car.morale).tone)} title="Moral del piloto al empezar la carrera">
+                · moral {Math.round(car.morale)}
+              </span>
+            )}
           </div>
         </div>
         {!dnf && <TyreBadge compound={tyre} />}
@@ -670,6 +678,8 @@ function PitWallCard({
           </div>
         </div>
       )}
+
+      {!dnf && !preRace && <DuelPanel car={car} state={state} onMode={onMode} />}
 
       {!dnf && (
         <div className="rounded-md border border-border/60 p-2 space-y-2">

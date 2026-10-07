@@ -74,10 +74,15 @@ describe("manager controls", () => {
         s = editNextStop(s, c.id, { remove: true });
       });
       const end = simulateToEnd(s);
-      // the only exception: a puncture on worn-out tyres forces a stop
-      end.cars
-        .filter((c) => c.controlled)
-        .forEach((c) => expect(c.stops).toBe(end.events.filter((e) => e.type === "puncture" && e.drivers[0] === c.id && e.lap < end.totalLaps).length));
+      // the only exceptions: a puncture on worn-out tyres or a broken wing after contact force a stop
+      const forced = (id: string) =>
+        end.events.filter(
+          (e) =>
+            e.drivers[0] === id &&
+            ((e.type === "puncture" && e.lap < end.totalLaps) || (e.text.includes("alerón") && e.lap < end.totalLaps - 1)),
+        ).length;
+      end.cars.filter((c) => c.controlled).forEach((c) => expect(c.stops).toBeLessThanOrEqual(forced(c.id)));
+      end.cars.filter((c) => c.controlled && !forced(c.id)).forEach((c) => expect(c.stops).toBe(0));
     }
   });
 
@@ -191,8 +196,12 @@ describe("red flag", () => {
       const redLaps = end.events.filter((e) => e.type === "red").map((e) => e.lap);
       reds += redLaps.length;
       for (const l of redLaps) {
-        const sc = end.events.filter((e) => e.type === "sc" && (e.lap === l || e.lap === l + 1));
-        expect(sc).toEqual([]);
+        // no safety car on the red-flag lap, and the restart is a standing start: a safety car on that
+        // lap can only come from a new crash after the start, never out of nowhere
+        expect(end.events.filter((e) => e.type === "sc" && e.lap === l)).toEqual([]);
+        expect(end.events.filter((e) => e.type === "sc" && e.lap === l + 1 && e.text.includes("escombros"))).toEqual([]);
+        const scRestart = end.events.find((e) => e.type === "sc" && e.lap === l + 1);
+        if (scRestart) expect(end.events.some((e) => e.type === "dnf" && e.lap === l + 1)).toBe(true);
         expect(end.events.some((e) => e.type === "green" && e.lap === l + 1)).toBe(true);
       }
     }

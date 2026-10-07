@@ -4,6 +4,14 @@ export type Compound = "S" | "M" | "H" | "I" | "W";
 export type DriverMode = "push" | "normal" | "conserve"; // tyre usage
 export type FuelMode = "rich" | "normal" | "lean";
 export type ErsMode = "deploy" | "balanced" | "harvest";
+/** How the driver races the cars around him. */
+export type Instruction = "free" | "attack" | "defend";
+/** Orders between the two cars of a team: fight, hold positions, or let `favored` through. */
+export interface TeamOrder {
+  kind: "free" | "hold" | "swap";
+  favored?: string;
+  since: number; // lap it was given
+}
 
 export interface Entry {
   driver: Driver;
@@ -67,6 +75,8 @@ export interface CarState {
   lastPitTime?: number; // seconds spent in the pit lane at the end of the last lap (0 = no stop)
   pitFrom?: { compound: Compound; tyreAge: number; stops: number }; // tyres before this lap's stop (for the live view)
   prevLastLap?: number; // lap time of the lap before (shown while the car is still finishing it)
+  instruction?: Instruction; // attack the car ahead / defend from the one behind
+  morale?: number; // driver's morale at the start (team orders may be ignored when low)
 }
 
 export type RaceEventType =
@@ -99,6 +109,8 @@ export interface RaceState {
   redFlag?: { lap: number; choices: Record<string, Compound> } | null;
   standingRestart?: boolean;
   rules?: { twoCompound: boolean; overtakeAid: boolean; points?: number[]; fastestLapPoint?: boolean };
+  teamOrders?: Record<string, TeamOrder>; // per team
+  orderLog?: import("./mood").OrderLog[]; // team orders given (for the drivers' morale)
 }
 
 export interface ClassifiedRow {

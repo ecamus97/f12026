@@ -51,6 +51,8 @@ export interface DriverRecord extends Driver {
   reserveUntil?: number;
   seriesSeasons?: number; // juniors: seasons in the current series
   mods?: { stat: string; delta: number; label: string; season: number }[]; // recent changes from events
+  morale?: number; // 0-100 (65 = neutral)
+  formLog?: import("./mood").FormEntry[]; // last Grand Prix results against expectations
 }
 
 export interface StaffRecord {
