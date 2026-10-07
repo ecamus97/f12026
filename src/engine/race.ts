@@ -200,7 +200,7 @@ export function simulateLap(prev: RaceState): RaceState {
     }
     const attacking = !scLap && !standing && car.instruction === "attack" && gapAheadNow < 1.0;
     const defending = !scLap && !standing && car.instruction === "defend" && gapBehindNow < 1.0;
-    const battleRisk = (attacking ? 1.4 : 1) * (defending ? 1.3 : 1);
+    const battleRisk = (attacking ? 1.2 : 1) * (defending ? 1.15 : 1);
 
     // --- Energy (ERS) and fuel ---
     if (!car.controlled) {
@@ -306,7 +306,7 @@ export function simulateLap(prev: RaceState): RaceState {
       }
       time += liftAndCoast;
       if (attacking) time -= 0.05; // pushing to stay in the slipstream
-      if (defending) time += 0.08; // defensive lines cost time
+      if (defending) time += 0.06; // defensive lines cost time
       if (standing) time += 2.5 + idx * 0.05; // standing start (race start or red-flag restart)
       // dirty air
       if (idx > 0) {
@@ -381,6 +381,15 @@ export function simulateLap(prev: RaceState): RaceState {
     }
   });
 
+  // --- Safety car called on this lap? From that moment nobody can pass on track ---
+  let deploySc = false;
+  if (!scLap && !newRedFlag && config.safetyCar && lap < state.totalLaps - 2) {
+    // none out of nowhere on a standing-start lap
+    const randomSc = !standing && rng.chance(((state.track.scChance * 0.4) / state.totalLaps) * (1 + 3 * wet));
+    deploySc = newSafetyCar || randomSc;
+  }
+  const neutral = scLap || deploySc || !!newRedFlag;
+
   // --- Order & overtakes ---
   const order = running.filter((c) => c.status === "running");
   applyTeamOrders(state, order, lap, rng, events, scLap);
@@ -393,15 +402,9 @@ export function simulateLap(prev: RaceState): RaceState {
       const ahead = order[j - 1];
       if (behind.total >= ahead.total + MIN_GAP) break;
       const pitSwap = behind.pittedThisLap || ahead.pittedThisLap;
-      if (pitSwap || scLap) {
-        if (behind.total < ahead.total && !scLap) {
-          order[j] = ahead;
-          order[j - 1] = behind;
-          j--;
-          continue;
-        }
-        if (scLap && behind.total < ahead.total) {
-          // no passing under SC (pit lane order still counts)
+      if (pitSwap || neutral) {
+        if (behind.total < ahead.total) {
+          // positions change through the pit lane; on track nobody passes under a safety car or red flag
           if (pitSwap) {
             order[j] = ahead;
             order[j - 1] = behind;
@@ -421,7 +424,7 @@ export function simulateLap(prev: RaceState): RaceState {
       if (behind.total < ahead.total) {
         const delta = ahead.total - behind.total;
         const atk = behind.instruction === "attack" ? 0.7 * (behind.entry.driver.racecraft / 90) : 0;
-        const def = ahead.instruction === "defend" ? 1.0 * (ahead.entry.driver.defending / 90) : 0;
+        const def = ahead.instruction === "defend" ? 1.3 * (ahead.entry.driver.defending / 90) : 0;
         // wheel to wheel: hard fights (and teammates racing each other) can end in contact
         if ((atk || def || sameTeam) && !contacted.has(behind.id) && !standing) {
           const cons = (200 - behind.entry.driver.consistency - ahead.entry.driver.consistency) / 40;
@@ -492,11 +495,9 @@ export function simulateLap(prev: RaceState): RaceState {
       sc.restartLap = true;
       events.push({ lap, type: "sc_end", text: "Safety car entra a pits — ¡relanzamiento!", drivers: [], at: 0.96 });
     }
-  } else if (config.safetyCar && lap < state.totalLaps - 2 && !newRedFlag) {
-    // a red flag already neutralises the race (and restarts from the grid): no safety car on top of it,
-    // and none out of nowhere on the standing-start lap
-    const randomSc = !standing && rng.chance(((state.track.scChance * 0.4) / state.totalLaps) * (1 + 3 * wet));
-    if (newSafetyCar || randomSc) {
+  } else if (deploySc) {
+    // (a red flag already neutralises the race and restarts from the grid: no safety car on top of it)
+    {
       sc.active = true;
       sc.lapsLeft = rng.int(3, 5);
       events.push({

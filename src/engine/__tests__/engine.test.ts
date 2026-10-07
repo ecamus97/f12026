@@ -180,7 +180,8 @@ describe("sectors", () => {
   it("AI keeps rain tyres through a short dry spell instead of flip-flopping", () => {
     const r = races2026[3];
     const L = r.track.laps;
-    const s0 = createRace(r, allEntries(), 3);
+    // no safety cars: cheap stops behind one would hide what the weather calls do
+    const s0 = createRace(r, allEntries(), 3, { ...DEFAULT_SIM_CONFIG, safetyCar: false });
     const wet = Array.from({ length: L + 1 }, (_, i) => (i < 10 ? 0 : i < 22 ? 0.45 : i < 26 ? 0.12 : i < 40 ? 0.45 : 0));
     const end = simulateToEnd({ ...s0, weather: { ...s0.weather!, wet, rain: wet.map((w) => (w > 0.3 ? 0.5 : 0)) } });
     const avgStops = end.cars.reduce((a, c) => a + c.stops, 0) / end.cars.length;
@@ -206,5 +207,25 @@ describe("red flag", () => {
       }
     }
     expect(reds).toBeGreaterThan(0);
+  });
+});
+
+describe("safety car", () => {
+  it("nobody changes position on track under the safety car (only through the pits)", () => {
+    let scLaps = 0;
+    for (let seed = 1; seed <= 80; seed++) {
+      let s = createRace(race, allEntries(), seed);
+      while (!s.finished) {
+        const prev = s;
+        s = simulateLap(s);
+        const called = s.events.some((e) => e.lap === s.lap && e.type === "sc");
+        if (!prev.safetyCar.active && !called) continue;
+        scLaps++;
+        const after = s.cars.filter((c) => c.status === "running" && !c.pittedThisLap).map((c) => c.id);
+        const before = prev.cars.filter((c) => c.status === "running").map((c) => c.id).filter((id) => after.includes(id));
+        expect(after).toEqual(before);
+      }
+    }
+    expect(scLaps).toBeGreaterThan(20);
   });
 });

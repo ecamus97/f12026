@@ -184,7 +184,17 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
     };
   }, [anim]);
 
-  const sc = (anim?.to ?? state).safetyCar.active;
+  // the safety car comes out (or goes in) at the moment of the lap it happens, not at the start of it
+  const sc = (() => {
+    if (!anim) return state.safetyCar.active;
+    const p = animProgress(anim, now);
+    const ev = anim.to.events.filter((e) => e.lap === anim.to.lap);
+    const out = ev.find((e) => e.type === "sc");
+    const back = ev.find((e) => e.type === "sc_end");
+    if (out) return p >= (out.at ?? 0.5);
+    if (back) return p < (back.at ?? 0.96);
+    return state.safetyCar.active && anim.to.safetyCar.active;
+  })();
 
   // Positions
   const target = anim ? anim.to : state;

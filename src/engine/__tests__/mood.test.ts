@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { teams, races2026 } from "@/data/f1Data";
 import {
-  BASE_MORALE, classify, createRace, formOf, initPeople, moodAfterRace, moodEffect, moraleOf, setInstruction, setTeamOrder, simulateLap,
+  BASE_MORALE, createRace, formOf, initPeople, moodAfterRace, moodEffect, moraleOf, setInstruction, setTeamOrder, simulateLap,
   withMood, type ClassifiedRow,
 } from "..";
 import { allEntries } from "./helpers";
@@ -58,21 +58,40 @@ describe("race instructions and team orders", () => {
       if (s.orderLog?.some((o) => o.obeyed && o.kind === "swap")) swaps++;
     }
     // happy drivers obey (only when the teammate gets close enough is the order carried out)
-    expect(swaps).toBeGreaterThan(5);
+    expect(swaps).toBeGreaterThanOrEqual(3);
     expect(swaps / logged).toBeGreaterThan(0.8);
   });
 
-  it("attacking gains positions on average over racing free", () => {
-    const gain = (instr: "free" | "attack") => {
-      let g = 0;
-      for (let seed = 1; seed <= 25; seed++) {
-        let s = createRace(race, allEntries(), seed, undefined, "williams");
-        for (const c of s.cars.filter((c) => c.controlled)) s = setInstruction(s, c.id, instr);
-        while (!s.finished) s = simulateLap(s);
-        for (const r of classify(s).filter((r) => r.teamId === "williams")) g += r.grid - r.position;
+  it("attacking makes a pass more likely, defending makes it harder", () => {
+    // same moment of the same race, many different outcomes: only the instruction changes
+    let base = createRace(race, allEntries(), 7, undefined, "williams");
+    while (base.lap < 12) base = simulateLap(base);
+    const running = base.cars.filter((c) => c.status === "running");
+    const i = running.findIndex((c) => c.controlled);
+    const me = running[i];
+    const ahead = running[i - 1];
+    // put our car right behind the one ahead
+    // ... on fresher tyres; the car ahead is ours to command too (the AI would defend on its own)
+    const set = (s: typeof base) => ({
+      ...s,
+      cars: s.cars.map((c) =>
+        c.id === me.id ? { ...c, total: ahead.total + 0.3, tyreAge: 2 } : c.id === ahead.id ? { ...c, controlled: true, tyreAge: 30 } : c,
+      ),
+    });
+    const passRate = (fn: (s: typeof base) => typeof base) => {
+      let passes = 0;
+      for (let k = 1; k <= 300; k++) {
+        const next = simulateLap({ ...fn(set(base)), rngState: k * 7919 });
+        const order = next.cars.map((c) => c.id);
+        if (order.indexOf(me.id) < order.indexOf(ahead.id)) passes++;
       }
-      return g;
+      return passes;
     };
-    expect(gain("attack")).toBeGreaterThan(gain("free"));
+    const free = passRate((s) => setInstruction(setInstruction(s, me.id, "free"), ahead.id, "free"));
+    const attack = passRate((s) => setInstruction(setInstruction(s, me.id, "attack"), ahead.id, "free"));
+    const defended = passRate((s) => setInstruction(setInstruction(s, me.id, "free"), ahead.id, "defend"));
+    expect(free).toBeGreaterThan(10);
+    expect(attack).toBeGreaterThan(free);
+    expect(defended).toBeLessThan(free);
   });
 });

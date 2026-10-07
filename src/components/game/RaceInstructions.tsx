@@ -81,7 +81,7 @@ export function DuelPanel({ car, state, onMode }: { car: CarState; state: RaceSt
           attacker: car.entry,
           defender: ahead.entry,
           track: state.track,
-          bonus: bonus + ersB(car) + (attack ? 0.7 * (car.entry.driver.racecraft / 90) : 0) - (ahead.instruction === "defend" ? ahead.entry.driver.defending / 90 : 0),
+          bonus: bonus + ersB(car) + (attack ? 0.7 * (car.entry.driver.racecraft / 90) : 0) - (ahead.instruction === "defend" ? (1.3 * ahead.entry.driver.defending) / 90 : 0),
         })
       : 0;
   const passedChance = (defend: boolean) =>
@@ -91,7 +91,7 @@ export function DuelPanel({ car, state, onMode }: { car: CarState; state: RaceSt
           attacker: behind.entry,
           defender: car.entry,
           track: state.track,
-          bonus: bonus + ersB(behind) + (behind.instruction === "attack" ? 0.7 * (behind.entry.driver.racecraft / 90) : 0) - (defend ? car.entry.driver.defending / 90 : 0),
+          bonus: bonus + ersB(behind) + (behind.instruction === "attack" ? 0.7 * (behind.entry.driver.racecraft / 90) : 0) - (defend ? (1.3 * car.entry.driver.defending) / 90 : 0),
         })
       : 0;
   const closeAhead = !!ahead && car.total - ahead.total < 1.0;

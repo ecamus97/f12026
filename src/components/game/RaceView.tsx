@@ -110,7 +110,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
       return Math.max(1, lead?.lastLap ?? 90); // lastLap never includes the pit stop
     })();
     const lapTime = (_id: string) => refLap;
-    const isRunning = (c: CarState) => liveCars.get(c.id)?.status === "running";
+    // a car retiring on this lap stays in the classification until it actually stops on track
+    const isRunning = (c: CarState) => liveCars.get(c.id)?.status === "running" || (!!detailed?.[c.id] && !detailed[c.id].stopped);
     const running = state.cars.filter(isRunning).sort((a, b) => progress[b.id] - progress[a.id]);
     const out = state.cars.filter((c) => !isRunning(c)).map((c) => liveCars.get(c.id) ?? c);
     const leaderId = running[0]?.id;
