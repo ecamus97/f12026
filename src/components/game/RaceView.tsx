@@ -36,6 +36,13 @@ const SPEEDS = [
 
 export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round }: Props) {
   const [playing, setPlaying] = useState(false);
+  // after the last lap the cars cross the line and the chequered flag shows before the results
+  const [resultsReady, setResultsReady] = useState(state.finished);
+  useEffect(() => {
+    if (!state.finished || resultsReady) return;
+    const t = window.setTimeout(() => setResultsReady(true), 3500);
+    return () => window.clearTimeout(t);
+  }, [state.finished, resultsReady]);
   const [speed, setSpeed] = useState(0);
   const [showInterval, setShowInterval] = useState(false);
   const [feedFilter, setFeedFilter] = useState<"all" | "mine">("all");
@@ -220,7 +227,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.events, liveEvents.length, feedFilter, playerTeamId]);
 
-  if (state.finished) {
+  if (state.finished && resultsReady) {
     return <RaceResults race={race} state={state} playerTeamId={playerTeamId} onConfirm={onFinish} />;
   }
 
@@ -243,7 +250,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
             <div className="text-right">
               <div className="tv-label text-muted-foreground">Vuelta</div>
               <div className="font-display text-3xl md:text-4xl tabular-nums leading-none">
-                {state.lap}
+                {anim ? anim.to.lap : state.lap}
                 <span className="text-muted-foreground text-lg md:text-xl">/{state.totalLaps}</span>
               </div>
             </div>
@@ -268,7 +275,13 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
 
         {/* Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {state.finished && (
+            <Button onClick={() => setResultsReady(true)} className="font-racing">
+              🏁 Ver resultados
+            </Button>
+          )}
           <Button
+            disabled={state.finished}
             onClick={() => {
               if (state.lap === 0 && !state.strategyConfirmed) apply(confirmStrategy);
               if (playing) {
@@ -301,6 +314,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
               setPlaying(false);
               const base = anim ? anim.to : state;
               setAnim(null);
+              setResultsReady(true);
               onUpdate(simulateToEnd(base));
             }}
             className="ml-auto text-xs font-racing"
