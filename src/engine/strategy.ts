@@ -1,3 +1,4 @@
+import { createRng } from "./rng";
 // AI strategy: builds a tyre plan before the race and makes in-race pit calls.
 import type { Track } from "@/data/f1Data";
 import type { Rng } from "./rng";
@@ -215,6 +216,30 @@ export function replan(fitted: Compound, lap: number, totalLaps: number, track: 
  * `wetSoon` is what the team's radar expects for the next laps. Each driver reacts
  * a little differently (`jitter` in [-1, 1]).
  */
+/**
+ * How a team plays a wet race (fixed per team and race, so teammates follow the same idea):
+ * some stay out to save a stop, some jump early to the next tyre, some think a few laps ahead
+ * (wets → inters → slicks) and others wait for the big change (wets → slicks).
+ */
+export interface WeatherStyle {
+  margin: number; // how much clear gain they want before stopping (low = eager, high = stays out)
+  horizon: number; // how many laps ahead they plan
+  bias: number; // optimist (<0: expects a drier track) or pessimist (>0)
+  early: boolean; // fits the next tyre a lap or two before it's actually quicker (a gamble)
+  label: string;
+}
+
+export function weatherStyle(teamId: string, raceId: number): WeatherStyle {
+  let h = 2166136261 ^ (raceId * 2654435761);
+  for (const ch of teamId) h = Math.imul(h ^ ch.charCodeAt(0), 16777619);
+  const rng = createRng(h >>> 0);
+  const kind = rng.next();
+  if (kind < 0.25) return { margin: 2 + rng.next() * 1.2, horizon: 12 + rng.int(0, 6), bias: rng.next() * 0.08, early: false, label: "conservador" };
+  if (kind < 0.5) return { margin: 0.35 + rng.next() * 0.3, horizon: 4 + rng.int(0, 3), bias: -0.04 - rng.next() * 0.08, early: true, label: "arriesgado" };
+  if (kind < 0.75) return { margin: 0.7 + rng.next() * 0.4, horizon: 5 + rng.int(0, 3), bias: (rng.next() - 0.5) * 0.06, early: false, label: "paso a paso" };
+  return { margin: 1 + rng.next() * 0.6, horizon: 9 + rng.int(0, 5), bias: (rng.next() - 0.5) * 0.08, early: rng.chance(0.3), label: "equilibrado" };
+}
+
 export function aiWeatherPit(
   car: CarState,
   wet: number[], // track wetness per lap (what the team's weather service expects)
@@ -223,12 +248,15 @@ export function aiWeatherPit(
   track: Track,
   jitter: number, // -1..1: each team reads the forecast a little differently
   scActive = false,
+  style?: WeatherStyle,
 ): Compound | null {
   if (lapsLeft <= 2) return null;
   // look ahead over the next laps: stopping only pays if the tyre is clearly better until the
   // conditions change again, by more than the time lost in the pit lane
-  const horizon = Math.min(lapsLeft, 12);
-  const ahead = Array.from({ length: horizon }, (_, k) => Math.max(0, Math.min(1, (wet[Math.min(lap + k, wet.length - 1)] ?? 0) * (1 + jitter * 0.12))));
+  const horizon = Math.min(lapsLeft, style?.horizon ?? 12);
+  const ahead = Array.from({ length: horizon }, (_, k) =>
+    Math.max(0, Math.min(1, (wet[Math.min(lap + k, wet.length - 1)] ?? 0) * (1 + jitter * 0.12) + (style?.bias ?? 0))),
+  );
   const costOver = (c: Compound) => ahead.reduce((a, w) => a + wetPenalty(c, w), 0);
   const dry = dryCompoundFor(lapsLeft, track, car.entry.driver.tyreMgmt);
   const options: Compound[] = [dry, "I", "W"];
@@ -240,7 +268,7 @@ export function aiWeatherPit(
     const same = c === car.compound || (!isWetTyre(c) && !isWetTyre(car.compound));
     if (same) continue;
     // and only once the new tyre is already the quicker one: no point fitting it laps too early
-    const soon = ahead.slice(0, 2);
+    const soon = ahead.slice(0, style?.early ? 4 : 2);
     if (!soon.some((w) => wetPenalty(c, w) < wetPenalty(car.compound, w))) continue;
     const gain = stay - costOver(c) - pitLoss;
     if (gain > bestGain) {
@@ -249,5 +277,5 @@ export function aiWeatherPit(
     }
   }
   // a margin so they don't flip-flop on small differences
-  return bestGain > 3 + pitLoss * 0.25 ? best : null;
+  return bestGain > (3 + pitLoss * 0.25) * (style?.margin ?? 1) ? best : null;
 }

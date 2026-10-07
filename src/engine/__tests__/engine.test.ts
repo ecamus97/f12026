@@ -316,3 +316,26 @@ describe("contact and damage", () => {
     expect(checked).toBeGreaterThan(0);
   });
 });
+
+describe("wet strategies", () => {
+  it("teams don't all play a drying track the same way (wets → inters → slicks, or straight to slicks)", () => {
+    const r = races2026[3];
+    const L = r.track.laps;
+    let viaInters = 0;
+    let straight = 0;
+    for (const seed of [1, 2, 3]) {
+      const s0 = createRace(r, allEntries(), seed, { ...DEFAULT_SIM_CONFIG, safetyCar: false });
+      const wet = Array.from({ length: L + 1 }, (_, i) => (i < 15 ? 0.85 : Math.max(0, 0.85 - (i - 15) * 0.05)));
+      const end = simulateToEnd({ ...s0, weather: { ...s0.weather!, wet, rain: wet.map((_, i) => (i < 15 ? 0.7 : 0)) } });
+      for (const c of end.cars) {
+        const fitted = end.events.filter((e) => e.type === "pit" && e.drivers[0] === c.id).map((e) => e.text);
+        const w = fitted.findIndex((t) => t.includes("Lluvia extrema"));
+        if (w < 0 || w + 1 >= fitted.length) continue;
+        if (fitted[w + 1].includes("Intermedio")) viaInters++;
+        else straight++;
+      }
+    }
+    expect(viaInters).toBeGreaterThan(2);
+    expect(straight).toBeGreaterThan(2);
+  });
+});

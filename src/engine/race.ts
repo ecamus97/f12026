@@ -9,7 +9,7 @@ import {
   bestTyreFor, COMPOUNDS, DIRTY_AIR_WINDOW, ERS_MODES, FUEL_MARGIN, FUEL_MODES, isWetTyre, MIN_GAP, MODES,
   overtakeChance, raceLapTime, tyreLife,
 } from "./model";
-import { advancePlan, aiPitDecision, aiWeatherPit, buildPlan, normalisePlan, recommendPlans, replan } from "./strategy";
+import { advancePlan, aiPitDecision, aiWeatherPit, buildPlan, normalisePlan, recommendPlans, replan, weatherStyle } from "./strategy";
 import { generateWeather, type WeatherTimeline } from "./weather";
 
 const clone = <T,>(x: T): T => structuredClone(x);
@@ -30,7 +30,16 @@ export function createRace(
     const controlled = entry.team.id === playerTeamId;
     // player cars start from the engineer's recommendation (editable before the start)
     let plan = controlled ? recommendPlans(entry, track, 1)[0].plan : buildPlan(track, entry.driver.tyreMgmt, rng);
-    if (startTyre !== "slick") plan = replan(startTyre, 0, track.laps, track, entry.driver.tyreMgmt); // wet start
+    // wet start: on a borderline track the gamblers start on the less wet tyre
+    let start: "slick" | "I" | "W" = startTyre;
+    if (!controlled && start === "slick" && (wx.wet[0] ?? 0) > 0.1 && weatherStyle(entry.team.id, race.id).margin > 2) start = "I"; // damp: the careful ones play safe
+    else if (!controlled && start !== "slick") {
+      const st = weatherStyle(entry.team.id, race.id);
+      const w0 = wx.wet[0] ?? 0;
+      if (st.early && start === "W" && w0 < 0.8) start = "I";
+      else if (st.margin > 2 && start === "I" && w0 > 0.55) start = "W"; // the careful ones go full wets
+    }
+    if (start !== "slick") plan = replan(start, 0, track.laps, track, entry.driver.tyreMgmt);
     return {
       id: entry.driver.id,
       entry,
@@ -410,7 +419,7 @@ export function simulateLap(prev: RaceState): RaceState {
     if (lap < state.totalLaps) {
       const jitter = ((car.id.charCodeAt(0) * 31 + car.id.charCodeAt(1) * 7 + lap) % 21) / 10 - 1;
       const weatherCall =
-        !car.controlled && wx ? aiWeatherPit(car, wx.wet, lap, state.totalLaps - lap, track, jitter, scLap) : null;
+        !car.controlled && wx ? aiWeatherPit(car, wx.wet, lap, state.totalLaps - lap, track, jitter, scLap, weatherStyle(car.entry.team.id, state.raceId)) : null;
       const call = car.pitRequest ?? weatherCall ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
       if (call) {
         const manual = !!car.pitRequest;

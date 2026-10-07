@@ -213,7 +213,8 @@ function buildRun(ctx: QualiCtx, live: QualiLive, id: string, start: number, k: 
   const T0 = live.offset + start;
   const out = L * OUT * (1 + dayConditions(ctx.weather, T0).wet * 0.15);
   const flyStart = start + out;
-  const compound = tyre ?? tyreFor(dayConditions(ctx.weather, T0 + out * 0.7).wet); // chosen in the garage, with the radar
+  // chosen in the garage, with the radar (and each team's own reading of it)
+  const compound = tyre ?? tyreFor(Math.max(0, dayConditions(ctx.weather, T0 + out * 0.7).wet + qualiStyle(e.team.id, live.seed).bias));
   const midT = live.offset + flyStart + L / 2;
   const c = dayConditions(ctx.weather, midT);
   const cons = e.driver.consistency;
@@ -362,6 +363,13 @@ export function tyreOptions(ctx: QualiCtx, live: QualiLive, id: string, start = 
   return costs.map((x) => ({ compound: x.compound, loss: +(x.cost - min).toFixed(1), best: x.cost === min }));
 }
 
+/** Each team's approach to a changing track: optimists/pessimists about the rain, early bankers or late gamblers. */
+export function qualiStyle(teamId: string, seed: number) {
+  const r1 = hash01(seed, strHash(teamId), 501);
+  const r2 = hash01(seed, strHash(teamId), 502);
+  return { bias: +((r1 - 0.5) * 0.12).toFixed(3), late: +((r2 - 0.5) * 0.7).toFixed(3) };
+}
+
 /** When the engineers would send a car out from `from` on (seconds of the session). */
 export function engineerPlan(ctx: QualiCtx, live: QualiLive, id: string, from: number, runsLeft = 2): number[] {
   const e = ctx.entries.get(id)!;
@@ -388,14 +396,19 @@ export function engineerPlan(ctx: QualiCtx, live: QualiLive, id: string, from: n
     return runs.slice(-runsLeft).map((s) => Math.round(clearOfFlags(live, s))).filter((s) => s <= last);
   } else {
     // weather matters: go when the conditions look best, with a banker lap where it fits
-    const top = cands.reduce((a, c) => (c.v > a.v ? c : a), { s: from, v: -Infinity });
+    // late gamblers wait for the track to come to them; others bank a lap as soon as they can
+    const st = qualiStyle(e.team.id, live.seed);
+    const scored = cands.map((c) => ({ s: c.s, v: c.v + st.late * (c.s / live.duration) }));
+    const top = scored.reduce((a, c) => (c.v > a.v ? c : a), { s: from, v: -Infinity });
     // not everyone at the same second: some go a little earlier when that costs almost nothing
-    const near = cands.filter((c) => c.s <= top.s && c.s >= top.s - 60 && c.v >= top.v - 0.15);
+    const near = scored.filter((c) => c.s <= top.s && c.s >= top.s - 60 && c.v >= top.v - 0.15);
     const best = near.length ? near[Math.floor(j2 * near.length)].s : top.s;
     runs.push(best);
     if (runsLeft >= 2) {
       const other = cands.filter((c) => Math.abs(c.s - best) >= runLen).sort((a, b) => b.v - a.v || a.s - b.s)[0];
-      if (other && other.v > Math.max(...vs) - 1.5) runs.push(other.s);
+      // the gamblers put everything on one run; the cautious always bank a lap
+      const want = st.late > 0.15 ? -0.5 : st.late < -0.15 ? 3 : 1.5;
+      if (other && other.v > Math.max(...vs) - want) runs.push(other.s);
     }
   }
   return runs
