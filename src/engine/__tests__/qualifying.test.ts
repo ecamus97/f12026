@@ -76,3 +76,36 @@ describe("live qualifying", () => {
     expect(sessionRows(live).length).toBe(22);
   });
 });
+
+describe("qualifying surprises", () => {
+  it("crashes and failures sometimes knock a top driver out before Q3, but not often", () => {
+    const entries = allEntries();
+    const top = new Set(
+      [...entries].sort((a, b) => b.team.pace - a.team.pace || b.driver.pace - a.driver.pace).slice(0, 8).map((e) => e.driver.id),
+    );
+    let retirements = 0;
+    let topOut = 0;
+    let damagedNext = 0; // cars missing the next session (repairs)
+    const N = 80;
+    for (let seed = 1; seed <= N; seed++) {
+      const ctx = ctxWith(generateDayWeather(race.track, seed, false));
+      let { live, result } = startQualifying(ctx, race.id, seed);
+      while (live) {
+        const fin = advanceTo(ctx, live, live.duration);
+        retirements += fin.cars.filter((c) => c.runs.some((r) => r.retired)).length;
+        const step = nextSession(ctx, fin, result);
+        result = step.result;
+        live = step.live;
+        if (live) damagedNext += live.cars.filter((c) => c.noCar).length;
+      }
+      topOut += result.grid.slice(10).filter((id) => top.has(id)).length;
+    }
+    const perQuali = retirements / N;
+    expect(perQuali).toBeGreaterThan(0.3);
+    expect(perQuali).toBeLessThan(3);
+    // a top-8 car outside the top 10 happens now and then
+    expect(topOut).toBeGreaterThan(3);
+    expect(topOut / N).toBeLessThan(1.5);
+    expect(damagedNext).toBeGreaterThan(0);
+  });
+});

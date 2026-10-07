@@ -93,12 +93,13 @@ const mmss = (sec: number) => {
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 };
 
-type Tone = "purple" | "green" | "yellow" | "red" | "old" | "empty";
+type Tone = "purple" | "green" | "yellow" | "red" | "out" | "old" | "empty";
 const TONE: Record<Tone, string> = {
   purple: "text-purple-400 font-semibold",
   green: "text-green-400",
   yellow: "text-yellow-300",
   red: "text-red-400 line-through",
+  out: "text-red-400 font-semibold",
   old: "text-muted-foreground/50",
   empty: "",
 };
@@ -167,7 +168,8 @@ function carTiming(live: QualiLive, id: string, t: number, tm: Timing) {
   );
   let last: { text: string; tone: Tone } = { text: "", tone: "empty" };
   if (lastDone) {
-    if (!lastDone.time) last = { text: "ANULADA", tone: "red" };
+    if (lastDone.retired) last = { text: lastDone.retired === "crash" ? "ACCIDENTE" : "AVERÍA", tone: "out" };
+    else if (!lastDone.time) last = { text: "ANULADA", tone: "red" };
     else
       last = {
         text: formatLap(lastDone.time),
@@ -556,6 +558,7 @@ function LiveSession({
         mine: e.team.id === playerTeamId,
         frac: ph.frac,
         inPit: ph.inPit,
+        stopped: ph.phase === "stopped",
         pos: board[pos]?.best ? pos + 1 : undefined,
         dim: ph.phase !== "push",
         tag: ph.phase === "push" ? "⏱" : undefined,
@@ -594,6 +597,14 @@ function LiveSession({
             text: `${e.driver.shortName}: ${r.note}`,
             tone: "text-orange-300",
           });
+        if (r.retired && r.flyEnd <= t) {
+          out.push({
+            at: r.flyEnd,
+            text: `${r.retired === "crash" ? "💥" : "⚠️"} ${e.driver.name} ${r.note}: fuera de la sesión${r.damage ? " (daños serios)" : ""}`,
+            tone: "text-red-400 font-semibold",
+          });
+          continue;
+        }
         if (!r.aborted && r.flyStart <= live.duration && r.flyEnd <= t) {
           const pb = tm.bestLap.get(c.id);
           const isBest = r.time > 0 && Math.abs(r.time - tm.sessionBest) < 1e-9;
@@ -754,7 +765,11 @@ function LiveSession({
             const ct = carTiming(live, b.id, t, tm);
             const inDrop = info.out > 0 && i >= cutoff && leader > 0;
             const status =
-              ct.ph.phase === "push"
+              ct.ph.phase === "stopped"
+                ? { text: ct.ph.run?.retired === "crash" ? "ACCIDENTE" : "AVERÍA", cls: "bg-red-600 text-white" }
+                : ct.car.noCar
+                ? { text: "SIN AUTO", cls: "bg-red-900 text-white" }
+                : ct.ph.phase === "push"
                 ? { text: "VUELTA RÁPIDA", cls: "bg-purple-600 text-white" }
                 : ct.ph.phase === "out"
                   ? { text: "SALIDA", cls: "bg-white/15 text-white" }
@@ -959,8 +974,11 @@ function PlayerCar({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live.session, Math.floor(t / 15), car.runs.length]);
 
-  const phaseText =
-    ph.phase === "push"
+  const phaseText = car.noCar
+    ? "El auto sigue en reparación tras el accidente: no puede salir en esta sesión"
+    : ph.phase === "stopped"
+    ? `${ph.run?.retired === "crash" ? "Accidente" : "Avería"}: ${ph.run?.note}. Fuera de la sesión`
+    : ph.phase === "push"
       ? "En vuelta rápida"
       : ph.phase === "out"
         ? "Vuelta de calentamiento"

@@ -137,10 +137,13 @@ export interface QualiRun {
   note?: string; // what happened ("Vuelta anulada: límites de pista", "Tráfico"...)
   aborted?: boolean; // the flag fell before the flying lap started
   traffic?: boolean;
+  retired?: "crash" | "failure"; // stopped on track during the flying lap (at flyEnd): out of the session
+  damage?: boolean; // the car can't be repaired in time for the next session
 }
 
 export interface QualiCar {
   id: string;
+  noCar?: boolean; // still being repaired after a crash in the previous session
   manual: boolean; // the player decides when to go out
   runs: QualiRun[]; // started and planned runs
 }
@@ -234,6 +237,32 @@ function buildRun(ctx: QualiCtx, live: QualiLive, id: string, start: number, k: 
   if (loss) sectors[rng.int(0, 2)] += loss;
   time = sectors.reduce((a, b) => a + b, 0);
   const aborted = flyStart > live.duration;
+  // rarer than in a race, but a crash or a failure can ruin anyone's qualifying
+  if (!aborted) {
+    const crash = (0.003 + (100 - cons) * 0.0005) * ctx.cfg.incidents * (1 + 3 * c.wet);
+    const failure = (100 - e.team.reliability) * 0.0012 * ctx.cfg.incidents;
+    const roll = rng.next();
+    if (roll < crash + failure) {
+      const isCrash = roll < crash;
+      const at = 0.05 + rng.next() * 0.9;
+      const reason = isCrash
+        ? rng.pick(["se estrella contra las barreras", "pierde el auto y queda en la grava", "trompo y golpe contra el muro"])
+        : `se detiene en pista: ${rng.pick(["motor", "hidráulica", "caja de cambios", "sistema eléctrico", "batería ERS", "frenos"]).toLowerCase()}`;
+      return {
+        start,
+        flyStart,
+        flyEnd: flyStart + time * at,
+        inEnd: Number.MAX_SAFE_INTEGER, // stays out there until the end of the session
+        sectors,
+        time: 0,
+        compound,
+        note: reason,
+        retired: isCrash ? "crash" : "failure",
+        damage: isCrash ? rng.chance(0.45) : rng.chance(0.2),
+        traffic: false,
+      };
+    }
+  }
   const flyEnd = aborted ? flyStart : flyStart + time;
   return {
     start,
@@ -250,7 +279,7 @@ function buildRun(ctx: QualiCtx, live: QualiLive, id: string, start: number, k: 
 
 /** Cars bunched on the same flying lap get in each other's way. */
 function applyTraffic(live: QualiLive, id: string, run: QualiRun, k: number) {
-  if (run.aborted || run.traffic !== undefined) return run;
+  if (run.aborted || run.retired || run.traffic !== undefined) return run;
   let near = 0;
   for (const c of live.cars) {
     if (c.id === id) continue;
@@ -341,11 +370,17 @@ export function engineerPlan(ctx: QualiCtx, live: QualiLive, id: string, from: n
 }
 
 function plannedRuns(ctx: QualiCtx, live: QualiLive, id: string, starts: number[], k0: number) {
-  return starts.map((s, i) => buildRun(ctx, live, id, s, k0 + i));
+  const runs: QualiRun[] = [];
+  for (const [i, s] of starts.entries()) {
+    const r = buildRun(ctx, live, id, s, k0 + i);
+    runs.push(r);
+    if (r.retired) break; // out of the session
+  }
+  return runs;
 }
 
 /** A new session with every car's plan (the player's cars follow the engineers until told otherwise). */
-export function createSession(ctx: QualiCtx, index: number, ids: string[], seed: number, sprint: boolean): QualiLive {
+export function createSession(ctx: QualiCtx, index: number, ids: string[], seed: number, sprint: boolean, noCar: string[] = []): QualiLive {
   const f = sprint ? QUALI_FORMAT.sprint : QUALI_FORMAT.gp;
   const live: QualiLive = {
     session: index,
@@ -354,9 +389,9 @@ export function createSession(ctx: QualiCtx, index: number, ids: string[], seed:
     offset: sessionOffset(index, sprint),
     duration: f.minutes[index] * 60,
     clock: 0,
-    cars: ids.map((id) => ({ id, manual: false, runs: [] })),
+    cars: ids.map((id) => (noCar.includes(id) ? { id, manual: true, noCar: true, runs: [] } : { id, manual: false, runs: [] })),
   };
-  for (const car of live.cars) car.runs = plannedRuns(ctx, live, car.id, engineerPlan(ctx, live, car.id, 0), 0);
+  for (const car of live.cars) if (!car.noCar) car.runs = plannedRuns(ctx, live, car.id, engineerPlan(ctx, live, car.id, 0), 0);
   for (const car of live.cars) car.runs = car.runs.map((r, k) => applyTraffic(live, car.id, r, k));
   return live;
 }
@@ -366,6 +401,8 @@ const replaceCar = (live: QualiLive, car: QualiCar): QualiLive => ({ ...live, ca
 export function canGoOut(ctx: QualiCtx, live: QualiLive, id: string): string | null {
   const car = live.cars.find((c) => c.id === id);
   if (!car) return "No está en esta sesión";
+  if (car.noCar) return "Auto en reparación";
+  if (car.runs.some((r) => r.retired && r.start <= live.clock)) return "Fuera de la sesión";
   const started = car.runs.filter((r) => r.start <= live.clock);
   if (started.length >= MAX_RUNS) return "Sin juegos de neumáticos";
   if (readyAt(car, live.clock) > live.clock) return "En pista / cambiando neumáticos";
@@ -392,7 +429,7 @@ export function stayIn(live: QualiLive, id: string): QualiLive {
 /** Back to the engineers' plan from now on. */
 export function autoPlan(ctx: QualiCtx, live: QualiLive, id: string): QualiLive {
   const car = live.cars.find((c) => c.id === id);
-  if (!car) return live;
+  if (!car || car.noCar) return live;
   const kept = car.runs.filter((r) => r.start <= live.clock);
   const from = readyAt({ ...car, runs: kept }, live.clock);
   const starts = engineerPlan(ctx, live, id, from, Math.max(1, Math.min(PLANNED_RUNS - kept.length, MAX_RUNS - kept.length)));
@@ -407,7 +444,7 @@ const REPLAN_EVERY = 60;
 function replan(ctx: QualiCtx, live: QualiLive, at: number): QualiLive {
   const view = { ...live, clock: at };
   const cars = live.cars.map((car) => {
-    if (car.manual) return car;
+    if (car.manual || car.noCar || car.runs.some((r) => r.retired && r.start <= at)) return car;
     const kept = car.runs.filter((r) => r.start <= at);
     const future = car.runs.filter((r) => r.start > at);
     const left = Math.max(0, Math.min(PLANNED_RUNS - kept.length, MAX_RUNS - kept.length));
@@ -438,7 +475,7 @@ export function sessionEnd(live: QualiLive) {
 }
 export const sessionOver = (live: QualiLive) => live.clock >= sessionEnd(live);
 
-export type QualiPhase = "garage" | "out" | "push" | "in";
+export type QualiPhase = "garage" | "out" | "push" | "in" | "stopped";
 
 /** Where a car is at session time `t`. `frac` is the lap fraction on the map. */
 export function carPhase(live: QualiLive, id: string, t: number): { phase: QualiPhase; run?: QualiRun; k: number; frac: number; inPit: boolean } {
@@ -451,10 +488,16 @@ export function carPhase(live: QualiLive, id: string, t: number): { phase: Quali
     if (u < 0.08) return { phase: "out", run: r, k, frac: 0.985 + 0.015 * (u / 0.08), inPit: true };
     return { phase: "out", run: r, k, frac: (u - 0.08) / 0.92, inPit: false };
   }
+  if (r.retired && t >= r.flyEnd) {
+    const [s1, s2] = r.sectors;
+    const x = r.flyEnd - r.flyStart;
+    const frac = x < s1 ? x / (3 * s1) : x < s1 + s2 ? 1 / 3 + (x - s1) / (3 * s2) : 2 / 3 + (x - s1 - s2) / (3 * r.sectors[2]);
+    return { phase: "stopped", run: r, k, frac, inPit: false };
+  }
   if (t < r.flyEnd) {
     const [s1, s2] = r.sectors;
     const x = t - r.flyStart;
-    const s3 = r.flyEnd - r.flyStart - s1 - s2;
+    const s3 = r.retired ? r.sectors[2] : r.flyEnd - r.flyStart - s1 - s2;
     const frac = x < s1 ? x / (3 * s1) : x < s1 + s2 ? 1 / 3 + (x - s1) / (3 * s2) : 2 / 3 + (x - s1 - s2) / (3 * s3);
     return { phase: "push", run: r, k, frac, inPit: false };
   }
@@ -466,6 +509,7 @@ export function carPhase(live: QualiLive, id: string, t: number): { phase: Quali
 /** Completed sector times of a run at time `t`. */
 export function sectorsDone(r: QualiRun, t: number): number[] {
   if (r.aborted || t <= r.flyStart) return [];
+  if (r.retired) t = Math.min(t, r.flyEnd);
   const out: number[] = [];
   let acc = r.flyStart;
   for (const s of r.sectors) {
@@ -518,7 +562,8 @@ export function nextSession(ctx: QualiCtx, live: QualiLive, result: QualifyingRe
     return { result: { ...result, sessions, grid, wet: +dayConditions(ctx.weather, q3).wet.toFixed(2) }, live: null };
   }
   const through = rows.filter((r) => !r.eliminated).map((r) => r.driverId);
-  return { result: { ...result, sessions }, live: createSession(ctx, live.session + 1, through, live.seed, live.sprint) };
+  const damaged = ended.cars.filter((c) => c.runs.some((r) => r.damage && r.start <= ended.clock)).map((c) => c.id);
+  return { result: { ...result, sessions }, live: createSession(ctx, live.session + 1, through, live.seed, live.sprint, damaged) };
 }
 
 /** Run whatever is left of the qualifying with every car on its current plan. */
