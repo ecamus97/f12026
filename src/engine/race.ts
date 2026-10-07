@@ -6,7 +6,7 @@ import type { CarState, ClassifiedRow, Compound, DriverMode, Entry, ErsMode, Fue
 import { DEFAULT_SIM_CONFIG } from "./types";
 import {
   bestTyreFor, COMPOUNDS, DIRTY_AIR_WINDOW, ERS_MODES, FUEL_MARGIN, FUEL_MODES, isWetTyre, MIN_GAP, MODES,
-  overtakeChance, raceLapTime,
+  overtakeChance, raceLapTime, tyreLife,
 } from "./model";
 import { advancePlan, aiPitDecision, aiWeatherPit, buildPlan, normalisePlan, recommendPlans, replan } from "./strategy";
 import { generateWeather, type WeatherTimeline } from "./weather";
@@ -142,6 +142,7 @@ export function simulateLap(prev: RaceState): RaceState {
       if (!car.usedCompounds.includes(c)) car.usedCompounds.push(c);
     }
     state.redFlag = null;
+    events.push({ lap, type: "green", text: "🟢 Bandera verde: se reanuda la carrera", drivers: [] });
   }
   state.standingRestart = false;
   let newRedFlag: string | null = null;
@@ -281,6 +282,31 @@ export function simulateLap(prev: RaceState): RaceState {
         time += loss;
         mistakeLoss = loss;
         events.push({ lap, type: "mistake", text: `${name(car)} se pasa de largo y pierde ${loss.toFixed(1)}s`, drivers: [car.id] });
+      }
+      // tyres worn past their life can puncture: a slow lap back to the pits
+      if (!isWetTyre(car.compound)) {
+        const worn = car.tyreAge / tyreLife(car.compound, track, e.driver.tyreMgmt);
+        const p = worn > 1.2 ? Math.min(0.3, ((worn - 1.2) * 2.5) ** 2 * 0.5 * MODES[car.mode].wear * config.incidents) : 0;
+        if (p > 0 && rng.chance(p)) {
+          if (rng.chance(0.06)) {
+            car.status = "dnf";
+            car.dnfLap = lap;
+            car.dnfReason = "Pinchazo";
+            events.push({ lap, type: "dnf", text: `💥 ${name(car)} pincha y daña el auto: abandona`, drivers: [car.id] });
+            if (config.safetyCar && rng.chance(0.3)) newSafetyCar = true;
+            return;
+          }
+          const loss = 16 + rng.next() * 12;
+          time += loss;
+          mistakeLoss += loss;
+          events.push({
+            lap,
+            type: "puncture",
+            text: `💥 Pinchazo de ${name(car)} (neumático al ${Math.round(worn * 100)}%): vuelve lento a pits y pierde ${loss.toFixed(0)}s`,
+            drivers: [car.id],
+          });
+          if (lap < state.totalLaps) car.pitRequest = car.pitRequest ?? (car.plan[1]?.compound ?? (car.compound === "H" ? "M" : "H"));
+        }
       }
     }
     car.lastLap = time;

@@ -59,7 +59,7 @@ export interface CarState {
 }
 
 export type RaceEventType =
-  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather" | "red";
+  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather" | "red" | "green" | "puncture";
 
 export interface RaceEvent {
   lap: number;

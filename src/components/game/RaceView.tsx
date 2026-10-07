@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Pause, Play, FastForward, Flag, Wrench, ChevronUp, ChevronDown, Minus, Siren, Star, X,
@@ -123,7 +123,11 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
       const next = anim.to;
       const fresh = next.events.slice(state.events.length);
       const pause = fresh.some(
-        (e) => e.type === "sc" || e.type === "red" || e.type === "weather" || (e.type === "dnf" && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
+        (e) =>
+          e.type === "sc" ||
+          e.type === "red" ||
+          e.type === "weather" ||
+          ((e.type === "dnf" || e.type === "puncture") && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
       );
       if (pause || next.finished) setPlaying(false);
       setAnim(null);
@@ -352,7 +356,10 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
 
       {state.lap === 0 && !anim && myCars.length > 0 && <StrategyPlanner state={state} cars={myCars} onApply={apply} />}
 
-      <TrackMap raceId={race.id} state={state} anim={anim} playerTeamId={playerTeamId} />
+      <div className="relative">
+        <TrackMap raceId={race.id} state={state} anim={anim} playerTeamId={playerTeamId} />
+        <RaceFlash events={[...state.events, ...liveEvents]} />
+      </div>
 
       <div className="grid lg:grid-cols-[1fr_340px] lg:grid-rows-[auto_1fr] gap-4 items-start">
         {myCars.length > 0 && (state.lap > 0 || anim) && (
@@ -750,7 +757,56 @@ const EVENT_STYLE: Record<RaceEvent["type"], string> = {
   finish: "text-primary font-semibold",
   weather: "text-sky-300 font-semibold",
   red: "text-red-500 font-bold",
+  green: "text-emerald-400 font-semibold",
+  puncture: "text-orange-400 font-semibold",
 };
+
+/** Big moments get a banner over the track for a few seconds. */
+const FLASH: Partial<Record<RaceEvent["type"], { label: string; cls: string }>> = {
+  dnf: { label: "Abandono", cls: "bg-zinc-950/90 border-red-500 text-red-400" },
+  sc: { label: "Safety car", cls: "bg-yellow-400/95 border-yellow-200 text-black" },
+  sc_end: { label: "Bandera verde", cls: "bg-emerald-500/95 border-emerald-200 text-black" },
+  red: { label: "Bandera roja", cls: "bg-red-600/95 border-red-300 text-white" },
+  green: { label: "Bandera verde", cls: "bg-emerald-500/95 border-emerald-200 text-black" },
+  puncture: { label: "Pinchazo", cls: "bg-orange-500/95 border-orange-200 text-black" },
+  weather: { label: "Clima", cls: "bg-sky-500/95 border-sky-200 text-black" },
+  finish: { label: "Bandera a cuadros", cls: "bg-white/95 border-zinc-900 text-black" },
+};
+
+function RaceFlash({ events }: { events: RaceEvent[] }) {
+  const big = events.filter((e) => FLASH[e.type]);
+  const last = big[big.length - 1];
+  const key = last ? `${last.lap}-${last.type}-${last.text}` : "";
+  const [shown, setShown] = useState<{ key: string; e: RaceEvent } | null>(null);
+  const seen = useRef<string>(key); // don't replay what was already there when the view opened
+  useEffect(() => {
+    if (!last || key === seen.current) return;
+    seen.current = key;
+    setShown({ key, e: last });
+    const t = window.setTimeout(() => setShown((cur) => (cur?.key === key ? null : cur)), last.type === "red" || last.type === "finish" ? 4000 : 2800);
+    return () => window.clearTimeout(t);
+  }, [key, last]);
+  const f = shown ? FLASH[shown.e.type]! : null;
+  return (
+    <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+      <AnimatePresence>
+        {shown && f && (
+          <motion.div
+            key={shown.key}
+            initial={{ opacity: 0, scale: 0.8, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 1.05, y: -10 }}
+            transition={{ type: "spring", stiffness: 300, damping: 22 }}
+            className={cn("rounded-xl border-2 px-6 py-3 text-center shadow-2xl max-w-[80%]", f.cls)}
+          >
+            <div className="font-display text-2xl md:text-4xl uppercase tracking-wide">{f.label}</div>
+            <div className="text-xs md:text-sm font-semibold mt-0.5 opacity-90">{shown.e.text.replace(/^[^\p{L}\p{N}]+/u, "")}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
 
 function EventRow({ e, mine }: { e: RaceEvent; mine: boolean }) {
   return (

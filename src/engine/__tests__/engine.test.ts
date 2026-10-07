@@ -74,8 +74,24 @@ describe("manager controls", () => {
         s = editNextStop(s, c.id, { remove: true });
       });
       const end = simulateToEnd(s);
-      end.cars.filter((c) => c.controlled).forEach((c) => expect(c.stops).toBe(0));
+      // the only exception: a puncture on worn-out tyres forces a stop
+      end.cars
+        .filter((c) => c.controlled)
+        .forEach((c) => expect(c.stops).toBe(end.events.filter((e) => e.type === "puncture" && e.drivers[0] === c.id && e.lap < end.totalLaps).length));
     }
+  });
+
+  it("tyres run far past their life end up punctured", () => {
+    let punctures = 0;
+    for (let seed = 1; seed <= 30; seed++) {
+      let s = createRace(race, grid(), seed, undefined, "ferrari");
+      s.cars.filter((c) => c.controlled).forEach((c) => {
+        s = editNextStop(s, c.id, { remove: true });
+        s = editNextStop(s, c.id, { remove: true });
+      });
+      punctures += simulateToEnd(s).events.filter((e) => e.type === "puncture" || (e.type === "dnf" && e.text.includes("pincha"))).length;
+    }
+    expect(punctures).toBeGreaterThan(5);
   });
 
   it("setStartTyre changes the starting compound and keeps two compounds in the plan", () => {
