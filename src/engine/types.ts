@@ -77,10 +77,13 @@ export interface CarState {
   prevLastLap?: number; // lap time of the lap before (shown while the car is still finishing it)
   instruction?: Instruction; // attack the car ahead / defend from the one behind
   morale?: number; // driver's morale at the start (team orders may be ignored when low)
+  penalty?: number; // seconds still to serve (next stop, or added at the end)
+  penalties?: { lap: number; secs: number; reason: string }[]; // given in this race
+  trackLimits?: number; // track limits warnings
 }
 
 export type RaceEventType =
-  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather" | "red" | "green" | "puncture";
+  | "start" | "overtake" | "pit" | "dnf" | "sc" | "sc_end" | "fastest" | "mistake" | "finish" | "weather" | "red" | "green" | "puncture" | "penalty";
 
 export interface RaceEvent {
   lap: number;
@@ -124,4 +127,5 @@ export interface ClassifiedRow {
   stops: number;
   bestLap: number;
   dnfReason?: string;
+  penaltySecs?: number; // time penalties given in the race (served or added)
 }

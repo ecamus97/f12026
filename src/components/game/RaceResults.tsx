@@ -107,6 +107,7 @@ export function RaceResults({ race, state, playerTeamId, onConfirm }: Props) {
               <span className="w-10 text-center text-xs">{r.stops}</span>
               <span className="w-24 text-right font-mono text-xs truncate" title={r.dnfReason}>
                 {r.gap}
+                {r.penaltySecs ? <span className="block text-[10px] text-amber-300">incl. {r.penaltySecs}s pen.</span> : null}
               </span>
               <span className="w-10 text-right font-racing text-xs text-primary">{r.points || ""}</span>
             </motion.div>

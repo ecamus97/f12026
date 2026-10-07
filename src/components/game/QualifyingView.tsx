@@ -19,6 +19,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Race } from "@/data/f1Data";
 import {
   advanceTo,
+  runToEnd,
+  clockRemaining,
+  redFlagAt,
   autoPlan,
   canGoOut,
   carPhase,
@@ -169,6 +172,7 @@ function carTiming(live: QualiLive, id: string, t: number, tm: Timing) {
   let last: { text: string; tone: Tone } = { text: "", tone: "empty" };
   if (lastDone) {
     if (lastDone.retired) last = { text: lastDone.retired === "crash" ? "ACCIDENTE" : "AVERÍA", tone: "out" };
+    else if (lastDone.redFlagged) last = { text: "ABORTADA", tone: "old" };
     else if (!lastDone.time) last = { text: "ANULADA", tone: "red" };
     else
       last = {
@@ -249,9 +253,17 @@ export function QualifyingView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, speed, ctx, lv?.session]);
 
-  // stop at the flag (once the last laps are in) and save now and then
+  // stop at the flag (once the last laps are in), stop for red flags, and save now and then
+  const red = lv ? redFlagAt(lv, lv.clock) : null;
+  const seenRed = useRef<number | null>(null);
   useEffect(() => {
     if (!lv) return;
+    if (red && playing && seenRed.current !== red.at) {
+      seenRed.current = red.at;
+      setPlaying(false);
+      onLive(lv);
+      return;
+    }
     if (over && playing) {
       setPlaying(false);
       onLive(lv);
@@ -274,7 +286,7 @@ export function QualifyingView({
   const finishSession = () => {
     if (!lv || !ctx) return;
     setPlaying(false);
-    let next = advanceTo(ctx, lv, lv.duration);
+    let next = runToEnd(ctx, lv);
     next = { ...next, clock: Math.max(next.clock, sessionEnd(next)) };
     setLv(next);
     onLive(next);
@@ -403,7 +415,21 @@ export function QualifyingView({
             <Flag className="w-4 h-4 mr-2" />
             {sprint ? "Ir a la carrera sprint" : "Ir a la carrera"}
           </Button>
-        ) : !lv ? null : over ? (
+        ) : !lv ? null : red && !playing ? (
+          <Button
+            onClick={() => {
+              if (!ctx) return;
+              const next = advanceTo(ctx, lv, red.at + red.dur);
+              setLv(next);
+              onLive(next);
+              setPlaying(true);
+            }}
+            className="flex-1 font-racing bg-red-600 hover:bg-red-500 text-white"
+            size="lg"
+          >
+            🟥 Bandera roja · Reanudar la sesión
+          </Button>
+        ) : over ? (
           <Button
             onClick={() => onNext(false)}
             className="flex-1 font-racing"
@@ -542,7 +568,8 @@ function LiveSession({
     );
   const leader = board[0]?.best ?? 0;
   const cutoff = live.cars.length - info.out;
-  const remaining = live.duration - t;
+  const red = redFlagAt(live, t);
+  const remaining = clockRemaining(live, t);
   const flag = t >= live.duration;
 
   const markers: MapMarker[] = live.cars.flatMap((c) => {
@@ -605,7 +632,7 @@ function LiveSession({
           });
           continue;
         }
-        if (!r.aborted && r.flyStart <= live.duration && r.flyEnd <= t) {
+        if (!r.aborted && !r.redFlagged && r.flyStart <= live.duration && r.flyEnd <= t) {
           const pb = tm.bestLap.get(c.id);
           const isBest = r.time > 0 && Math.abs(r.time - tm.sessionBest) < 1e-9;
           const text = r.time
@@ -645,6 +672,12 @@ function LiveSession({
           text: "🌤️ Deja de llover",
           tone: "text-sky-300 font-semibold",
         });
+    }
+    for (const f of live.redFlags ?? []) {
+      if (f.at > t) continue;
+      const who = entryMap.get(f.by.split("@")[0])?.driver.name ?? "un piloto";
+      out.push({ at: f.at, text: `🟥 Bandera roja por el accidente de ${who}: sesión detenida, todos a boxes`, tone: "text-red-400 font-semibold" });
+      if (f.at + f.dur <= t) out.push({ at: f.at + f.dur, text: "🟢 Se reanuda la sesión: el pit lane está abierto", tone: "text-emerald-400 font-semibold" });
     }
     if (flag)
       out.push({
@@ -692,7 +725,9 @@ function LiveSession({
             <span className="tv-label text-muted-foreground">
               {over
                 ? "🏁 Sesión terminada"
-                : flag
+                : red
+                  ? "🟥 Bandera roja: reloj detenido"
+                  : flag
                   ? "🏁 Últimas vueltas"
                   : t <= 0
                     ? "Esperando"
@@ -742,7 +777,7 @@ function LiveSession({
       <CircuitMap
         raceId={raceId}
         markers={markers}
-        highlight={flag ? "BANDERA A CUADROS" : undefined}
+        highlight={red ? "BANDERA ROJA" : flag ? "BANDERA A CUADROS" : undefined}
       />
 
       <div className="grid lg:grid-cols-[1fr_340px] gap-4 items-start">
@@ -907,7 +942,7 @@ function LiveSession({
               {log.map((l, i) => (
                 <div key={i} className="flex gap-2 text-xs px-1.5 py-1">
                   <span className="w-10 shrink-0 font-mono text-muted-foreground">
-                    {l.at > live.duration ? "🏁" : mmss(live.duration - l.at)}
+                    {l.at > live.duration ? "🏁" : mmss(clockRemaining(live, l.at))}
                   </span>
                   <span className={l.tone}>{l.text}</span>
                 </div>

@@ -592,6 +592,11 @@ function TowerRow({
           car.pittedThisLap && !before && <span className="text-[9px] px-1 rounded bg-orange-500/60 text-black font-bold">PIT</span>
         )}
         {dnf && <span className="text-[10px] text-destructive truncate">{car.dnfReason}</span>}
+        {!dnf && (car.penalty ?? 0) > 0 && (
+          <span className="text-[9px] px-1 rounded bg-amber-400 text-black font-bold" title="Penalización pendiente: se cumple en la próxima parada o se suma al final">
+            +{car.penalty}s
+          </span>
+        )}
       </span>
       <span className="w-20 text-right font-mono text-xs tabular-nums">{gap}</span>
       {sectors.map((c, k) => (
@@ -680,6 +685,17 @@ function PitWallCard({
         </div>
       )}
 
+      {!dnf && (car.penalty ?? 0) > 0 && (
+        <div className="rounded-md border border-amber-400/50 bg-amber-400/10 px-2 py-1.5 text-[11px] text-amber-200">
+          ⚖️ Penalización pendiente de {car.penalty}s: {car.plan.length > 1 || car.pitRequest ? "la cumple en su próxima parada" : "sin más paradas, se suma a su tiempo final"}.
+          {(car.penalties ?? []).length > 0 && <span className="block text-amber-300/80">{car.penalties![car.penalties!.length - 1].reason}</span>}
+        </div>
+      )}
+      {!dnf && (car.trackLimits ?? 0) > 0 && (car.trackLimits ?? 0) < 4 && (
+        <div className={cn("text-[10px]", (car.trackLimits ?? 0) >= 3 ? "text-orange-300" : "text-muted-foreground")}>
+          Límites de pista: {car.trackLimits}/3 advertencias{(car.trackLimits ?? 0) >= 3 ? " · la próxima es penalización (conviene Cuidar)" : ""}
+        </div>
+      )}
       {!dnf && !preRace && <DuelPanel car={car} state={state} onMode={onMode} />}
 
       {!dnf && (
@@ -843,6 +859,7 @@ const EVENT_STYLE: Record<RaceEvent["type"], string> = {
   red: "text-red-500 font-bold",
   green: "text-emerald-400 font-semibold",
   puncture: "text-orange-400 font-semibold",
+  penalty: "text-amber-300 font-semibold",
 };
 
 /** Big moments get a banner over the track for a few seconds. */
@@ -853,17 +870,18 @@ const FLASH: Partial<Record<RaceEvent["type"], { label: string; cls: string }>> 
   red: { label: "Bandera roja", cls: "bg-red-600/95 border-red-300 text-white" },
   green: { label: "Bandera verde", cls: "bg-emerald-500/95 border-emerald-200 text-black" },
   puncture: { label: "Pinchazo", cls: "bg-orange-500/95 border-orange-200 text-black" },
+  penalty: { label: "Penalización", cls: "bg-amber-400/95 border-amber-100 text-black" },
   weather: { label: "Clima", cls: "bg-sky-500/95 border-sky-200 text-black" },
   finish: { label: "Bandera a cuadros", cls: "bg-white/95 border-zinc-900 text-black" },
 };
 
 const FLASH_PRIORITY: Partial<Record<RaceEvent["type"], number>> = {
-  red: 6, finish: 5, sc: 4, green: 4, sc_end: 3, dnf: 2, puncture: 2, weather: 1,
+  red: 6, finish: 5, sc: 4, green: 4, sc_end: 3, dnf: 2, puncture: 2, penalty: 1, weather: 1,
 };
 const flashKey = (e: RaceEvent) => `${e.lap}-${e.type}-${e.text}`;
 
 function RaceFlash({ events }: { events: RaceEvent[] }) {
-  const big = events.filter((e) => FLASH[e.type]);
+  const big = events.filter((e) => FLASH[e.type] && (e.type !== "penalty" || e.text.includes("Penalización de")));
   const sig = big.map(flashKey).join("|");
   const [shown, setShown] = useState<{ key: string; e: RaceEvent } | null>(null);
   const [queue, setQueue] = useState<RaceEvent[]>([]);

@@ -220,6 +220,7 @@ describe("safety car", () => {
         s = simulateLap(s);
         const called = s.events.some((e) => e.lap === s.lap && e.type === "sc");
         if (!prev.safetyCar.active && !called) continue;
+        if (s.finished) continue; // time penalties added at the flag can still change the result
         scLaps++;
         const after = s.cars.filter((c) => c.status === "running" && !c.pittedThisLap).map((c) => c.id);
         const before = prev.cars.filter((c) => c.status === "running").map((c) => c.id).filter((id) => after.includes(id));
@@ -227,5 +228,33 @@ describe("safety car", () => {
       }
     }
     expect(scLaps).toBeGreaterThan(20);
+  });
+});
+
+describe("penalties", () => {
+  it("are served at the next stop or added to the final time", () => {
+    let given = 0;
+    let served = 0;
+    let added = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const end = simulateToEnd(createRace(race, allEntries(), seed));
+      for (const c of end.cars) {
+        const total = (c.penalties ?? []).reduce((a, p) => a + p.secs, 0);
+        given += total;
+        if (c.status === "running") expect(c.penalty ?? 0).toBe(0); // nothing left pending at the flag
+      }
+      for (const e of end.events.filter((e) => e.type === "penalty")) {
+        const n = Number(e.text.match(/(\d+)s/)?.[1] ?? 0);
+        if (e.text.includes("cumple")) served += n;
+        if (e.text.includes("tiempo final")) added += n;
+      }
+      // the classification shows the penalties
+      for (const r of classify(end)) expect(r.penaltySecs ?? 0).toBe((end.cars.find((c) => c.id === r.driverId)!.penalties ?? []).reduce((a, p) => a + p.secs, 0));
+    }
+    expect(given).toBeGreaterThan(40);
+    // every second given is served in a stop, added at the end, or belongs to a car that retired
+    expect(served + added).toBeLessThanOrEqual(given);
+    expect(served).toBeGreaterThan(0);
+    expect(added).toBeGreaterThan(0);
   });
 });

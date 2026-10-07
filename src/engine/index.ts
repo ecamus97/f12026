@@ -14,3 +14,4 @@ export * from "./rules";
 export * from "./news";
 export * from "./activities";
 export * from "./mood";
+export * from "./press";

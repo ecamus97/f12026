@@ -90,6 +90,19 @@ export function confirmStrategy(state: RaceState): RaceState {
 
 const name = (c: CarState) => c.entry.driver.shortName;
 
+/** Stewards: a time penalty, served at the next stop or added to the final time. */
+function givePenalty(car: CarState, secs: number, reason: string, lap: number, events: RaceEvent[], at?: number) {
+  car.penalty = (car.penalty ?? 0) + secs;
+  car.penalties = [...(car.penalties ?? []), { lap, secs, reason }];
+  events.push({
+    lap,
+    type: "penalty",
+    text: `⚖️ Penalización de ${secs}s para ${name(car)}: ${reason}`,
+    drivers: [car.id],
+    at,
+  });
+}
+
 function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng, events: RaceEvent[], lap: number) {
   const { track } = state;
   const scFactor = state.safetyCar.active ? 0.55 : 1;
@@ -99,6 +112,13 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
     const extra = 2 + rng.next() * 6;
     stationary += extra;
     slow = ` (parada lenta, ${stationary.toFixed(1)}s)`;
+  }
+  // a pending time penalty is served first: the car waits in the box before the crew can touch it
+  const served = car.penalty ?? 0;
+  if (served > 0) {
+    stationary += served;
+    car.penalty = 0;
+    events.push({ lap, type: "penalty", text: `⚖️ ${name(car)} cumple su penalización de ${served}s en boxes`, drivers: [car.id], at: 0.97 });
   }
   const pitTime = track.pitLoss * scFactor + stationary;
   car.pitFrom = { compound: car.compound, tyreAge: car.tyreAge, stops: car.stops };
@@ -117,6 +137,11 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
     text: `${name(car)} entra a pits → ${COMPOUNDS[compound].name}${slow}`,
     drivers: [car.id],
   });
+  // pit lane infringements
+  if (lap < state.totalLaps) {
+    if (rng.chance(0.003 + (100 - car.entry.team.pitCrew) * 0.0003)) givePenalty(car, 5, "liberación insegura en boxes", lap, events, 0.99);
+    else if (rng.chance(0.0015)) givePenalty(car, 5, "exceso de velocidad en el pit lane", lap, events, 0.99);
+  }
 }
 
 /** Simulate one lap for the whole field. */
@@ -320,6 +345,16 @@ export function simulateLap(prev: RaceState): RaceState {
         mistakeLoss = loss;
         events.push({ lap, type: "mistake", text: `${name(car)} se pasa de largo y pierde ${loss.toFixed(1)}s`, drivers: [car.id] });
       }
+      // track limits: three warnings, then 5 seconds (and 10 more after three more)
+      const limitsP = (100 - e.driver.consistency) * 0.0015 * config.incidents * (1 + wet) * (car.mode === "push" ? 1.6 : car.mode === "conserve" ? 0.6 : 1) * (attacking ? 1.3 : 1);
+      if (!standing && rng.chance(limitsP)) {
+        car.trackLimits = (car.trackLimits ?? 0) + 1;
+        const n = car.trackLimits;
+        if (n === 3) events.push({ lap, type: "mistake", text: `🏁 Bandera blanca y negra para ${name(car)}: tercera advertencia por límites de pista`, drivers: [car.id] });
+        if (n === 4) givePenalty(car, 5, "límites de pista (4 infracciones)", lap, events);
+        if (n === 7) givePenalty(car, 10, "límites de pista (7 infracciones)", lap, events);
+      }
+      if (lap === 1 && rng.chance(0.003 * config.incidents)) givePenalty(car, 5, "salida anticipada", lap, events, 0.05);
       // tyres worn past their life can puncture: a slow lap back to the pits
       if (!isWetTyre(car.compound)) {
         const worn = car.tyreAge / tyreLife(car.compound, track, e.driver.tyreMgmt);
@@ -438,6 +473,11 @@ export function simulateLap(prev: RaceState): RaceState {
             victim.total += loss;
             other.total += 0.5 + rng.next();
             if (lap < state.totalLaps - 1) victim.pitRequest = victim.pitRequest ?? victim.plan[1]?.compound ?? victim.compound;
+            // the stewards look at it: usually the attacker is to blame
+            if (rng.chance(0.55)) {
+              const guilty = rng.chance(def && !atk ? 0.45 : 0.7) ? behind : ahead;
+              givePenalty(guilty, rng.chance(0.3) ? 10 : 5, guilty === behind ? `provocar un choque con ${name(ahead)}` : `cambiar de trayectoria al defenderse de ${name(behind)}`, lap, events, 0.95);
+            }
             events.push({
               lap,
               type: "mistake",
@@ -590,6 +630,14 @@ export function simulateLap(prev: RaceState): RaceState {
   state.rngState = rng.state();
 
   if (lap >= state.totalLaps) {
+    // penalties never served in a stop go on the final time
+    for (const c of order) {
+      if (c.penalty) {
+        c.total += c.penalty;
+        events.push({ lap, type: "penalty", text: `⚖️ ${name(c)} recibe +${c.penalty}s sobre su tiempo final`, drivers: [c.id], at: 1 });
+        c.penalty = 0;
+      }
+    }
     // Dry-race rule: at least two different compounds
     for (const c of order) {
       if (state.rules?.twoCompound !== false && c.usedCompounds.length < 2 && !c.usedCompounds.some(isWetTyre)) {
@@ -795,6 +843,7 @@ export function classify(state: RaceState): ClassifiedRow[] {
       stops: c.stops,
       bestLap: c.bestLap,
       dnfReason: c.dnfReason,
+      penaltySecs: c.penalties?.reduce((x, p) => x + p.secs, 0) || undefined,
     };
   });
 }

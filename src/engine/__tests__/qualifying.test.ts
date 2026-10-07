@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { races2026 } from "@/data/f1Data";
 import {
-  advanceTo, autoPlan, canGoOut, carPhase, DEFAULT_SIM_CONFIG, finishQualifying, generateDayWeather, goOut, nextSession,
+  advanceTo, autoPlan, runToEnd, redFlagAt, canGoOut, carPhase, DEFAULT_SIM_CONFIG, finishQualifying, generateDayWeather, goOut, nextSession,
   sessionRows, startQualifying, stayIn, type DayWeather, type QualiCtx,
 } from "..";
 import { allEntries } from "./helpers";
@@ -107,5 +107,51 @@ describe("qualifying surprises", () => {
     expect(topOut).toBeGreaterThan(3);
     expect(topOut / N).toBeLessThan(1.5);
     expect(damagedNext).toBeGreaterThan(0);
+  });
+});
+
+describe("red flag in qualifying", () => {
+  it("stops the clock, aborts the laps in progress and nobody leaves until the restart", () => {
+    let flags = 0;
+    let aborted = 0;
+    for (let seed = 1; seed <= 150 && flags < 8; seed++) {
+      const ctx = { ...ctxWith(dry), cfg: { ...DEFAULT_SIM_CONFIG, incidents: 3 } };
+      const { live } = startQualifying(ctx, race.id, seed);
+      const fin = runToEnd(ctx, live);
+      for (const f of fin.redFlags ?? []) {
+        flags++;
+        expect(fin.duration).toBeGreaterThan(18 * 60); // the session got longer by the stoppage
+        for (const c of fin.cars) {
+          // nobody leaves the garage while the flag is out
+          expect(c.runs.some((r) => r.start > f.at && r.start < f.at + f.dur)).toBe(false);
+          // no lap is completed during the stoppage
+          expect(c.runs.some((r) => r.time > 0 && r.flyEnd > f.at && r.flyStart < f.at + f.dur && r.flyStart < f.at)).toBe(false);
+        }
+        aborted += fin.cars.reduce((a, c) => a + c.runs.filter((r) => r.redFlagged).length, 0);
+      }
+    }
+    expect(flags).toBeGreaterThan(0);
+    expect(aborted).toBeGreaterThan(0); // laps cut short by the flags
+  });
+});
+
+describe("red flag while playing", () => {
+  it("nobody keeps lapping after the flag, whatever was going to happen on that lap", () => {
+    let flags = 0;
+    for (let seed = 1; seed <= 120; seed++) {
+      const ctx = { ...ctxWith(dry), cfg: { ...DEFAULT_SIM_CONFIG, incidents: 3 } };
+      let { live } = startQualifying(ctx, race.id, seed);
+      while (live.clock < live.duration) {
+        live = advanceTo(ctx, live, Math.min(live.duration, live.clock + 3)); // like the screen, a few seconds at a time
+        const f = redFlagAt(live, live.clock);
+        if (f && live.clock === f.at) {
+          flags++;
+          for (const t of [f.at + 1, f.at + 30])
+            for (const c of live.cars) expect(["push", "out"]).not.toContain(carPhase(live, c.id, t).phase);
+          live = advanceTo(ctx, live, f.at + f.dur);
+        }
+      }
+    }
+    expect(flags).toBeGreaterThan(3);
   });
 });

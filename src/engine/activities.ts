@@ -13,6 +13,7 @@ export interface ActivityEffect {
   project?: number; // races gained (+) or lost (-) on the longest running project
   sponsorRaces?: number; // the sponsor's contract gets longer (+) or shorter (-)
   staff?: { role: StaffRole; delta: number };
+  morale?: { id: string; name: string; delta: number }[]; // drivers' morale
 }
 
 export interface ActivityChoice {
@@ -22,7 +23,7 @@ export interface ActivityChoice {
   risk?: { chance: number; effect: ActivityEffect; text: string; safe?: string }; // something can go wrong (or right)
 }
 
-export type ActivityKind = "sponsor" | "media" | "team" | "technical" | "fans" | "charity";
+export type ActivityKind = "sponsor" | "media" | "team" | "technical" | "fans" | "charity" | "press";
 
 export interface Activity {
   id: string;
@@ -49,6 +50,7 @@ export const ACTIVITY_KIND_INFO: Record<ActivityKind, { label: string; color: st
   technical: { label: "Técnico", color: "#38bdf8" },
   fans: { label: "Aficionados", color: "#f472b6" },
   charity: { label: "Solidario", color: "#34d399" },
+  press: { label: "Rueda de prensa", color: "#e879f9" },
 };
 
 // --- Dates ----------------------------------------------------------------------
@@ -440,6 +442,7 @@ export function describeEffect(e: ActivityEffect, names?: [string, string]): { t
     out.push({ text: `${stat} ${sg(e.drivers.delta)}${e.drivers.delta}${who}`, good: e.drivers.delta > 0 });
   }
   if (e.staff) out.push({ text: `personal ${sg(e.staff.delta)}${e.staff.delta}`, good: e.staff.delta > 0 });
+  for (const mo of e.morale ?? []) out.push({ text: `moral de ${mo.name.split(" ").slice(-1)[0]} ${sg(mo.delta)}${mo.delta}`, good: mo.delta > 0 });
   return out;
 }
 

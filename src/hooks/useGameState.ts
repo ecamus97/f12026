@@ -37,6 +37,9 @@ import {
   startNewSeason,
   moodAfterRace,
   moraleOf,
+  formOf,
+  generatePress,
+  type OrderLog,
   BASE_MORALE,
   withMood,
   type FacilityKey,
@@ -177,6 +180,7 @@ export interface GameState {
   news: NewsItem[]; // paddock news, newest last
   activities: Activity[]; // agenda between races (sponsor events, media, factory...)
   agendaRounds: string[]; // "season-round" whose agenda was already planned
+  lastOrders?: OrderLog[]; // the player's team orders in the last Grand Prix (for the press)
   calendar: Race[]; // races of this season, in order
   sprints: number[]; // race ids with a sprint this season
   nextSprints?: number[]; // announced for next season
@@ -544,6 +548,40 @@ function withAgenda(s: GameState): GameState {
     seed: s.seed,
     taken: s.activities.slice(-6).map((a) => a.tpl ?? ""),
   });
+  // a press conference about the last race takes one of the agenda's slots (it doesn't add work)
+  const last = s.results[s.results.length - 1];
+  const people = s.people;
+  const press =
+    people && last
+      ? generatePress({
+          season: s.season,
+          beforeRound: r + 1,
+          from,
+          team: team.name,
+          rival: s.teamsData.filter((t) => t.id !== team.id)[(s.seed + r) % Math.max(1, s.teamsData.length - 1)]?.name ?? "un rival",
+          drivers: team.drivers.slice(0, 2).map((d, i) => {
+            const rec = people.drivers[d.id];
+            return {
+              id: d.id,
+              name: d.name,
+              index: i as 0 | 1,
+              morale: moraleOf(rec),
+              form: formOf(rec),
+              contractEnds: !!rec?.contract && rec.contract.until <= s.season && !rec.nextContract,
+            };
+          }),
+          lastRace: last.rows
+            .filter((row) => row.teamId === team.id)
+            .map((row) => ({ id: row.driverId, pos: row.status === "dnf" ? null : row.position, crash: row.status === "dnf" && /accidente/i.test(row.dnfReason ?? "") })),
+          orders: s.lastOrders ?? [],
+          seed: s.seed,
+        })
+      : null;
+  if (press) {
+    if (items.length >= 2) items[items.length - 1] = press;
+    else if (items.length === 1) items[0] = press;
+    else items.push(press);
+  }
   return { ...s, activities: [...s.activities, ...items].slice(-120), agendaRounds: [...s.agendaRounds, key].slice(-60) };
 }
 
@@ -590,6 +628,14 @@ function applyActivity(s: GameState, id: string, idx: number, auto = false): Gam
     if (e.area) {
       const d = m.dev[team.id];
       m = { ...m, dev: { ...m.dev, [team.id]: { ...d, [e.area.area]: Math.min(99.5, +(d[e.area.area] + e.area.delta).toFixed(2)) } } };
+    }
+    if (e.morale?.length && people) {
+      const drivers = { ...people.drivers };
+      for (const mo of e.morale) {
+        const d = drivers[mo.id];
+        if (d) drivers[mo.id] = { ...d, morale: +Math.max(5, Math.min(100, moraleOf(d) + mo.delta)).toFixed(1) };
+      }
+      people = { ...people, drivers };
     }
     if (e.drivers) {
       const ids = team.drivers.map((d) => d.id).filter((_, i) => e.drivers!.which === "both" || (e.drivers!.which === "first" ? i === 0 : i === 1));
@@ -733,7 +779,7 @@ function withRaceMood(s: GameState): GameState {
     carRank: (teamId) => (m ? carRankOf(m, teamId) : 6),
   });
   const management = m && res.notes.length ? { ...m, inbox: [...m.inbox, ...res.notes.map((n) => ({ race: w.raceIndex + 1, ...n }))].slice(-60) } : m;
-  return { ...s, people: res.people, management };
+  return { ...s, people: res.people, management, lastOrders: sprint ? s.lastOrders : (race.orderLog ?? []).filter((o) => o.teamId === s.playerTeamId) };
 }
 
 /** Morale and form applied to the drivers' stats for a session. */
