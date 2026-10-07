@@ -54,6 +54,7 @@ export interface CarState {
   status: "running" | "dnf";
   dnfReason?: string;
   dnfLap?: number;
+  dnfAt?: number; // where on the lap it stopped (0..1)
   pittedThisLap: boolean;
   lastPitTime?: number; // seconds spent in the pit lane at the end of the last lap (0 = no stop)
 }
@@ -66,6 +67,7 @@ export interface RaceEvent {
   type: RaceEventType;
   text: string;
   drivers: string[];
+  at?: number; // moment of the lap when it happens (0..1), for incidents
 }
 
 export interface RaceState {

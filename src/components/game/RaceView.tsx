@@ -36,6 +36,12 @@ const SPEEDS = [
 
 export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round }: Props) {
   const [playing, setPlaying] = useState(false);
+  const handledStops = useRef(new Set<string>());
+  const eventKey = (e: RaceEvent) => `${e.lap}-${e.type}-${e.text}`;
+  const stopsRace = (e: RaceEvent, st: RaceState) =>
+    e.type === "sc" ||
+    e.type === "red" ||
+    ((e.type === "dnf" || e.type === "puncture") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId));
   // after the last lap the cars cross the line and the chequered flag shows before the results
   const [resultsReady, setResultsReady] = useState(state.finished);
   useEffect(() => {
@@ -134,19 +140,34 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     const id = window.setTimeout(() => {
       const next = anim.to;
       const fresh = next.events.slice(state.events.length);
-      const pause = fresh.some(
-        (e) =>
-          e.type === "sc" ||
-          e.type === "red" ||
-          e.type === "weather" ||
-          ((e.type === "dnf" || e.type === "puncture") && e.drivers.some((d) => next.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)),
-      );
+      // incidents pause the race the moment they happen (see below); the weather only at the end of the lap
+      const pause = fresh.some((e) => e.type === "weather" || (stopsRace(e, next) && !handledStops.current.has(eventKey(e))));
       if (pause || next.finished) setPlaying(false);
       setAnim(null);
       onUpdate(next);
     }, remaining);
     return () => window.clearTimeout(id);
   }, [anim, state.events.length, onUpdate, playerTeamId]);
+
+  // pause right when something happens that matters to the team: safety car, red flag,
+  // or one of your cars retiring / puncturing. Other drivers' retirements don't stop the race.
+  useEffect(() => {
+    if (!anim || anim.pausedElapsed != null || !playing) return;
+    const fresh = anim.to.events.slice(state.events.length);
+    const pending = fresh
+      .filter((e) => e.at != null && stopsRace(e, anim.to) && !handledStops.current.has(eventKey(e)))
+      .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+    const first = pending[0];
+    if (!first) return;
+    const delay = Math.max(0, (first.at ?? 0) * anim.duration - (performance.now() - anim.start)) + 80;
+    const id = window.setTimeout(() => {
+      handledStops.current.add(eventKey(first));
+      setPlaying(false);
+      pauseAnim();
+    }, delay);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anim, playing, state.events.length]);
 
   // keep going while playing
   useEffect(() => {
@@ -210,6 +231,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     const lapP = Math.min(1, (anim.pausedElapsed ?? now - anim.start) / anim.duration);
     return fresh.filter((e) => {
       const [a, b] = e.drivers;
+      // incidents appear at the moment of the lap they happen
+      if (e.at != null) return lapP >= e.at;
       switch (e.type) {
         case "overtake":
           return a in progress && b in progress ? progress[a] > progress[b] : lapP > 0.5;

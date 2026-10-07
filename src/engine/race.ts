@@ -146,6 +146,12 @@ export function simulateLap(prev: RaceState): RaceState {
   }
   state.standingRestart = false;
   let newRedFlag: string | null = null;
+  let incidentAt = 0.5; // where on the lap the incident behind a safety car / red flag happened
+  const stopAt = (car: CarState) => {
+    const at = +(0.08 + rng.next() * 0.84).toFixed(3);
+    car.dnfAt = at;
+    return at;
+  };
 
   const running = state.cars.filter((c) => c.status === "running");
   const retired = state.cars.filter((c) => c.status === "dnf");
@@ -213,7 +219,7 @@ export function simulateLap(prev: RaceState): RaceState {
       car.status = "dnf";
       car.dnfLap = lap;
       car.dnfReason = "Sin combustible";
-      events.push({ lap, type: "dnf", text: `${name(car)} se queda sin combustible`, drivers: [car.id] });
+      events.push({ lap, type: "dnf", text: `${name(car)} se queda sin combustible`, drivers: [car.id], at: stopAt(car) });
       return;
     }
 
@@ -227,18 +233,29 @@ export function simulateLap(prev: RaceState): RaceState {
       car.status = "dnf";
       car.dnfLap = lap;
       car.dnfReason = rng.pick(["Motor", "Hidráulica", "Caja de cambios", "Sistema eléctrico", "Frenos", "Batería ERS"]);
-      events.push({ lap, type: "dnf", text: `${name(car)} abandona: ${car.dnfReason}`, drivers: [car.id] });
-      if (config.safetyCar && rng.chance(0.25)) newSafetyCar = true;
+      const at = stopAt(car);
+      events.push({ lap, type: "dnf", text: `${name(car)} abandona: ${car.dnfReason}`, drivers: [car.id], at });
+      if (config.safetyCar && rng.chance(0.25)) {
+        newSafetyCar = true;
+        incidentAt = at;
+      }
       return;
     }
     if (rng.chance(crash)) {
       car.status = "dnf";
       car.dnfLap = lap;
       car.dnfReason = lap === 1 ? "Accidente en la largada" : "Accidente";
-      events.push({ lap, type: "dnf", text: `${name(car)} se estrella — fuera de carrera`, drivers: [car.id] });
+      const at = lap === 1 ? +(0.03 + rng.next() * 0.2).toFixed(3) : stopAt(car);
+      car.dnfAt = at;
+      events.push({ lap, type: "dnf", text: `${name(car)} se estrella — fuera de carrera`, drivers: [car.id], at });
       // a heavy crash (barriers damaged, debris everywhere) stops the race
-      if (config.safetyCar && !newRedFlag && lap < state.totalLaps - 2 && rng.chance(0.13 * (1 + wet * 1.5) * (lap === 1 ? 1.5 : 1))) newRedFlag = name(car);
-      else if (config.safetyCar && rng.chance(0.55)) newSafetyCar = true;
+      if (config.safetyCar && !newRedFlag && lap < state.totalLaps - 2 && rng.chance(0.13 * (1 + wet * 1.5) * (lap === 1 ? 1.5 : 1))) {
+        newRedFlag = name(car);
+        incidentAt = at;
+      } else if (config.safetyCar && rng.chance(0.55)) {
+        newSafetyCar = true;
+        incidentAt = at;
+      }
       return;
     }
 
@@ -292,8 +309,12 @@ export function simulateLap(prev: RaceState): RaceState {
             car.status = "dnf";
             car.dnfLap = lap;
             car.dnfReason = "Pinchazo";
-            events.push({ lap, type: "dnf", text: `💥 ${name(car)} pincha y daña el auto: abandona`, drivers: [car.id] });
-            if (config.safetyCar && rng.chance(0.3)) newSafetyCar = true;
+            const at = stopAt(car);
+            events.push({ lap, type: "dnf", text: `💥 ${name(car)} pincha y daña el auto: abandona`, drivers: [car.id], at });
+            if (config.safetyCar && rng.chance(0.3)) {
+              newSafetyCar = true;
+              incidentAt = at;
+            }
             return;
           }
           const loss = 16 + rng.next() * 12;
@@ -304,6 +325,7 @@ export function simulateLap(prev: RaceState): RaceState {
             type: "puncture",
             text: `💥 Pinchazo de ${name(car)} (neumático al ${Math.round(worn * 100)}%): vuelve lento a pits y pierde ${loss.toFixed(0)}s`,
             drivers: [car.id],
+            at: +(0.1 + rng.next() * 0.6).toFixed(3),
           });
           if (lap < state.totalLaps) car.pitRequest = car.pitRequest ?? (car.plan[1]?.compound ?? (car.compound === "H" ? "M" : "H"));
         }
@@ -420,6 +442,7 @@ export function simulateLap(prev: RaceState): RaceState {
         type: "sc",
         text: newSafetyCar ? "🚨 Safety car en pista" : "🚨 Safety car: escombros en la pista",
         drivers: [],
+        at: newSafetyCar ? Math.min(0.98, incidentAt + 0.03) : +(0.1 + rng.next() * 0.8).toFixed(3),
       });
     }
   }
@@ -475,7 +498,13 @@ export function simulateLap(prev: RaceState): RaceState {
     sc.active = false;
     sc.lapsLeft = 0;
     sc.restartLap = false;
-    events.push({ lap, type: "red", text: `🟥 BANDERA ROJA: fuerte accidente de ${newRedFlag}. Carrera detenida, se puede cambiar neumáticos`, drivers: [] });
+    events.push({
+      lap,
+      type: "red",
+      text: `🟥 BANDERA ROJA: fuerte accidente de ${newRedFlag}. Carrera detenida, se puede cambiar neumáticos`,
+      drivers: [],
+      at: Math.min(0.98, incidentAt + 0.03),
+    });
     const leaderT = order[0]?.total ?? 0;
     const wetNow = wetEnd;
     order.forEach((car, i) => {

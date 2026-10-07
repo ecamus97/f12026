@@ -38,8 +38,8 @@ export function lapProgressDetailed(
   anim: LapAnimation | null,
   now: number,
   prev?: RaceState | null,
-): Record<string, { frac: number; inPit: boolean }> {
-  const out: Record<string, { frac: number; inPit: boolean }> = {};
+): Record<string, { frac: number; inPit: boolean; stopped?: boolean }> {
+  const out: Record<string, { frac: number; inPit: boolean; stopped?: boolean }> = {};
   const running = target.cars.filter((c) => c.status === "running");
   const leaderTo = target.cars[0]?.total ?? 0;
   const leaderFrom = anim ? Math.min(...Object.values(anim.from)) : leaderTo - (target.cars[0]?.lastLap ?? 1);
@@ -58,6 +58,17 @@ export function lapProgressDetailed(
     } else {
       const f = sectorFraction(from, to, c.lastSectors, clock, c.lastPitTime ?? 0);
       out[c.id] = { frac: f, inPit: inPitLane(f, c.lastPitTime) };
+    }
+  }
+  // cars that retire on this lap keep going until the point where they stop
+  if (anim && prevCars) {
+    for (const c of target.cars) {
+      if (c.status !== "dnf" || c.dnfLap !== target.lap || c.dnfAt == null) continue;
+      const before = prevCars.get(c.id);
+      if (!before || before.status !== "running") continue;
+      const from = anim.from[c.id] ?? before.total;
+      const f = Math.max(0, (clock - from) / Math.max(1, before.lastLap || 90));
+      out[c.id] = f < c.dnfAt ? { frac: f, inPit: false } : { frac: c.dnfAt, inPit: false, stopped: true };
     }
   }
   return out;
@@ -184,7 +195,7 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
 
   // Positions
   const target = anim ? anim.to : state;
-  let markers: { car: CarState; frac: number; pos: number; inPit?: boolean }[] = [];
+  let markers: { car: CarState; frac: number; pos: number; inPit?: boolean; stopped?: boolean }[] = [];
 
   if (target.lap === 0 && !anim) {
     // on the grid, just behind the line
@@ -192,10 +203,10 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
   } else {
     const prog = lapProgressDetailed(target, anim, now, anim ? state : null);
     markers = target.cars
-      .filter((c) => c.status === "running")
-      .map((c) => ({ car: c, frac: prog[c.id].frac, pos: target.cars.indexOf(c) + 1, inPit: prog[c.id].inPit }));
+      .filter((c) => prog[c.id])
+      .map((c) => ({ car: c, frac: prog[c.id].frac, pos: target.cars.indexOf(c) + 1, inPit: prog[c.id].inPit, stopped: prog[c.id].stopped }));
     // live positions: who is ahead on track right now (not the order at the end of the lap)
-    if (anim) [...markers].sort((a, b) => b.frac - a.frac).forEach((m, i) => (m.pos = i + 1));
+    if (anim) [...markers].filter((m) => !m.stopped).sort((a, b) => b.frac - a.frac).forEach((m, i) => (m.pos = i + 1));
   }
 
   const centre: [number, number] = [shape.width / 2, shape.height / 2];
@@ -246,10 +257,23 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
         <text x={sx + 14} y={sy - 30} fontSize={22} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="white">
           S1
         </text>
-        {markers.map(({ car, frac, pos, inPit }) => {
+        {markers.map(({ car, frac, pos, inPit, stopped }) => {
           const inLane = !!inPit;
           const [x, y] = inLane ? pitLanePoint(geo, frac, centre) : pointAt(geo, frac);
           const mine = car.entry.team.id === playerTeamId;
+          if (stopped)
+            return (
+              <g key={car.id} transform={`translate(${x},${y})`} opacity={0.75}>
+                <circle r={mine ? 22 : 17} fill="#3f3f46" stroke={car.entry.team.hex} strokeWidth={5} />
+                <text x={0} y={8} textAnchor="middle" fontSize={22} fontWeight={800} fill="#f87171">✕</text>
+                <g transform="translate(24,-22)">
+                  <rect x={0} y={-24} width={108} height={34} rx={8} fill="#7f1d1d" fillOpacity={0.9} />
+                  <text x={10} y={1} fontSize={24} fontFamily="Titillium Web, sans-serif" fontWeight={700} fill="white">
+                    {car.entry.driver.shortName} OUT
+                  </text>
+                </g>
+              </g>
+            );
           const showLabel = allLabels || mine || pos <= 3;
           return (
             <g key={car.id} transform={`translate(${x},${y})`}>
