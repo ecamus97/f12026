@@ -227,6 +227,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     [anim, apply, detailed, onUpdate, state],
   );
 
+  const [openCards, setOpenCards] = useState<string[]>([]); // pit wall cards start closed
   const leader = state.cars[0];
   const myCars = state.cars.filter((c) => c.entry.team.id === playerTeamId);
 
@@ -421,6 +422,8 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
             {myCars.map((car) => (
               <PitWallCard
                 key={car.id}
+                open={openCards.includes(car.id)}
+                onToggle={() => setOpenCards((o) => (o.includes(car.id) ? o.filter((x) => x !== car.id) : [...o, car.id]))}
                 car={car}
                 pos={state.cars.indexOf(car) + 1}
                 state={state}
@@ -614,8 +617,10 @@ function TowerRow({
 }
 
 function PitWallCard({
-  car, pos, state, onApply, onMode, live, finishing = false,
+  car, pos, state, onApply, onMode, live, finishing = false, open = false, onToggle,
 }: {
+  open?: boolean;
+  onToggle?: () => void;
   finishing?: boolean; // still completing the previous lap
   onMode: (fn: (s: RaceState) => RaceState) => void;
   live: { frac: number; to?: CarState } | null;
@@ -655,11 +660,13 @@ function PitWallCard({
 
   return (
     <div className="rounded-lg border border-border/60 bg-background/40 p-3 space-y-3">
-      <div className="flex items-center gap-2">
+      <button className="w-full flex items-center gap-2 text-left" onClick={onToggle} title={open ? "Cerrar" : "Abrir controles"}>
         <TeamStripe color={car.entry.team.hex} className="h-8 w-1.5" />
-        <div className="flex-1">
-          <div className="font-racing text-sm">
+        <div className="flex-1 min-w-0">
+          <div className="font-racing text-sm flex items-center gap-1.5">
             {dnf ? "—" : `P${pos}`} · {car.entry.driver.name}
+            {!dnf && (car.penalty ?? 0) > 0 && <span className="text-[9px] px-1 rounded bg-amber-400 text-black font-bold">+{car.penalty}s</span>}
+            {!dnf && car.pitRequest && <span className="text-[9px] px-1 rounded bg-orange-500 text-black font-bold">BOX</span>}
           </div>
           <div className="text-[11px] text-muted-foreground">
             {dnf ? `Abandono: ${car.dnfReason}` : preRace ? `Sale desde P${car.grid}` : `${stops} parada${stops === 1 ? "" : "s"}`}
@@ -671,7 +678,24 @@ function PitWallCard({
           </div>
         </div>
         {!dnf && <TyreBadge compound={tyre} />}
-      </div>
+        {open ? <ChevronUp className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />}
+      </button>
+
+      {!open && !dnf && !preRace && (
+        <button className="w-full grid grid-cols-4 gap-1.5 text-[10px] text-left" onClick={onToggle}>
+          <Stat label="Neum." value={`${tyreAge}v · ${Math.round(wear * 100)}%`} tone={wear > 0.9 ? "text-red-400" : wear > 0.6 ? "text-yellow-300" : undefined} />
+          <Stat label="Batería" value={`${Math.round(battery)}%`} tone={battery < 20 ? "text-red-400" : undefined} />
+          <Stat label="Combust." value={`${fuelMargin >= 0 ? "+" : ""}${fuelMargin.toFixed(2)}`} tone={fuelMargin < 0 ? "text-red-400" : fuelMargin < 0.25 ? "text-yellow-300" : undefined} />
+          <Stat label="Parada" value={car.pitRequest ? "ahora" : next ? `V${next.lap}` : "—"} />
+          <Stat label="Modo" value={MODES[car.mode].label} />
+          <Stat label="Mezcla" value={{ rich: "Máx.", normal: "Estándar", lean: "L&C" }[car.fuelMode ?? "normal"]} />
+          <Stat label="ERS" value={{ deploy: "Ataque", balanced: "Auto", harvest: "Recarga" }[car.ersMode ?? "balanced"]} />
+          <Stat label="Duelo" value={{ free: "Libre", attack: "Atacar", defend: "Defender" }[car.instruction ?? "free"]} />
+        </button>
+      )}
+
+      {open && (
+      <div className="space-y-3">
 
       {!dnf && !preRace && (
         <div className="space-y-1">
@@ -778,9 +802,6 @@ function PitWallCard({
                       className={cn("block h-full", battery < 20 ? "bg-red-500" : battery < 50 ? "bg-yellow-400" : "bg-emerald-400")}
                       style={{ width: `${Math.round(battery)}%`, transition: "width 120ms linear" }}
                     />
-            <div className="text-[10px] text-muted-foreground">
-              Automático despliega en las rectas y recarga en las frenadas. Ataque gasta más batería por más ritmo; Recargar la llena.
-            </div>
                   </span>
                   <span className="tabular-nums">{Math.round(battery)}%</span>
                 </span>
@@ -808,7 +829,18 @@ function PitWallCard({
           )}
         </>
       )}
+      </div>
+      )}
     </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <span className="rounded bg-white/[0.04] px-1.5 py-1 min-w-0">
+      <span className="block text-[9px] uppercase tracking-wider text-muted-foreground truncate">{label}</span>
+      <span className={cn("block font-semibold truncate", tone)}>{value}</span>
+    </span>
   );
 }
 

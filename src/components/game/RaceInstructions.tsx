@@ -97,7 +97,6 @@ export function DuelPanel({ car, state, onMode }: { car: CarState; state: RaceSt
   const closeAhead = !!ahead && car.total - ahead.total < 1.0;
   const closeBehind = !!behind && behind.total - car.total < 1.0;
   const lowBattery = (car.battery ?? 80) < 20;
-  const hint = INSTRUCTIONS.find((x) => x.id === instr)!.hint;
   return (
     <div className="rounded-md border border-border/60 p-2 space-y-1.5">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -126,17 +125,20 @@ export function DuelPanel({ car, state, onMode }: { car: CarState; state: RaceSt
       </div>
       <div className="text-[10px] text-muted-foreground space-y-0.5">
         {state.safetyCar.active && <div className="text-yellow-300">Safety car: no se puede adelantar hasta el relanzamiento.</div>}
-        {ahead && state.lap > 0 && !state.safetyCar.active && (
-          <div>
-            Adelantar a {ahead.entry.driver.shortName} al alcanzarlo: {pct(attackChance(false))} libre · {pct(attackChance(true))} atacando
+        {state.lap > 0 && !state.safetyCar.active && (ahead || behind) && (
+          <div className="flex flex-wrap gap-x-3">
+            {ahead && (
+              <span title={`Probabilidad de adelantar a ${ahead.entry.driver.shortName} al alcanzarlo: libre → atacando`}>
+                Pasar a {ahead.entry.driver.shortName}: {pct(attackChance(false))} → {pct(attackChance(true))}
+              </span>
+            )}
+            {behind && (
+              <span title={`Probabilidad de que ${behind.entry.driver.shortName} te pase si te alcanza: libre → defendiendo`}>
+                Te pasa {behind.entry.driver.shortName}: {pct(passedChance(false))} → {pct(passedChance(true))}
+              </span>
+            )}
           </div>
         )}
-        {behind && state.lap > 0 && !state.safetyCar.active && (
-          <div>
-            Que {behind.entry.driver.shortName} te pase si te alcanza: {pct(passedChance(false))} libre · {pct(passedChance(true))} defendiendo
-          </div>
-        )}
-        <div>{hint}</div>
         {instr !== "free" && lowBattery && <div className="text-orange-300">Batería baja: el ERS ya no ayuda en el duelo.</div>}
       </div>
     </div>
@@ -188,9 +190,8 @@ export function TeamOrdersPanel({ state, teamId, onApply }: { state: RaceState; 
           );
         })}
       </div>
+      {ord.kind === "swap" && (
       <div className="text-[10px] text-muted-foreground">
-        {ord.kind === "free" && "Tus pilotos pueden pelear entre ellos: más riesgo de contacto entre compañeros."}
-        {ord.kind === "hold" && "Mantienen posiciones: el de atrás no ataca a su compañero. Si es más rápido, le baja un poco la moral."}
         {ord.kind === "swap" &&
           (gap > 2.5
             ? `Esperando que ${back.entry.driver.shortName} se acerque a menos de 2.5s (se cancela tras 5 vueltas).`
@@ -201,6 +202,7 @@ export function TeamOrdersPanel({ state, teamId, onApply }: { state: RaceState; 
           </span>
         )}
       </div>
+      )}
     </div>
   );
 }

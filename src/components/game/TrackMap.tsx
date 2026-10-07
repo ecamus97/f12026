@@ -68,7 +68,9 @@ export function lapProgressDetailed(
       const before = prevCars.get(c.id);
       if (!before || before.status !== "running") continue;
       const from = anim.from[c.id] ?? before.total;
-      const f = Math.max(0, (clock - from) / Math.max(1, before.lastLap || 90));
+      // same clock as everyone else (negative while it is still finishing the previous lap), so it doesn't
+      // jump ahead of the cars around it in the live order before it stops
+      const f = (clock - from) / Math.max(1, before.lastLap || 90);
       out[c.id] = f < c.dnfAt ? { frac: f, inPit: false } : { frac: c.dnfAt, inPit: false, stopped: true };
     }
   }
