@@ -181,6 +181,7 @@ export interface GameState {
   activities: Activity[]; // agenda between races (sponsor events, media, factory...)
   agendaRounds: string[]; // "season-round" whose agenda was already planned
   lastOrders?: OrderLog[]; // the player's team orders in the last Grand Prix (for the press)
+  gridPenalties?: Record<string, { places: number; reason: string }>; // to serve on the grid of the next race
   calendar: Race[]; // races of this season, in order
   sprints: number[]; // race ids with a sprint this season
   nextSprints?: number[]; // announced for next season
@@ -706,6 +707,29 @@ function openWeekend(s0: GameState): GameState {
   };
 }
 
+/** Grid penalties from the last race: each driver goes back N places from where he qualified. */
+function withGridPenalties(s: GameState, ids: string[]): { ids: string[]; used: string[]; notes: string[] } {
+  const pens = s.gridPenalties ?? {};
+  const out = [...ids];
+  const used: string[] = [];
+  const notes: string[] = [];
+  // from the front, so two penalised drivers keep their relative order
+  for (const id of ids) {
+    const p = pens[id];
+    if (!p) continue;
+    const from = out.indexOf(id);
+    const to = Math.min(out.length - 1, from + p.places);
+    out.splice(from, 1);
+    out.splice(to, 0, id);
+    used.push(id);
+    notes.push(`${s.teamsData.flatMap((t) => t.drivers).find((d) => d.id === id)?.shortName ?? id} sale ${to - from} puestos más atrás (P${to + 1}) por ${p.reason}`);
+  }
+  return { ids: out, used, notes };
+}
+
+const clearGridPenalties = (s: GameState, used: string[]): GameState =>
+  used.length ? { ...s, gridPenalties: Object.fromEntries(Object.entries(s.gridPenalties ?? {}).filter(([id]) => !used.includes(id))) } : s;
+
 /** Sprint race: short, no mandatory stop, everyone on one set of tyres unless they decide otherwise. */
 function openSprint(s0: GameState): GameState {
   const s = completeQuali(s0);
@@ -713,7 +737,8 @@ function openSprint(s0: GameState): GameState {
   if (!w?.sprint || w.sprint.race) return s;
   const race = sprintOf(calendar()[w.raceIndex]);
   const map = new Map(raceEntries(s).map((e) => [e.driver.id, e]));
-  const grid = w.sprint.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
+  const gp = withGridPenalties(s, w.sprint.quali.grid);
+  const grid = gp.ids.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
   const tuned = { ...race, track: tunedTrack(race.track, s.simConfig) };
   const weather = generateWeather(tuned.track, race.track.laps, ((w.weather?.seed ?? 1) ^ 0x51) >>> 0);
@@ -726,7 +751,8 @@ function openSprint(s0: GameState): GameState {
     return { ...c, compound, usedCompounds: [compound], plan: [{ compound, untilLap: laps }] };
   });
   rs.rules = { twoCompound: false, overtakeAid: r.overtakeAid, points: SPRINT_POINTS, fastestLapPoint: false };
-  return { ...s, weekend: { ...w, sprint: { ...w.sprint, qualiRevealed: 3, race: rs } } };
+  rs.events = [...rs.events, ...gp.notes.map((text) => ({ lap: 0, type: "penalty" as const, text: `⚖️ ${text}`, drivers: [] }))];
+  return clearGridPenalties({ ...s, weekend: { ...w, sprint: { ...w.sprint, qualiRevealed: 3, race: rs } } }, gp.used);
 }
 
 function openRace(s0: GameState): GameState {
@@ -736,14 +762,16 @@ function openRace(s0: GameState): GameState {
   if (!w || w.race) return s;
   const race = calendar()[w.raceIndex];
   const map = new Map(raceEntries(s).map((e) => [e.driver.id, e]));
-  const grid = w.quali.grid.map((id) => map.get(id)).filter((e): e is Entry => !!e);
+  const gp = withGridPenalties(s, w.quali.grid);
+  const grid = gp.ids.map((id) => map.get(id)).filter((e): e is Entry => !!e);
   const r = s.rules;
   const tuned = { ...race, track: tunedTrack(race.track, s.simConfig) };
   const raceForRules = r.highDegTyres ? { ...tuned, track: { ...tuned.track, deg: +(tuned.track.deg * 1.2).toFixed(2) } } : tuned;
   const rs = createRace(raceForRules, grid, randomSeed(), s.simConfig, s.playerTeamId, w.weather);
   rs.cars = rs.cars.map((c) => ({ ...c, morale: moraleOf(s.people?.drivers[c.id]) }));
   rs.rules = { twoCompound: r.twoCompound, overtakeAid: r.overtakeAid, points: POINTS_TABLES[r.points], fastestLapPoint: r.fastestLapPoint };
-  return { ...s, weekend: { ...w, race: rs } };
+  rs.events = [...rs.events, ...gp.notes.map((text) => ({ lap: 0, type: "penalty" as const, text: `⚖️ ${text}`, drivers: [] }))];
+  return clearGridPenalties({ ...s, weekend: { ...w, race: rs } }, gp.used);
 }
 
 /** Six sprint weekends: keep most of last year's, rotate a couple (never the opener or the finale). */
@@ -779,7 +807,9 @@ function withRaceMood(s: GameState): GameState {
     carRank: (teamId) => (m ? carRankOf(m, teamId) : 6),
   });
   const management = m && res.notes.length ? { ...m, inbox: [...m.inbox, ...res.notes.map((n) => ({ race: w.raceIndex + 1, ...n }))].slice(-60) } : m;
-  return { ...s, people: res.people, management, lastOrders: sprint ? s.lastOrders : (race.orderLog ?? []).filter((o) => o.teamId === s.playerTeamId) };
+  const newGrid = Object.fromEntries(race.cars.filter((c) => c.gridPenalty).map((c) => [c.id, c.gridPenalty!]));
+  const gridPenalties = Object.keys(newGrid).length ? { ...(s.gridPenalties ?? {}), ...newGrid } : s.gridPenalties;
+  return { ...s, gridPenalties, people: res.people, management, lastOrders: sprint ? s.lastOrders : (race.orderLog ?? []).filter((o) => o.teamId === s.playerTeamId) };
 }
 
 /** Morale and form applied to the drivers' stats for a session. */

@@ -484,20 +484,28 @@ export function simulateLap(prev: RaceState): RaceState {
               c.total += 1.5 + rng.next() * 2;
               if (!c.controlled && lap < state.totalLaps - 1) c.pitRequest = c.pitRequest ?? c.plan[1]?.compound ?? c.compound;
             };
-            let retiredHere: CarState | null = null;
-            if (roll < 0.1) {
+            const retiredHere: CarState[] = [];
+            const out = (c: CarState, by: CarState) => {
+              retiredHere.push(c);
+              c.status = "dnf";
+              c.dnfLap = lap;
+              c.dnfReason = `Accidente: contacto con ${name(by)}`;
+              c.dnfAt = at;
+            };
+            if (roll < 0.04) {
+              // both out
+              out(behind, ahead);
+              out(ahead, behind);
+              events.push({ lap, type: "dnf", text: `💥 Choque entre ${who}: ¡abandonan los dos!`, drivers: [behind.id, ahead.id], at });
+            } else if (roll < 0.12) {
               // one of them is out (broken suspension, puncture and floor damage...)
-              retiredHere = victim;
-              victim.status = "dnf";
-              victim.dnfLap = lap;
-              victim.dnfReason = `Accidente: contacto con ${name(other)}`;
-              victim.dnfAt = at;
+              out(victim, other);
               events.push({ lap, type: "dnf", text: `💥 Choque entre ${who}: ${name(victim)} abandona`, drivers: [victim.id, other.id], at });
               if (rng.chance(0.5)) {
                 hurt(other);
                 events.push({ lap, type: "damage", text: `🔧 ${name(other)} sigue con el alerón dañado (−${other.damage!.pace.toFixed(1)}s por vuelta)`, drivers: [other.id], at: Math.min(0.99, at + 0.01) });
               } else other.total += 0.5 + rng.next();
-            } else if (roll < 0.35) {
+            } else if (roll < 0.37) {
               hurt(behind);
               hurt(ahead);
               events.push({ lap, type: "damage", text: `💥 Contacto entre ${who}: los dos dañan el alerón delantero`, drivers: [behind.id, ahead.id], at });
@@ -510,15 +518,27 @@ export function simulateLap(prev: RaceState): RaceState {
               ahead.total += 0.4 + rng.next() * 0.8;
               events.push({ lap, type: "mistake", text: `💥 Toque entre ${who}, sin daños: pierden algo de tiempo`, drivers: [behind.id, ahead.id], at });
             }
-            // the stewards look at it: usually the attacker is to blame
+            // the stewards look at it: usually the attacker is to blame (even if he is the one who retired)
             if (rng.chance(0.55)) {
               const guilty = rng.chance(def && !atk ? 0.45 : 0.7) ? behind : ahead;
-              if (guilty.status === "running")
-                givePenalty(guilty, rng.chance(0.3) ? 10 : 5, guilty === behind ? `provocar un choque con ${name(ahead)}` : `cambiar de trayectoria al defenderse de ${name(behind)}`, lap, events, Math.min(0.99, at + 0.05));
+              const reason = guilty === behind ? `provocar un choque con ${name(ahead)}` : `cambiar de trayectoria al defenderse de ${name(behind)}`;
+              if (guilty.status === "running") givePenalty(guilty, rng.chance(0.3) ? 10 : 5, reason, lap, events, Math.min(0.99, at + 0.05));
+              else {
+                // out of the race: the penalty moves to the grid of the next one
+                const places = rng.chance(0.3) ? 5 : 3;
+                guilty.gridPenalty = { places, reason };
+                events.push({
+                  lap,
+                  type: "penalty",
+                  text: `⚖️ Penalización para ${name(guilty)}: ${places} puestos en la parrilla de la próxima carrera por ${reason}`,
+                  drivers: [guilty.id],
+                  at: Math.min(0.99, at + 0.05),
+                });
+              }
             }
-            if (retiredHere) {
-              order.splice(order.indexOf(retiredHere), 1);
-              i--;
+            if (retiredHere.length) {
+              for (const c of retiredHere) order.splice(order.indexOf(c), 1);
+              i -= retiredHere.length;
               break;
             }
             if (behind.total >= ahead.total + MIN_GAP) break;

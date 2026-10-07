@@ -261,7 +261,7 @@ describe("penalties", () => {
 
 describe("contact and damage", () => {
   it("contacts can damage one car, both, nobody, or put one out; the player decides when to change the wing", () => {
-    const kinds = { one: 0, both: 0, none: 0, out: 0 };
+    const kinds = { one: 0, both: 0, none: 0, out: 0, bothOut: 0, gridPen: 0 };
     let playerDamagedLaps = 0;
     for (let seed = 1; seed <= 150; seed++) {
       let s = createRace(race, allEntries(), seed, { ...DEFAULT_SIM_CONFIG, incidents: 3 }, "williams");
@@ -272,7 +272,9 @@ describe("contact and damage", () => {
           if (e.text.includes("los dos dañan")) kinds.both++;
           else if (e.type === "damage" && e.text.startsWith("💥")) kinds.one++;
           else if (e.text.includes("sin daños")) kinds.none++;
+          else if (e.text.includes("abandonan los dos")) kinds.bothOut++;
           else if (e.text.startsWith("💥 Choque entre")) kinds.out++;
+          if (e.text.includes("puestos en la parrilla")) kinds.gridPen++;
         }
         // a damaged player car is never sent in automatically
         for (const c of s.cars.filter((c) => c.controlled && c.damage && c.status === "running")) {
@@ -282,6 +284,8 @@ describe("contact and damage", () => {
           if (before.damage) expect(c.pittedThisLap).toBe(false);
         }
       }
+      expect(new Set(s.cars.map((c) => c.id)).size).toBe(s.cars.length); // nobody lost or duplicated
+      expect(s.cars.length).toBe(allEntries().length);
       // the AI changes the wing at once (unless it happened right at the end)
       for (const c of s.cars) if (c.status === "running" && c.damage && !c.controlled) expect(s.events.some((e) => e.type === "damage" && e.drivers.includes(c.id) && e.lap >= s.totalLaps - 2)).toBe(true);
     }
@@ -289,6 +293,8 @@ describe("contact and damage", () => {
     expect(kinds.both).toBeGreaterThan(0);
     expect(kinds.none).toBeGreaterThan(0);
     expect(kinds.out).toBeGreaterThan(0);
+    expect(kinds.bothOut).toBeGreaterThan(0);
+    expect(kinds.gridPen).toBeGreaterThan(0); // the one to blame retired: grid penalty for the next race
     expect(playerDamagedLaps).toBeGreaterThan(0);
   });
 

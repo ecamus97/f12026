@@ -81,6 +81,7 @@ export interface CarState {
   penalties?: { lap: number; secs: number; reason: string }[]; // given in this race
   trackLimits?: number; // track limits warnings
   damage?: { part: "wing"; pace: number }; // broken front wing: seconds lost per lap until it's changed in the pits
+  gridPenalty?: { places: number; reason: string }; // to serve at the start of the next race (penalty given after retiring)
 }
 
 export type RaceEventType =
