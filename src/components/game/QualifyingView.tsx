@@ -29,6 +29,7 @@ import {
   dayForecast,
   formatLap,
   goOut,
+  tyreOptions,
   lastCall,
   MAX_RUNS,
   QUALI_FORMAT,
@@ -920,13 +921,7 @@ function LiveSession({
                   onAct={onAct}
                 />
               ))}
-              <p className="text-[11px] text-muted-foreground">
-                Cada salida es una vuelta de calentamiento, una vuelta rápida y
-                la vuelta a boxes. La pista gana agarre con el caucho, así que
-                las últimas vueltas suelen ser las más rápidas, pero la lluvia o
-                una pista que se seca pueden cambiarlo todo. Si la bandera cae
-                antes de abrir vuelta, esa salida no cuenta.
-              </p>
+              
             </div>
           )}
           <div className="panel">
@@ -1045,8 +1040,8 @@ function PlayerCar({
       <div className="text-[11px]">
         {next ? (
           <span>
-            Próxima salida: <b>{mmss(live.duration - next.start)}</b>{" "}
-            {car.manual ? "" : "(plan del ingeniero)"}
+            Próxima salida: <b>{mmss(clockRemaining(live, next.start))}</b> con{" "}
+            <TyreBadge compound={next.compound} className="align-middle" /> {car.manual ? "" : "(plan del ingeniero)"}
           </span>
         ) : closed ? (
           <span className="text-muted-foreground">
@@ -1065,18 +1060,37 @@ function PlayerCar({
       {advice && ph.phase === "garage" && (
         <div className={cn("text-[11px]", advice.tone)}>🎧 {advice.text}</div>
       )}
+      {!closed && !blocked && (
+        <div className="space-y-1">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+            <LogOut className="w-3 h-3" /> Salir ahora con
+          </div>
+          <div className="grid grid-cols-3 gap-1">
+            {tyreOptions(ctx, live, id).map((o) => (
+              <button
+                key={o.compound}
+                onClick={() => onAct((l) => goOut(ctx, l, id, o.compound))}
+                className={cn(
+                  "rounded-md border px-1 py-1 text-[11px] flex items-center justify-center gap-1",
+                  o.best ? "border-primary bg-primary/15" : "border-border hover:bg-muted",
+                )}
+                title={o.best ? "El neumático más rápido según el radar" : `≈ ${o.loss.toFixed(1)}s más lento por vuelta según el radar`}
+              >
+                <TyreBadge compound={o.compound} />
+                <span className="font-racing">{o.compound === "S" ? "Slick" : o.compound === "I" ? "Inter" : "Lluvia"}</span>
+                <span className={cn("tabular-nums", o.best ? "text-primary" : o.loss > 2 ? "text-red-400" : "text-muted-foreground")}>
+                  {o.best ? "★" : `+${o.loss.toFixed(1)}`}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {!closed && (
         <div className="flex flex-wrap gap-1.5">
-          <Button
-            size="sm"
-            className="text-xs h-7 flex-1"
-            disabled={!!blocked}
-            onClick={() => onAct((l) => goOut(ctx, l, id))}
-            title={blocked ?? "Sale ahora a pista"}
-          >
-            <LogOut className="w-3.5 h-3.5 mr-1" />{" "}
-            {blocked && ph.phase !== "garage" ? "En pista" : "Salir ahora"}
-          </Button>
+          {blocked && (
+            <span className="text-[11px] text-muted-foreground flex-1 self-center">{ph.phase !== "garage" ? "En pista" : blocked}</span>
+          )}
           {next && (
             <Button
               size="sm"

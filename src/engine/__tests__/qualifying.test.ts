@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { races2026 } from "@/data/f1Data";
 import {
-  advanceTo, autoPlan, runToEnd, redFlagAt, canGoOut, carPhase, DEFAULT_SIM_CONFIG, finishQualifying, generateDayWeather, goOut, nextSession,
+  advanceTo, autoPlan, runToEnd, redFlagAt, tyreOptions, canGoOut, carPhase, DEFAULT_SIM_CONFIG, finishQualifying, generateDayWeather, goOut, nextSession,
   sessionRows, startQualifying, stayIn, type DayWeather, type QualiCtx,
 } from "..";
 import { allEntries } from "./helpers";
@@ -153,5 +153,20 @@ describe("red flag while playing", () => {
       }
     }
     expect(flags).toBeGreaterThan(3);
+  });
+});
+
+describe("tyre choice in qualifying", () => {
+  it("the player picks the compound, and the wrong one costs time", () => {
+    const ctx = ctxWith(custom(0, 80, 0.5)); // raining all along
+    let { live } = startQualifying(ctx, race.id, 21);
+    const id = live.cars[0].id;
+    live = stayIn(live, id);
+    const opts = tyreOptions(ctx, live, id);
+    expect(opts.find((o) => o.best)!.compound).not.toBe("S");
+    const wet = goOut(ctx, live, id, opts.find((o) => o.best)!.compound).cars[0].runs[0];
+    const slick = goOut(ctx, live, id, "S").cars[0].runs[0];
+    expect(slick.compound).toBe("S");
+    expect(slick.time === 0 || slick.time > wet.time).toBe(true); // the wrong tyre costs time
   });
 });

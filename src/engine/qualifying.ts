@@ -206,14 +206,14 @@ export function trackEvolution(live: Pick<QualiLive, "seed" | "session" | "offse
 /** A hotter track gives a bit more grip; clouds cool it down. */
 export const tempGain = (w: DayWeather, trackTemp: number) => Math.max(-0.1, Math.min(0.08, (trackTemp - (w.airTemp + 15)) * 0.008));
 
-function buildRun(ctx: QualiCtx, live: QualiLive, id: string, start: number, k: number): QualiRun {
+function buildRun(ctx: QualiCtx, live: QualiLive, id: string, start: number, k: number, tyre?: Compound): QualiRun {
   const e = ctx.entries.get(id)!;
   const L = nominal(ctx, e);
   const rng = createRng(mix(live.seed, live.session, strHash(id), k));
   const T0 = live.offset + start;
   const out = L * OUT * (1 + dayConditions(ctx.weather, T0).wet * 0.15);
   const flyStart = start + out;
-  const compound = tyreFor(dayConditions(ctx.weather, T0 + out * 0.7).wet); // chosen in the garage, with the radar
+  const compound = tyre ?? tyreFor(dayConditions(ctx.weather, T0 + out * 0.7).wet); // chosen in the garage, with the radar
   const midT = live.offset + flyStart + L / 2;
   const c = dayConditions(ctx.weather, midT);
   const cons = e.driver.consistency;
@@ -347,6 +347,19 @@ export function runOutlook(ctx: QualiCtx, live: QualiLive, id: string, start: nu
   const wetGarage = Math.max(0, dayConditions(ctx.weather, T0 + out * 0.7).wet + err);
   const c = dayConditions(ctx.weather, midT);
   return trackEvolution(live, midT, wetMid) + tempGain(ctx.weather, c.trackTemp) - tyreCost(tyreFor(wetGarage), wetMid);
+}
+
+/** Slicks, intermediates or full wets for a run leaving now: time lost against the best choice, as the team reads the radar. */
+export function tyreOptions(ctx: QualiCtx, live: QualiLive, id: string, start = live.clock): { compound: Compound; loss: number; best: boolean }[] {
+  const e = ctx.entries.get(id)!;
+  const L = nominal(ctx, e);
+  const midT = live.offset + start + L * OUT + L / 2;
+  const ahead = Math.max(0, (midT - (live.offset + live.clock)) / 60);
+  const err = (hash01(live.seed, strHash(id), Math.floor(midT / 120)) - 0.5) * Math.min(0.12, ahead * 0.01);
+  const wet = Math.max(0, dayConditions(ctx.weather, midT).wet + err);
+  const costs = (["S", "I", "W"] as Compound[]).map((c) => ({ compound: c, cost: tyreCost(c, wet) }));
+  const min = Math.min(...costs.map((x) => x.cost));
+  return costs.map((x) => ({ compound: x.compound, loss: +(x.cost - min).toFixed(1), best: x.cost === min }));
 }
 
 /** When the engineers would send a car out from `from` on (seconds of the session). */
@@ -538,11 +551,11 @@ export function canGoOut(ctx: QualiCtx, live: QualiLive, id: string): string | n
 }
 
 /** The player sends a car out right now. */
-export function goOut(ctx: QualiCtx, live: QualiLive, id: string): QualiLive {
+export function goOut(ctx: QualiCtx, live: QualiLive, id: string, tyre?: Compound): QualiLive {
   if (canGoOut(ctx, live, id)) return live;
   const car = live.cars.find((c) => c.id === id)!;
   const kept = car.runs.filter((r) => r.start <= live.clock);
-  const run = applyTraffic(live, id, buildRun(ctx, live, id, live.clock, kept.length + 10), kept.length + 10);
+  const run = applyTraffic(live, id, buildRun(ctx, live, id, live.clock, kept.length + 10, tyre), kept.length + 10);
   return enforceFlags(replaceCar(live, { ...car, manual: true, runs: [...kept, run] }));
 }
 
