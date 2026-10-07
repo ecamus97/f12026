@@ -419,6 +419,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
                 onApply={apply}
                 onMode={(fn) => applyMode(car.id, fn)}
                 live={anim ? { frac: Math.max(0, Math.min(1, detailed?.[car.id]?.frac ?? 0)), to: anim.to.cars.find((c) => c.id === car.id) } : null}
+                finishing={!!anim && (detailed?.[car.id]?.frac ?? 0) < 0}
               />
             ))}
           </div>
@@ -452,6 +453,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
                 lap={state.lap}
                 sectors={sectorCells(car, liveCars?.get(car.id), progress?.[car.id], bestSectors)}
                 inPit={!!detailed?.[car.id]?.inPit}
+                finishingPrevLap={!!anim && (progress?.[car.id] ?? 0) < 0}
               />
             ))}
           </div>
@@ -524,9 +526,25 @@ const SECTOR_TONE: Record<SectorCell["tone"], string> = {
 };
 
 function TowerRow({
-  car, pos, gap, mine, fastest, lap, sectors, inPit,
-}: { car: CarState; pos: number; gap: string; mine: boolean; fastest: boolean; lap: number; sectors: SectorCell[]; inPit: boolean }) {
+  car, pos, gap, mine, fastest, lap, sectors, inPit, finishingPrevLap = false,
+}: {
+  car: CarState;
+  pos: number;
+  gap: string;
+  mine: boolean;
+  fastest: boolean;
+  lap: number;
+  sectors: SectorCell[];
+  inPit: boolean;
+  finishingPrevLap?: boolean; // still completing the lap before (e.g. heading into or through the pit lane)
+}) {
   const dnf = car.status === "dnf";
+  // while the car is still finishing the previous lap, show it as it was then: old tyres until the stop is done
+  const before = finishingPrevLap && car.pitFrom ? car.pitFrom : null;
+  const shownCompound = before?.compound ?? car.compound;
+  const shownAge = before?.tyreAge ?? car.tyreAge;
+  const shownStops = before?.stops ?? car.stops;
+  const shownLast = finishingPrevLap ? car.prevLastLap : car.lastLap;
   const change = car.grid - pos;
   return (
     <motion.div
@@ -563,7 +581,7 @@ function TowerRow({
         {inPit ? (
           <span className="text-[9px] px-1 rounded bg-orange-500 text-black font-bold animate-pulse">EN BOXES</span>
         ) : (
-          car.pittedThisLap && <span className="text-[9px] px-1 rounded bg-orange-500/60 text-black font-bold">PIT</span>
+          car.pittedThisLap && !before && <span className="text-[9px] px-1 rounded bg-orange-500/60 text-black font-bold">PIT</span>
         )}
         {dnf && <span className="text-[10px] text-destructive truncate">{car.dnfReason}</span>}
       </span>
@@ -574,17 +592,18 @@ function TowerRow({
         </span>
       ))}
       <span className="w-20 text-right font-mono text-[11px] text-muted-foreground hidden sm:block tabular-nums">
-        {car.lastLap && !dnf ? formatLap(car.lastLap) : ""}
+        {shownLast && !dnf ? formatLap(shownLast) : ""}
       </span>
-      <span className="w-14 flex justify-center">{!dnf && <TyreBadge compound={car.compound} age={car.tyreAge} />}</span>
-      <span className="w-6 text-center text-xs text-muted-foreground">{car.stops}</span>
+      <span className="w-14 flex justify-center">{!dnf && <TyreBadge compound={shownCompound} age={shownAge} />}</span>
+      <span className="w-6 text-center text-xs text-muted-foreground">{shownStops}</span>
     </motion.div>
   );
 }
 
 function PitWallCard({
-  car, pos, state, onApply, onMode, live,
+  car, pos, state, onApply, onMode, live, finishing = false,
 }: {
+  finishing?: boolean; // still completing the previous lap
   onMode: (fn: (s: RaceState) => RaceState) => void;
   live: { frac: number; to?: CarState } | null;
   car: CarState;
@@ -593,8 +612,13 @@ function PitWallCard({
   onApply: (fn: (s: RaceState) => RaceState) => void;
 }) {
   const dnf = car.status === "dnf";
+  // until the stop is really done the car still has its old tyres
+  const pf = finishing && car.pitFrom ? car.pitFrom : null;
+  const tyre = pf?.compound ?? car.compound;
+  const tyreAge = pf?.tyreAge ?? car.tyreAge;
+  const stops = pf?.stops ?? car.stops;
   const preRace = state.lap === 0 && !state.strategyConfirmed;
-  const life = tyreLife(car.compound, state.track, car.entry.driver.tyreMgmt, state.weather?.trackTemp[state.lap]);
+  const life = tyreLife(tyre, state.track, car.entry.driver.tyreMgmt, state.weather?.trackTemp[state.lap]);
   const lapsLeft = state.totalLaps - state.lap;
   // fuel and battery move continuously during the lap
   const f = live?.frac ?? 0;
@@ -608,7 +632,7 @@ function PitWallCard({
   const batteryBase = live?.to ? lerp(car.battery ?? 80, live.to.battery ?? 80) : car.battery ?? 80;
   const battery = Math.max(0, Math.min(100, batteryBase + (live ? wave * amp * Math.min(1, f * 8, (1 - f) * 8) : 0)));
   const ersState = !live ? null : Math.cos(2 * Math.PI * 4 * f) > 0 ? "⚡ desplegando" : "🔋 recuperando";
-  const wear = Math.min(1.3, car.tyreAge / life);
+  const wear = Math.min(1.3, tyreAge / life);
   const wearColor = wear < 0.6 ? "bg-green-500" : wear < 0.9 ? "bg-yellow-400" : "bg-red-500";
   const next = car.plan.length > 1 ? { lap: car.plan[0].untilLap, compound: car.plan[1].compound } : null;
   const compounds = Object.keys(COMPOUNDS) as Compound[];
@@ -625,17 +649,17 @@ function PitWallCard({
             {dnf ? "—" : `P${pos}`} · {car.entry.driver.name}
           </div>
           <div className="text-[11px] text-muted-foreground">
-            {dnf ? `Abandono: ${car.dnfReason}` : preRace ? `Sale desde P${car.grid}` : `${car.stops} parada${car.stops === 1 ? "" : "s"}`}
+            {dnf ? `Abandono: ${car.dnfReason}` : preRace ? `Sale desde P${car.grid}` : `${stops} parada${stops === 1 ? "" : "s"}`}
           </div>
         </div>
-        {!dnf && <TyreBadge compound={car.compound} />}
+        {!dnf && <TyreBadge compound={tyre} />}
       </div>
 
       {!dnf && !preRace && (
         <div className="space-y-1">
           <div className="flex justify-between text-[11px] text-muted-foreground">
             <span>Desgaste neumático</span>
-            <span>{car.tyreAge} v · {Math.round(wear * 100)}%</span>
+            <span>{tyreAge} v · {Math.round(wear * 100)}%</span>
           </div>
           <div className="h-1.5 rounded-full bg-muted overflow-hidden">
             <div className={cn("h-full", wearColor)} style={{ width: `${Math.min(100, wear * 100)}%` }} />

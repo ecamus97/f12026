@@ -100,6 +100,7 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
     slow = ` (parada lenta, ${stationary.toFixed(1)}s)`;
   }
   const pitTime = track.pitLoss * scFactor + stationary;
+  car.pitFrom = { compound: car.compound, tyreAge: car.tyreAge, stops: car.stops };
   car.total += pitTime;
   car.lastPitTime = pitTime;
   car.plan = advancePlan(car, compound, lap, state.totalLaps);
@@ -183,6 +184,8 @@ export function simulateLap(prev: RaceState): RaceState {
   running.forEach((car, idx) => {
     car.pittedThisLap = false;
     car.lastPitTime = 0;
+    car.pitFrom = undefined;
+    car.prevLastLap = car.lastLap;
     car.tyreAge += 1;
     const e = car.entry;
 
