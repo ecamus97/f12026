@@ -8,6 +8,7 @@ import {
   AREA_INFO, CATEGORY_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, SLOT_INFO, STYLE_INFO,
   areaRanks, baseRaceBalance, isInvestment, ledgerCategory, canSignSponsor, canStartProject, canUpgradeFacility, carPace, expectedGain,
   expectedPerRace, facilityUpgradeCost, facilityBuildRaces, maxProjects, projectRaces, successChance, payroll,
+  seasonInvestment, constructorsPrize, carRankOf,
   type PeopleState,
   type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot,
 } from "@/engine";
@@ -296,7 +297,9 @@ export function TeamHQ({
         <StaffPanel people={people} team={team} teams={teams} management={management} onHire={onHireStaff} onFire={onFireStaff} onRenew={onRenewStaff} round={round} />
       )}
 
-      {tab === "finance" && <Finance management={management} onSignSponsor={onSignSponsor} />}
+      {tab === "finance" && (
+        <Finance management={management} onSignSponsor={onSignSponsor} round={round} payrollYear={pay ? pay.drivers + pay.staff : 0} />
+      )}
 
       {!section && <InboxList management={management} />}
     </div>
@@ -357,7 +360,99 @@ const GROUP_LABEL: Record<Group, string> = {
 
 const fmt = (x: number, sign = true) => `${sign && x > 0 ? "+" : ""}${x.toFixed(1)} M`;
 
-function Finance({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
+/** Budget cap in force: how much of it has gone into R&D and facilities this season. */
+function CapTracker({ management }: { management: ManagementState }) {
+  const cap = management.regs?.budgetCap;
+  if (!cap || !management.player) return null;
+  const spent = seasonInvestment(management.player);
+  const pct = Math.min(100, (spent / cap) * 100);
+  const tone = pct >= 90 ? "bg-red-500" : pct >= 70 ? "bg-amber-400" : "bg-emerald-500";
+  return (
+    <div className="panel p-4 space-y-2 border-primary/40">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-display text-lg">Límite presupuestario</h3>
+        <span className="font-racing text-lg tabular-nums">
+          US$ {spent.toFixed(1)} M <span className="text-muted-foreground text-sm">/ {cap} M</span>
+          <span className={cn("ml-2 text-sm", pct >= 90 ? "text-red-400" : pct >= 70 ? "text-amber-300" : "text-emerald-300")}>{pct.toFixed(0)}%</span>
+        </span>
+      </div>
+      <div className="h-3 rounded-full bg-white/10 overflow-hidden">
+        <motion.div className={cn("h-full rounded-full", tone)} initial={{ width: 0 }} animate={{ width: `${pct}%` }} transition={{ duration: 0.6 }} />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Te quedan <b className="text-foreground">US$ {Math.max(0, cap - spent).toFixed(1)} M</b> para I+D e instalaciones esta temporada. Los gastos de
+        carrera, sueldos y fichajes no cuentan para el límite.
+      </p>
+    </div>
+  );
+}
+
+/** Where the season is heading if things go on like this. */
+function SeasonOutlook({ management, round, payrollYear }: { management: ManagementState; round: number; payrollYear: number }) {
+  const p = management.player!;
+  const total = calendar().length;
+  const left = Math.max(0, total - round);
+  const ledger = p.ledger.map((l) => ({ ...l, cat: ledgerCategory(l) }));
+  const raced = ledger.filter((l) => l.race >= 1 && l.race <= round);
+  const perRace = (cats: LedgerCategory[]) =>
+    round > 0 ? raced.filter((l) => cats.includes(l.cat) && !/prima/i.test(l.concept)).reduce((a, l) => a + l.amount, 0) / round : null;
+  const base = baseRaceBalance(management, Math.max(1, round + 1), payrollYear);
+  const incPer = perRace(["tv", "sponsor", "prize"]) ?? base.income;
+  const costPer = -(perRace(["logistics", "staff", "parts", "operations", "repairs", "salaries"]) ?? -base.costs);
+  // sponsor contracts ending before the season does: what they pay if the slot isn't filled again
+  const sponsorRisk = p.sponsors.reduce((a, s) => a + s.base * Math.max(0, left - s.racesLeft), 0);
+  const income = Math.max(0, incPer * left);
+  const costs = costPer * left;
+  const end = p.budget + income - costs;
+  const rank = carRankOf(management, p.teamId);
+  const prize = constructorsPrize(rank, management.regs?.flatPrize);
+  const row = (label: string, value: number, hint?: string, strong = false) => (
+    <div className={cn("flex justify-between items-baseline gap-3 text-sm", strong && "border-t border-border pt-2")}>
+      <span className={cn(strong ? "font-medium" : "text-muted-foreground")}>
+        {label}
+        {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
+      </span>
+      <span className={cn("font-mono tabular-nums", strong && "font-racing text-lg", value < 0 && "text-destructive")}>
+        {value >= 0 && !strong ? "+" : ""}
+        {value.toFixed(1)} M
+      </span>
+    </div>
+  );
+  return (
+    <div className="panel p-4 space-y-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="font-display text-lg">Proyección a fin de temporada</h3>
+        <span className="text-xs text-muted-foreground">
+          {left} carrera{left === 1 ? "" : "s"} por disputar de {total}
+        </span>
+      </div>
+      {row("Presupuesto actual", p.budget, undefined)}
+      {row("Ingresos estimados", income, `TV, patrocinadores y premios: ~${incPer.toFixed(1)} M por carrera${sponsorRisk > 0 ? `. Supone que reemplazas los patrocinios que vencen (si no, −${sponsorRisk.toFixed(1)} M)` : ""}`)}
+      {row("Gastos de carrera estimados", -costs, `Logística, operación, reparaciones y sueldos: ~${costPer.toFixed(1)} M por carrera`)}
+      {row("Presupuesto al final de la temporada", end, undefined, true)}
+      <div className="flex justify-between items-baseline gap-3 text-sm pt-1">
+        <span className="text-muted-foreground">
+          Premio de constructores esperado
+          <span className="block text-[11px]">Con el auto P{rank} de la parrilla; se cobra al empezar la próxima temporada</span>
+        </span>
+        <span className="font-mono text-emerald-300">+{prize} M</span>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Estimación con el promedio de las carreras disputadas. No incluye nuevas inversiones, fichajes ni eventos de la agenda.
+        {end < 0 ? " ⚠️ Al ritmo actual terminarías en negativo." : ""}
+      </p>
+    </div>
+  );
+}
+
+function Finance({
+  management, onSignSponsor, round, payrollYear,
+}: {
+  management: ManagementState;
+  onSignSponsor: (id: string) => void;
+  round: number;
+  payrollYear: number;
+}) {
   const p = management.player!;
   const ledger = p.ledger.map((l) => ({ ...l, cat: ledgerCategory(l) }));
   const [open, setOpen] = useState<number | null>(null);
@@ -388,6 +483,7 @@ function Finance({ management, onSignSponsor }: { management: ManagementState; o
 
   return (
     <div className="space-y-4">
+      <CapTracker management={management} />
       {/* Statement: how the available budget is reached */}
       <div className="panel p-4 space-y-2">
         <h3 className="font-display text-lg">Estado de cuenta de la temporada</h3>
@@ -415,6 +511,8 @@ function Finance({ management, onSignSponsor }: { management: ManagementState; o
           </span>
         </div>
       </div>
+
+      <SeasonOutlook management={management} round={round} payrollYear={payrollYear} />
 
       <Sponsors management={management} onSignSponsor={onSignSponsor} />
 
