@@ -252,8 +252,12 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
   })();
 
   const feed = useMemo(() => {
-    const list = [...state.events, ...liveEvents].filter((e) => e.type !== "fastest" || e.lap > 5);
-    const filtered = feedFilter === "mine" ? list.filter((e) => e.drivers.some(isMine) || e.type === "sc" || e.type === "sc_end") : list;
+    const list = [...state.events, ...liveEvents]
+      .filter((e) => e.type !== "fastest" || e.lap > 5)
+      .map((e, i) => ({ e, i }))
+      .sort((x, y) => x.e.lap - y.e.lap || (x.e.at ?? 0.5) - (y.e.at ?? 0.5) || x.i - y.i)
+      .map((x) => x.e);
+    const filtered = feedFilter === "mine" ? list.filter((e) => e.drivers.some(isMine) || ["sc", "sc_end", "red", "green", "finish"].includes(e.type)) : list;
     return filtered.slice(-80).reverse();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.events, liveEvents.length, feedFilter, playerTeamId]);
@@ -842,19 +846,44 @@ const FLASH: Partial<Record<RaceEvent["type"], { label: string; cls: string }>> 
   finish: { label: "Bandera a cuadros", cls: "bg-white/95 border-zinc-900 text-black" },
 };
 
+const FLASH_PRIORITY: Partial<Record<RaceEvent["type"], number>> = {
+  red: 6, finish: 5, sc: 4, green: 4, sc_end: 3, dnf: 2, puncture: 2, weather: 1,
+};
+const flashKey = (e: RaceEvent) => `${e.lap}-${e.type}-${e.text}`;
+
 function RaceFlash({ events }: { events: RaceEvent[] }) {
   const big = events.filter((e) => FLASH[e.type]);
-  const last = big[big.length - 1];
-  const key = last ? `${last.lap}-${last.type}-${last.text}` : "";
+  const sig = big.map(flashKey).join("|");
   const [shown, setShown] = useState<{ key: string; e: RaceEvent } | null>(null);
-  const seen = useRef<string>(key); // don't replay what was already there when the view opened
+  const [queue, setQueue] = useState<RaceEvent[]>([]);
+  // don't replay what was already there when the view opened
+  const seen = useRef<Set<string>>(new Set(big.map(flashKey)));
   useEffect(() => {
-    if (!last || key === seen.current) return;
-    seen.current = key;
-    setShown({ key, e: last });
-    const t = window.setTimeout(() => setShown((cur) => (cur?.key === key ? null : cur)), last.type === "red" || last.type === "finish" ? 4000 : 2800);
+    const fresh = big.filter((e) => !seen.current.has(flashKey(e)));
+    if (!fresh.length) return;
+    fresh.forEach((e) => seen.current.add(flashKey(e)));
+    setQueue((q) => {
+      const lap = Math.max(...fresh.map((e) => e.lap));
+      // stale banners from an older lap are dropped; the most important goes first
+      return [...q.filter((e) => e.lap >= lap), ...fresh].sort(
+        (a, b) => (FLASH_PRIORITY[b.type] ?? 0) - (FLASH_PRIORITY[a.type] ?? 0),
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
+  useEffect(() => {
+    if (shown || !queue.length) return;
+    const [next, ...rest] = queue;
+    setQueue(rest);
+    setShown({ key: flashKey(next), e: next });
+  }, [shown, queue]);
+  useEffect(() => {
+    if (!shown) return;
+    const long = shown.e.type === "red" || shown.e.type === "finish";
+    const t = window.setTimeout(() => setShown(null), long ? 3500 : queue.length ? 1600 : 2400);
     return () => window.clearTimeout(t);
-  }, [key, last]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown]);
   const f = shown ? FLASH[shown.e.type]! : null;
   return (
     <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">

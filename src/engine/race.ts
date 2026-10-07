@@ -143,7 +143,7 @@ export function simulateLap(prev: RaceState): RaceState {
       if (!car.usedCompounds.includes(c)) car.usedCompounds.push(c);
     }
     state.redFlag = null;
-    events.push({ lap, type: "green", text: "🟢 Bandera verde: se reanuda la carrera", drivers: [] });
+    events.push({ lap, type: "green", text: "🟢 Bandera verde: largada detenida, se reanuda la carrera", drivers: [], at: 0.01 });
   }
   state.standingRestart = false;
   let newRedFlag: string | null = null;
@@ -167,11 +167,11 @@ export function simulateLap(prev: RaceState): RaceState {
   const wetSoon = wx ? Math.max(...wx.wet.slice(lap, lap + 3)) : 0;
   const trackTemp = wx?.trackTemp[Math.min(lap, wx.trackTemp.length - 1)];
   if (wx && lap > 1) {
-    if (rainNow >= 0.08 && rainBefore < 0.08) events.push({ lap, type: "weather", text: "🌧️ Empieza a llover", drivers: [] });
-    if (rainNow < 0.08 && rainBefore >= 0.08) events.push({ lap, type: "weather", text: "🌤️ Deja de llover", drivers: [] });
-    if (rainNow >= 0.6 && rainBefore < 0.6) events.push({ lap, type: "weather", text: "⛈️ La lluvia se intensifica: pista para neumáticos de lluvia extrema", drivers: [] });
-    if (wetEnd < 0.2 && wetStart >= 0.2) events.push({ lap, type: "weather", text: "☀️ La pista se está secando: ya se puede volver a los slicks", drivers: [] });
-    if (wetEnd >= 0.2 && wetStart < 0.2) events.push({ lap, type: "weather", text: "💧 La pista está mojada: los slicks ya no funcionan", drivers: [] });
+    if (rainNow >= 0.08 && rainBefore < 0.08) events.push({ lap, type: "weather", text: "🌧️ Empieza a llover", drivers: [], at: 0.15 });
+    if (rainNow < 0.08 && rainBefore >= 0.08) events.push({ lap, type: "weather", text: "🌤️ Deja de llover", drivers: [], at: 0.15 });
+    if (rainNow >= 0.6 && rainBefore < 0.6) events.push({ lap, type: "weather", text: "⛈️ La lluvia se intensifica: pista para neumáticos de lluvia extrema", drivers: [], at: 0.15 });
+    if (wetEnd < 0.2 && wetStart >= 0.2) events.push({ lap, type: "weather", text: "☀️ La pista se está secando: ya se puede volver a los slicks", drivers: [], at: 0.15 });
+    if (wetEnd >= 0.2 && wetStart < 0.2) events.push({ lap, type: "weather", text: "💧 La pista está mojada: los slicks ya no funcionan", drivers: [], at: 0.15 });
   }
 
   // previous intervals for dirty air
@@ -433,10 +433,12 @@ export function simulateLap(prev: RaceState): RaceState {
     if (sc.lapsLeft <= 0) {
       sc.active = false;
       sc.restartLap = true;
-      events.push({ lap, type: "sc_end", text: "Safety car entra a pits — ¡relanzamiento!", drivers: [] });
+      events.push({ lap, type: "sc_end", text: "Safety car entra a pits — ¡relanzamiento!", drivers: [], at: 0.96 });
     }
-  } else if (config.safetyCar && lap < state.totalLaps - 2) {
-    const randomSc = rng.chance(((state.track.scChance * 0.4) / state.totalLaps) * (1 + 3 * wet));
+  } else if (config.safetyCar && lap < state.totalLaps - 2 && !newRedFlag) {
+    // a red flag already neutralises the race (and restarts from the grid): no safety car on top of it,
+    // and none out of nowhere on the standing-start lap
+    const randomSc = !standing && rng.chance(((state.track.scChance * 0.4) / state.totalLaps) * (1 + 3 * wet));
     if (newSafetyCar || randomSc) {
       sc.active = true;
       sc.lapsLeft = rng.int(3, 5);
@@ -534,14 +536,14 @@ export function simulateLap(prev: RaceState): RaceState {
     for (const c of order) {
       if (state.rules?.twoCompound !== false && c.usedCompounds.length < 2 && !c.usedCompounds.some(isWetTyre)) {
         c.total += 30;
-        events.push({ lap, type: "mistake", text: `${name(c)} penalizado con 30s: no usó dos compuestos`, drivers: [c.id] });
+        events.push({ lap, type: "mistake", text: `${name(c)} penalizado con 30s: no usó dos compuestos`, drivers: [c.id], at: 1 });
       }
     }
     order.sort((a, b) => a.total - b.total);
     state.cars = [...order, ...newlyRetired, ...retired];
     state.finished = true;
     const winner = order[0];
-    if (winner) events.push({ lap, type: "finish", text: `🏁 ¡${winner.entry.driver.name} gana la carrera!`, drivers: [winner.id] });
+    if (winner) events.push({ lap, type: "finish", text: `🏁 ¡${winner.entry.driver.name} gana la carrera!`, drivers: [winner.id], at: 1 });
   }
   state.events = [...state.events, ...events];
   return state;

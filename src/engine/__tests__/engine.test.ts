@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classify, confirmStrategy, createRace, editNextStop, recommendPlans, runQualifying, setPlan, setStartTyre, simulateLap, simulateToEnd, computeStandings } from "..";
+import { DEFAULT_SIM_CONFIG, classify, confirmStrategy, createRace, editNextStop, recommendPlans, runQualifying, setPlan, setStartTyre, simulateLap, simulateToEnd, computeStandings } from "..";
 import { teams, races2026 } from "@/data/f1Data";
 import { allEntries, entriesByGrid } from "./helpers";
 
@@ -180,5 +180,22 @@ describe("sectors", () => {
     const end = simulateToEnd({ ...s0, weather: { ...s0.weather!, wet, rain: wet.map((w) => (w > 0.3 ? 0.5 : 0)) } });
     const avgStops = end.cars.reduce((a, c) => a + c.stops, 0) / end.cars.length;
     expect(avgStops).toBeLessThan(3);
+  });
+});
+
+describe("red flag", () => {
+  it("never mixes a safety car into the red-flag lap or the standing restart", () => {
+    let reds = 0;
+    for (let seed = 1; seed <= 120; seed++) {
+      const end = simulateToEnd(createRace(race, allEntries(), seed, { ...DEFAULT_SIM_CONFIG, incidents: 3 }));
+      const redLaps = end.events.filter((e) => e.type === "red").map((e) => e.lap);
+      reds += redLaps.length;
+      for (const l of redLaps) {
+        const sc = end.events.filter((e) => e.type === "sc" && (e.lap === l || e.lap === l + 1));
+        expect(sc).toEqual([]);
+        expect(end.events.some((e) => e.type === "green" && e.lap === l + 1)).toBe(true);
+      }
+    }
+    expect(reds).toBeGreaterThan(0);
   });
 });
