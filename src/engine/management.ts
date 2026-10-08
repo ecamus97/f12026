@@ -4,7 +4,7 @@ import { races2026, teams as TEAM_LIST, type Team } from "@/data/f1Data";
 import { calendar } from "@/data/calendar";
 import { createRng, type Rng } from "./rng";
 import {
-  generateOffers, goalLabel, makeSponsorGoals, SLOT_INFO, sponsorPayout, tvRights, updateSponsorGoals,
+  generateOffers, GOALS_VERSION, goalLabel, makeSponsorGoals, SLOT_INFO, sponsorPayout, tvRights, updateSponsorGoals,
   type RaceOutcome, type SponsorDeal, type SponsorSlot,
 } from "./sponsors";
 import type { ClassifiedRow } from "./types";
@@ -185,6 +185,35 @@ export interface ManagementState {
   lastAiPackages?: { teamId: string; area: DevArea; gain: number }[]; // big upgrades of the last round
   aiDevRate?: number; // difficulty: how fast the AI teams develop (1 = normal)
   champOrder?: string[]; // constructors' championship order (current season; last season's final order before the first race)
+  seasonStats?: SeasonStats; // what every team has really done this season (sponsor objectives look at it)
+}
+
+export interface TeamSeasonStats {
+  points: number;
+  podiums: number;
+  doubles: number; // races with both cars in the points
+  dnfs: number;
+}
+export interface SeasonStats {
+  races: number;
+  teams: Record<string, TeamSeasonStats>;
+}
+
+/** Add one Grand Prix to the season stats. */
+export function addRaceStats(st: SeasonStats | undefined, rows: ClassifiedRow[]): SeasonStats {
+  const teams = { ...(st?.teams ?? {}) };
+  const by = new Map<string, ClassifiedRow[]>();
+  for (const r of rows) by.set(r.teamId, [...(by.get(r.teamId) ?? []), r]);
+  for (const [id, rs] of by) {
+    const t = teams[id] ?? { points: 0, podiums: 0, doubles: 0, dnfs: 0 };
+    teams[id] = {
+      points: t.points + rs.reduce((a, r) => a + r.points, 0),
+      podiums: t.podiums + rs.filter((r) => r.status !== "dnf" && r.position <= 3).length,
+      doubles: t.doubles + (rs.filter((r) => r.points > 0).length >= 2 ? 1 : 0),
+      dnfs: t.dnfs + rs.filter((r) => r.status === "dnf").length,
+    };
+  }
+  return { races: (st?.races ?? 0) + 1, teams };
 }
 
 /** R&D + facilities spent this season (the ledger restarts every season). */
@@ -430,26 +459,31 @@ export function champRankOf(m: ManagementState, teamId: string) {
   return i >= 0 ? i + 1 : carRankOf(m, teamId);
 }
 
-/** Give objectives to signed contracts and offers that don't have them yet (new offers, old saves). */
+/** Give objectives to offers and contracts that don't have current ones (new offers, old saves, rule changes). */
 export function ensureSponsorGoals(m: ManagementState): ManagementState {
   const p = m.player;
   if (!p) return m;
-  const missing = (d: SponsorDeal) => !d.goals;
-  if (!p.sponsors.some(missing) && !p.offers.some(missing)) return m;
+  const stale = (d: SponsorDeal) => d.goalsV !== GOALS_VERSION && (!d.goals || d.goals.every((g) => g.status === "active"));
+  if (!p.sponsors.some(stale) && !p.offers.some(stale)) return m;
   const order = m.champOrder?.length ? m.champOrder : Object.keys(m.dev).sort((a, b) => carPace(m.dev[b]) - carPace(m.dev[a]));
+  const st = m.seasonStats;
+  const n = st?.races ?? 0;
+  const per = (id: string, k: keyof TeamSeasonStats) => (n ? (st!.teams[id]?.[k] ?? 0) / n : 0);
+  const mine = { points: per(p.teamId, "points"), podiums: per(p.teamId, "podiums"), doubles: per(p.teamId, "doubles") };
+  // a rival within reach: similar points per race (or, with no races yet, a neighbour in the standings)
   const i = order.indexOf(p.teamId);
-  const team = (id?: string) => {
-    if (!id) return undefined;
-    const t = TEAM_LIST.find((x) => x.id === id);
-    return { id, name: t?.name ?? id };
-  };
-  const ctx = {
-    champRank: champRankOf(m, p.teamId),
-    carRank: carRankOf(m, p.teamId),
-    rivalAbove: i > 0 ? team(order[i - 1]) : undefined,
-    rivalBelow: i >= 0 ? team(order[i + 1]) : undefined,
-  };
-  const fill = (d: SponsorDeal) => (d.goals ? d : { ...d, goals: makeSponsorGoals(d, { ...ctx, races: d.racesLeft }) });
+  const near = order
+    .map((id, j) => ({ id, j, rate: per(id, "points") }))
+    .filter((t) => t.id !== p.teamId)
+    .filter((t) =>
+      n < 2 ? Math.abs(t.j - i) === 1 : mine.points < 1 ? t.rate <= 1.5 : t.rate >= mine.points * 0.55 && t.rate <= mine.points * 1.35,
+    )
+    .sort((a, b) => (a.j < i ? 0 : 1) - (b.j < i ? 0 : 1) || Math.abs(a.j - i) - Math.abs(b.j - i));
+  const rivalId = near[0]?.id;
+  const rival = rivalId ? { id: rivalId, name: TEAM_LIST.find((x) => x.id === rivalId)?.name ?? rivalId } : undefined;
+  const base = { champRank: champRankOf(m, p.teamId), carRank: carRankOf(m, p.teamId), sample: n, rate: mine, rival };
+  const fill = (d: SponsorDeal) =>
+    stale(d) ? { ...d, goals: makeSponsorGoals(d, { ...base, races: d.racesLeft }), goalsV: GOALS_VERSION } : d;
   return { ...m, player: { ...p, sponsors: p.sponsors.map(fill), offers: p.offers.map(fill) } };
 }
 
@@ -559,6 +593,7 @@ export function processRaceWeekend(
 ): ManagementState {
   if (constructorsOrder?.length) m = { ...m, champOrder: constructorsOrder };
   m = ensureSponsorGoals(m);
+  m = { ...m, seasonStats: addRaceStats(m.seasonStats, rows) };
   const rng = createRng(m.rngState);
   const inbox: InboxMessage[] = [];
   const ai = developAi(m, teams, rng);
@@ -773,7 +808,7 @@ export function startNewSeason(m: ManagementState, teams: Team[], constructorsOr
   for (const id of ids) aiBudget[id] = startBudget(carPace(dev[id])) + Math.round(constructorsPrize(posOf(id), m.regs?.flatPrize) * 0.3);
   let player = m.player;
   const inbox: InboxMessage[] = [{ race: 0, tone: "info", text: `Comienza la temporada ${season}. Las diferencias entre autos se reducen un poco con la estabilidad del reglamento.` }];
-  let nm: ManagementState = { ...m, dev, aiBudget, nextUid: m.nextUid + 1000, champOrder: constructorsOrder };
+  let nm: ManagementState = { ...m, dev, aiBudget, nextUid: m.nextUid + 1000, champOrder: constructorsOrder, seasonStats: { races: 0, teams: {} } };
   if (player) {
     const pos = posOf(player.teamId);
     const prize = constructorsPrize(pos, m.regs?.flatPrize);

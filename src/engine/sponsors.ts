@@ -21,6 +21,7 @@ export interface SponsorDeal {
   minRank: number | null; // team must be at least this high in the constructors' championship to sign
   earned: number; // total paid so far
   goals?: SponsorGoal[]; // objectives for the length of the contract
+  goalsV?: number; // version of the objective rules they were made with
 }
 
 export type GoalKind = "points" | "podiums" | "doublePoints" | "champRank" | "beatRival" | "maxDnf";
@@ -152,14 +153,23 @@ function seedOf(text: string) {
   return h >>> 0;
 }
 
+/** Bump when the rules change: offers and untouched contracts get new objectives. */
+export const GOALS_VERSION = 2;
+
+export interface GoalContext {
+  champRank: number;
+  carRank: number;
+  races: number; // races the objectives cover
+  sample: number; // races of this season the rates come from
+  rate: { points: number; podiums: number; doubles: number }; // per race this season
+  rival?: { id: string; name: string }; // a team within reach
+}
+
 /**
- * Objectives a sponsor sets for its contract, scaled to what the team can do.
- * `races` is how many races the objectives cover (the races left on the contract).
+ * Objectives a sponsor sets for its contract, scaled to what the team is really doing this season
+ * (blended with what its car should do while there are few races to judge by).
  */
-export function makeSponsorGoals(
-  deal: Pick<SponsorDeal, "id" | "name" | "slot" | "style">,
-  ctx: { champRank: number; carRank: number; races: number; rivalAbove?: { id: string; name: string }; rivalBelow?: { id: string; name: string } },
-): SponsorGoal[] {
+export function makeSponsorGoals(deal: Pick<SponsorDeal, "id" | "name" | "slot" | "style">, ctx: GoalContext): SponsorGoal[] {
   // deterministic per deal (no game RNG used, so adding goals to old saves changes nothing else)
   let h = seedOf(`${deal.id}|${deal.name}`);
   const rnd = () => {
@@ -168,8 +178,14 @@ export function makeSponsorGoals(
   };
   const r = Math.max(1, Math.min(11, Math.round((ctx.champRank + ctx.carRank) / 2)));
   const d = Math.max(1, ctx.races);
+  const w = ctx.sample / (ctx.sample + 3);
+  const blend = (actual: number, prior: number) => w * actual + (1 - w) * prior;
+  const ptsRate = blend(ctx.rate.points, EXP_POINTS[r]);
+  const podRate = blend(ctx.rate.podiums, PODIUM_RATE[r] ?? 0);
+  const dblRate = blend(ctx.rate.doubles, DOUBLE_RATE[r] ?? 0.05);
   const R = sponsorReference(ctx.champRank) * (deal.slot === "principal" ? 1 : 0.3);
   const harsh = deal.style === "premium" || deal.style === "firma";
+  const ambitious = deal.style === "rendimiento" || deal.style === "premium";
   const goal = (kind: GoalKind, target: number, k: number, extra: Partial<SponsorGoal> = {}): SponsorGoal => ({
     kind,
     target,
@@ -179,16 +195,16 @@ export function makeSponsorGoals(
     status: "active",
     ...extra,
   });
-  const pool: (() => SponsorGoal | null)[] = [];
-  const points = () => goal("points", Math.max(1, Math.round(EXP_POINTS[r] * d * (0.8 + rnd() * 0.15))), 1);
-  const podiums = () => (r <= 4 ? goal("podiums", Math.max(1, Math.round(PODIUM_RATE[r] * d * 0.8)), 1.2) : null);
-  const doubles = () => (r <= 8 ? goal("doublePoints", Math.max(1, Math.round(DOUBLE_RATE[r] * d * 0.7)), 1) : null);
-  const champ = () => goal("champRank", Math.max(1, deal.style === "rendimiento" || deal.style === "premium" ? ctx.champRank - (ctx.champRank > 1 ? 1 : 0) : ctx.champRank), 1.3);
-  const rival = () => {
-    const t = ctx.rivalAbove ?? ctx.rivalBelow;
-    return t ? goal("beatRival", 0, 1.1, { rivalId: t.id, rivalName: t.name, rivalProgress: 0 }) : null;
+  const points = () => {
+    const f = (ambitious ? 0.88 : 0.75) * (0.95 + rnd() * 0.1);
+    return ptsRate * d >= 0.6 ? goal("points", Math.max(1, Math.round(ptsRate * d * f)), 1) : goal("points", 1, 1.2);
   };
+  const podiums = () => (podRate * d >= 0.7 ? goal("podiums", Math.max(1, Math.round(podRate * d * 0.75)), 1.2) : null);
+  const doubles = () => (dblRate * d >= 1.2 ? goal("doublePoints", Math.max(1, Math.round(dblRate * d * 0.75)), 1) : null);
+  const champ = () => goal("champRank", ctx.champRank, 1.1);
+  const rival = () => (ctx.rival ? goal("beatRival", 0, 1.1, { rivalId: ctx.rival.id, rivalName: ctx.rival.name, rivalProgress: 0 }) : null);
   const dnf = () => goal("maxDnf", Math.max(1, Math.floor(d * 0.2)), 0.8);
+  const pool: (() => SponsorGoal | null)[] = [];
   switch (deal.style) {
     case "estable":
       pool.push(dnf, points, champ);
@@ -206,7 +222,6 @@ export function makeSponsorGoals(
   const want = deal.slot === "principal" ? 2 : 1;
   const out: SponsorGoal[] = [];
   const cands = pool.map((f) => f()).filter((g): g is SponsorGoal => !!g);
-  // shuffle lightly, keep kinds unique
   cands.sort(() => rnd() - 0.5);
   for (const g of cands) if (out.length < want && !out.some((x) => x.kind === g.kind)) out.push(g);
   return out;

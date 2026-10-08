@@ -27,6 +27,7 @@ import {
   type WeatherTimeline,
   applyDevToTeams,
   ensureSponsorGoals,
+  addRaceStats,
   gridAfterPenalties,
   initManagement,
   processRaceWeekend,
@@ -426,7 +427,9 @@ export function hydrate(raw: unknown): GameState | null {
         m.player.sponsors = [];
         m.player.offers = fresh.player?.offers ?? [];
       }
-      // objectives for sponsors signed before they existed
+      // what every team has done this season (saves from before it was tracked)
+      if (!m.seasonStats) m.seasonStats = state.results.reduce((st, r) => addRaceStats(st, r.rows), { races: 0, teams: {} } as NonNullable<typeof m.seasonStats>);
+      // objectives for sponsors signed before they existed (or made with older rules)
       state.management = ensureSponsorGoals(m);
     }
     return withAgenda(state);

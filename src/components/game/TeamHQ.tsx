@@ -412,7 +412,7 @@ function SeasonOutlook({ management, round, payrollYear }: { management: Managem
         {label}
         {hint && <span className="block text-[11px] text-muted-foreground">{hint}</span>}
       </span>
-      <span className={cn("font-mono tabular-nums", strong && "font-racing text-lg", value < 0 && "text-destructive")}>
+      <span className={cn("font-mono tabular-nums whitespace-nowrap shrink-0", strong && "font-racing text-lg", value < 0 && "text-destructive")}>
         {value >= 0 && !strong ? "+" : ""}
         {value.toFixed(1)} M
       </span>
@@ -435,7 +435,7 @@ function SeasonOutlook({ management, round, payrollYear }: { management: Managem
           Premio de constructores esperado
           <span className="block text-[11px]">Si terminas P{rank} en constructores (posición actual); se cobra al empezar la próxima temporada</span>
         </span>
-        <span className="font-mono text-emerald-300">+{prize} M</span>
+        <span className="font-mono text-emerald-300 whitespace-nowrap shrink-0">+{prize} M</span>
       </div>
       <p className="text-[11px] text-muted-foreground">
         Estimación con el promedio de las carreras disputadas. No incluye nuevas inversiones, fichajes ni eventos de la agenda.
@@ -480,10 +480,29 @@ function Finance({
     return { r, items, inc, run, inv, net: inc + run + inv, balance };
   });
   const shown = showAll ? [...rows].reverse() : [...rows].reverse().slice(0, 6);
+  const freeSlots = (Object.keys(SLOT_INFO) as SponsorSlot[]).reduce(
+    (a, slot) => a + SLOT_INFO[slot].count - p.sponsors.filter((s) => s.slot === slot).length,
+    0,
+  );
+  const [view, setView] = useState<"summary" | "sponsors" | "moves">("summary");
+  const [moves, setMoves] = useState<"rounds" | "categories">("rounds");
 
   return (
     <div className="space-y-4">
+      <SubTabs<typeof view>
+        value={view}
+        onChange={setView}
+        options={[
+          { k: "summary", label: "Resumen" },
+          { k: "sponsors", label: "Patrocinadores", badge: freeSlots ? `${freeSlots} libre${freeSlots === 1 ? "" : "s"}` : undefined },
+          { k: "moves", label: "Movimientos" },
+        ]}
+      />
+      {view === "sponsors" && <Sponsors management={management} onSignSponsor={onSignSponsor} />}
+      {view === "summary" && (
+      <div className="space-y-4">
       <CapTracker management={management} />
+      <div className="grid lg:grid-cols-2 gap-4 items-start">
       {/* Statement: how the available budget is reached */}
       <div className="panel p-4 space-y-2">
         <h3 className="font-display text-lg">Estado de cuenta de la temporada</h3>
@@ -513,10 +532,53 @@ function Finance({
       </div>
 
       <SeasonOutlook management={management} round={round} payrollYear={payrollYear} />
+      </div>
+      </div>
+      )}
 
-      <Sponsors management={management} onSignSponsor={onSignSponsor} />
+      {view === "moves" && (
+        <SubTabs<typeof moves>
+          small
+          value={moves}
+          onChange={setMoves}
+          options={[
+            { k: "rounds", label: "Por ronda" },
+            { k: "categories", label: "Por categoría" },
+          ]}
+        />
+      )}
+      {view === "moves" && moves === "categories" && (
+        <div className="grid md:grid-cols-3 gap-3">
+          {(["income", "running", "invest"] as Group[]).map((g) => {
+            const cats = catTotals(g);
+            const total = sum(byGroup(g));
+            const max = Math.max(1, ...cats.map(([, v]) => Math.abs(v)));
+            return (
+              <div key={g} className="panel p-3 space-y-2">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground">{GROUP_LABEL[g]}</span>
+                  <span className={cn("font-racing whitespace-nowrap shrink-0", total >= 0 ? "text-green-400" : "text-red-400")}>{fmt(total)}</span>
+                </div>
+                {cats.length === 0 && <div className="text-xs text-muted-foreground">Sin movimientos todavía</div>}
+                {cats.map(([cat, v]) => (
+                  <div key={cat} className="space-y-0.5">
+                    <div className="flex justify-between text-xs">
+                      <span>{CATEGORY_INFO[cat].label}</span>
+                      <span className="font-mono">{fmt(v)}</span>
+                    </div>
+                    <div className="h-1 rounded-full bg-white/10 overflow-hidden">
+                      <div className={cn("h-full", v >= 0 ? "bg-green-500/80" : "bg-red-500/80")} style={{ width: `${(Math.abs(v) / max) * 100}%` }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Round by round */}
+      {view === "moves" && moves === "rounds" && (
       <div className="rounded-xl border border-border overflow-hidden">
         <div className="px-3 py-2 text-xs font-racing border-b border-border">Resumen por ronda</div>
         <div className="grid grid-cols-[1fr_repeat(5,minmax(0,80px))] gap-2 px-3 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground bg-muted/30">
@@ -574,6 +636,30 @@ function Finance({
           </button>
         )}
       </div>
+      )}
+    </div>
+  );
+}
+
+function SubTabs<T extends string>({
+  value, onChange, options, small,
+}: { value: T; onChange: (v: T) => void; options: { k: T; label: string; badge?: string }[]; small?: boolean }) {
+  return (
+    <div className={cn("flex gap-1 rounded-lg p-1", small ? "bg-muted/25 w-fit" : "bg-muted/40")}>
+      {options.map((o) => (
+        <button
+          key={o.k}
+          onClick={() => onChange(o.k)}
+          className={cn(
+            "flex items-center justify-center gap-1.5 rounded-md font-racing",
+            small ? "px-3 py-1 text-[11px]" : "flex-1 py-2 text-[11px] sm:text-xs",
+            value === o.k ? "bg-background text-foreground" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          {o.label}
+          {o.badge && <span className="rounded bg-amber-400/20 text-amber-300 px-1 text-[10px] normal-case">{o.badge}</span>}
+        </button>
+      ))}
     </div>
   );
 }
@@ -598,43 +684,97 @@ const TYPICAL = { points: 6, podiums: 0, wins: 0, pole: false, dnfs: 0.2 };
 function Sponsors({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
   const p = management.player!;
   const rank = champRankOf(management, p.teamId);
+  const [sub, setSub] = useState<"contracts" | "offers">("contracts");
+  const [slotFilter, setSlotFilter] = useState<SponsorSlot | "all">("all");
+  const slots = Object.keys(SLOT_INFO) as SponsorSlot[];
+  const freeOf = (slot: SponsorSlot) => SLOT_INFO[slot].count - p.sponsors.filter((s) => s.slot === slot).length;
+  const openOffers = p.offers.filter((o) => freeOf(o.slot) > 0).length;
   return (
     <div className="panel p-4 space-y-4">
-      <div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="font-display text-lg">Patrocinadores</h3>
-        <p className="text-[11px] text-muted-foreground">
-          1 principal y 2 secundarios. Cada contrato tiene un estilo distinto: pago fijo, bonos por resultado, prima de firma o
-          exigencias de rendimiento. Lo que ofrecen depende de tu posición en el campeonato de constructores (ahora
-          P{champRankOf(management, p.teamId)}). Llegan ofertas nuevas cada 6 carreras o cuando termina un contrato.
-        </p>
+        <span className="text-[11px] text-muted-foreground">Constructores P{rank} · ofertas nuevas cada 6 carreras o al terminar un contrato</span>
       </div>
+      <SubTabs<typeof sub>
+        small
+        value={sub}
+        onChange={setSub}
+        options={[
+          { k: "contracts", label: `Contratos (${p.sponsors.length}/3)` },
+          { k: "offers", label: "Ofertas", badge: openOffers ? String(openOffers) : undefined },
+        ]}
+      />
 
-      {(Object.keys(SLOT_INFO) as SponsorSlot[]).map((slot) => {
-        const signed = p.sponsors.filter((s) => s.slot === slot);
-        const offers = p.offers.filter((o) => o.slot === slot);
-        const free = SLOT_INFO[slot].count - signed.length;
-        return (
-          <div key={slot} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">{SLOT_INFO[slot].label}</span>
-              <span className="text-[11px] text-muted-foreground">
-                {signed.length}/{SLOT_INFO[slot].count} ocupados
-              </span>
-            </div>
-            {signed.map((s) => (
-              <SponsorCard key={s.id} s={s} signed rank={rank} />
-            ))}
-            {free > 0 && (
-              <div className="grid md:grid-cols-2 gap-2">
-                {offers.map((o) => {
-                  const blocked = canSignSponsor(management, o.id);
-                  return <SponsorCard key={o.id} s={o} blocked={blocked} rank={rank} onSign={() => onSignSponsor(o.id)} />;
-                })}
+      {sub === "contracts" &&
+        slots.map((slot) => {
+          const signed = p.sponsors.filter((s) => s.slot === slot);
+          const free = freeOf(slot);
+          return (
+            <div key={slot} className="space-y-2">
+              <div className="text-xs uppercase tracking-wider text-muted-foreground">{SLOT_INFO[slot].label}</div>
+              <div className={cn("grid gap-2", slot === "secundario" && "md:grid-cols-2")}>
+                {signed.map((s) => (
+                  <SponsorCard key={s.id} s={s} signed rank={rank} />
+                ))}
+                {Array.from({ length: free }).map((_, i) => (
+                  <button
+                    key={`free${i}`}
+                    onClick={() => {
+                      setSlotFilter(slot);
+                      setSub("offers");
+                    }}
+                    className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground hover:text-foreground hover:border-primary/60"
+                  >
+                    Espacio libre · ver ofertas
+                  </button>
+                ))}
               </div>
-            )}
+            </div>
+          );
+        })}
+
+      {sub === "offers" && (
+        <div className="space-y-3">
+          <div className="flex gap-1">
+            {(["all", ...slots] as const).map((k) => (
+              <button
+                key={k}
+                onClick={() => setSlotFilter(k)}
+                className={cn(
+                  "rounded-full border px-3 py-0.5 text-[11px]",
+                  slotFilter === k ? "border-primary bg-primary/15 text-foreground" : "border-border text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {k === "all" ? "Todas" : k === "principal" ? "Principal" : "Secundario"}
+              </button>
+            ))}
           </div>
-        );
-      })}
+          {slots
+            .filter((slot) => slotFilter === "all" || slotFilter === slot)
+            .map((slot) => {
+              const offers = p.offers.filter((o) => o.slot === slot);
+              return (
+                <div key={slot} className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs uppercase tracking-wider text-muted-foreground">{SLOT_INFO[slot].label}</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {SLOT_INFO[slot].count - freeOf(slot)}/{SLOT_INFO[slot].count} ocupados
+                    </span>
+                  </div>
+                  {freeOf(slot) <= 0 ? (
+                    <p className="text-xs text-muted-foreground">Sin espacio libre: podrás firmar cuando termine el contrato actual.</p>
+                  ) : (
+                    <div className="grid md:grid-cols-2 gap-2">
+                      {offers.map((o) => (
+                        <SponsorCard key={o.id} s={o} blocked={canSignSponsor(management, o.id)} rank={rank} onSign={() => onSignSponsor(o.id)} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+        </div>
+      )}
     </div>
   );
 }
