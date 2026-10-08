@@ -212,9 +212,10 @@ export function TrackMap({ raceId, state, anim, playerTeamId }: Props) {
     stopped,
   });
 
-  if (target.lap === 0 && !anim) {
+  if ((target.lap === 0 || target.redFlag) && !anim) {
     // on the grid, just behind the line
-    markers = target.cars.map((c, i) => mk(c, -0.004 - i * 0.0035, i + 1));
+    // on the grid, just behind the line (also after a red flag, waiting for the standing restart)
+    markers = target.cars.filter((c) => c.status === "running").map((c, i) => mk(c, -0.004 - i * 0.0035, i + 1));
   } else {
     const prog = lapProgressDetailed(target, anim, now, anim ? state : null);
     markers = target.cars

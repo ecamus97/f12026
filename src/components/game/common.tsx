@@ -15,7 +15,7 @@ export function TyreBadge({ compound, age, className }: { compound: Compound; ag
       >
         {compound}
       </span>
-      {age !== undefined && <span className="text-muted-foreground w-5">{age}</span>}
+      {age !== undefined && <span className="text-muted-foreground w-7">{age}v</span>}
     </span>
   );
 }

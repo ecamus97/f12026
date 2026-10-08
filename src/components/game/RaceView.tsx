@@ -41,10 +41,10 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
   const handledStops = useRef(new Set<string>());
   const eventKey = (e: RaceEvent) => `${e.lap}-${e.type}-${e.text}`;
   const stopsRace = (e: RaceEvent, st: RaceState) =>
-    st.config.pauseOnIncidents !== false &&
+    e.type === "red" || // a red flag always stops everything
+    (st.config.pauseOnIncidents !== false &&
     (e.type === "sc" ||
-    e.type === "red" ||
-      ((e.type === "dnf" || e.type === "puncture" || e.type === "damage") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId)));
+      ((e.type === "dnf" || e.type === "puncture" || e.type === "damage") && e.drivers.some((d) => st.cars.find((c) => c.id === d)?.entry.team.id === playerTeamId))));
   // after the last lap the cars cross the line and the chequered flag shows before the results
   const [resultsReady, setResultsReady] = useState(state.finished);
   useEffect(() => {
@@ -148,7 +148,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
       const pause = fresh.some(
         (e) => (e.type === "weather" && next.config.pauseOnIncidents !== false) || (stopsRace(e, next) && !handledStops.current.has(eventKey(e))),
       );
-      if (pause || next.finished) setPlaying(false);
+      if (pause || next.finished || next.redFlag) setPlaying(false); // red flag: wait for the tyre choice and the restart
       setAnim(null);
       onUpdate(next);
     }, remaining);
@@ -169,6 +169,12 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     const id = window.setTimeout(() => {
       handledStops.current.add(eventKey(first));
       setPlaying(false);
+      if (first.type === "red") {
+        // the race stops right there: everyone back to the pit lane, then the grid for a standing start
+        setAnim(null);
+        onUpdate(anim.to);
+        return;
+      }
       pauseAnim();
     }, delay);
     return () => window.clearTimeout(id);
