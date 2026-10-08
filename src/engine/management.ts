@@ -372,6 +372,16 @@ export function projectRaces(t: ProjectTemplate, p: PlayerEconomy) {
 /** Facility multiplier for an area: level 1 = 0.8x ... level 5 = 1.2x */
 export const facilityMult = (level: number) => 0.7 + level * 0.1;
 
+/** What a facility gives at a given level: multiplier on project gains, success bonus and extras. */
+export function facilityLevelEffects(key: FacilityKey, level: number): { gain: number; success: number; extras: string[] } {
+  const extras: string[] = [];
+  if (key === "factory") {
+    if (level >= 3) extras.push("+1 proyecto simultáneo");
+    if (level >= 5) extras.push("proyectos 1 carrera más rápidos");
+  }
+  return { gain: facilityMult(level), success: (level - 3) * 0.04, extras };
+}
+
 /** Expected gain range shown in the UI (after facilities and diminishing returns). */
 export function expectedGain(t: ProjectTemplate, m: ManagementState): [number, number] {
   const p = m.player!;

@@ -3,7 +3,8 @@ import { motion } from "framer-motion";
 import { Hammer, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
-  AREA_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, canUpgradeFacility, facilityBuildRaces, facilityUpgradeCost, facilityMult,
+  AREA_INFO, FACILITY_INFO, MAX_FACILITY_LEVEL, PROJECTS, canUpgradeFacility, expectedGain, facilityBuildRaces, facilityLevelEffects,
+  facilityUpgradeCost, facilityMult, successChance,
   type DevArea, type FacilityKey, type ManagementState,
 } from "@/engine";
 import { cn } from "@/lib/utils";
@@ -205,11 +206,86 @@ export function FacilitiesCampus({
             </Button>
           </div>
         )}
-        <p className="text-[11px] text-muted-foreground">
-          Cada nivel multiplica la mejora de los proyectos de su área y sube su probabilidad de éxito. Las obras son largas (10 a 16 carreras),
-          continúan en la temporada siguiente y solo puede haber una a la vez.
-        </p>
+        <LevelTable management={management} fkey={sel} level={lvl} />
+        <p className="text-[11px] text-muted-foreground">Una obra a la vez; si no termina, sigue en la temporada siguiente.</p>
       </motion.div>
+    </div>
+  );
+}
+
+const pctTxt = (x: number) => `${x >= 0 ? "+" : ""}${Math.round(x * 100)}%`;
+
+/** Benefits per level, and what the next level would change on a real project of the area. */
+function LevelTable({ management, fkey, level }: { management: ManagementState; fkey: FacilityKey; level: number }) {
+  const area = AREA_OF[fkey];
+  const p = management.player!;
+  const withLevel = (l: number): ManagementState => ({ ...management, player: { ...p, facilities: { ...p.facilities, [fkey]: l } } });
+  // a typical project of the area: the cheapest one, so the example is one you can actually afford
+  const sample = PROJECTS.filter((t) => t.area === area).sort((a, b) => a.cost - b.cost)[0];
+  const next = Math.min(MAX_FACILITY_LEVEL, level + 1);
+  const gNow = sample ? expectedGain(sample, management) : null;
+  const gNext = sample ? expectedGain(sample, withLevel(next)) : null;
+  const sNow = sample ? successChance(sample, management) : 0;
+  const sNext = sample ? successChance(sample, withLevel(next)) : 0;
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg border border-white/10 overflow-hidden text-xs">
+        <div className="grid grid-cols-[44px_1fr_1fr_1.4fr] gap-2 px-2 py-1.5 bg-black/30 text-[10px] uppercase tracking-wider text-muted-foreground">
+          <span>Nivel</span>
+          <span>Mejora</span>
+          <span>Éxito</span>
+          <span>Extra</span>
+        </div>
+        {Array.from({ length: MAX_FACILITY_LEVEL }, (_, i) => i + 1).map((l) => {
+          const fx = facilityLevelEffects(fkey, l);
+          const cur = l === level;
+          const nxt = l === level + 1;
+          return (
+            <div
+              key={l}
+              className={cn(
+                "grid grid-cols-[44px_1fr_1fr_1.4fr] gap-2 px-2 py-1.5 border-t border-white/5 items-center",
+                cur && "bg-primary/15",
+                nxt && "bg-amber-500/10",
+                l < level && "text-muted-foreground",
+              )}
+            >
+              <span className="font-display">
+                {l}
+                {cur && <span className="ml-1 text-[9px] text-primary">actual</span>}
+                {nxt && <span className="ml-1 text-[9px] text-amber-300">sig.</span>}
+              </span>
+              <span className={cn("font-mono", fx.gain > 1.001 ? "text-green-400" : fx.gain < 0.999 ? "text-red-400" : "")}>{pctTxt(+(fx.gain - 1).toFixed(2))}</span>
+              <span className={cn("font-mono", fx.success > 0 ? "text-green-400" : fx.success < 0 ? "text-red-400" : "")}>{pctTxt(fx.success)}</span>
+              <span className="text-[11px]">{fx.extras.length ? fx.extras.join(" · ") : "—"}</span>
+            </div>
+          );
+        })}
+      </div>
+      {sample && gNow && gNext && level < MAX_FACILITY_LEVEL && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-xs space-y-1">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Ejemplo: {sample.name}</div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Mejora esperada</span>
+            <span className="font-mono">
+              +{gNow[0].toFixed(1)}–{gNow[1].toFixed(1)} → <b className="text-amber-300">+{gNext[0].toFixed(1)}–{gNext[1].toFixed(1)}</b>
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Probabilidad de éxito</span>
+            <span className="font-mono">
+              {Math.round(sNow * 100)}% → <b className="text-amber-300">{Math.round(sNext * 100)}%</b>
+            </span>
+          </div>
+          {facilityLevelEffects(fkey, next).extras.length > facilityLevelEffects(fkey, level).extras.length && (
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Además</span>
+              <span className="text-amber-300">{facilityLevelEffects(fkey, next).extras.slice(-1)[0]}</span>
+            </div>
+          )}
+          <div className="text-[10px] text-muted-foreground">Vale para todos los proyectos de {AREA_INFO[area].label.toLowerCase()} desde que termina la obra.</div>
+        </div>
+      )}
     </div>
   );
 }
