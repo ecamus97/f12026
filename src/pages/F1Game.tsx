@@ -424,6 +424,7 @@ export default function F1Game() {
                       ctx={qualiContext(gameState)}
                       entryMap={entryMap}
                       playerTeamId={gameState.playerTeamId}
+                      gridPenalties={gameState.gridPenalties}
                       onLive={game.updateQualiLive}
                       onNext={game.qualiNext}
                       onStartRace={game.startRace}
@@ -452,6 +453,7 @@ export default function F1Game() {
                     ctx={qualiContext(gameState)}
                     entryMap={entryMap}
                     playerTeamId={gameState.playerTeamId}
+                    gridPenalties={gameState.gridPenalties}
                     onLive={game.updateQualiLive}
                     onNext={game.qualiNext}
                     onStartRace={game.startRace}

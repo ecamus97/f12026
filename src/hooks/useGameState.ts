@@ -26,6 +26,8 @@ import {
   type StoredRaceResult,
   type WeatherTimeline,
   applyDevToTeams,
+  ensureSponsorGoals,
+  gridAfterPenalties,
   initManagement,
   processRaceWeekend,
   startProject as startProjectFn,
@@ -424,6 +426,8 @@ export function hydrate(raw: unknown): GameState | null {
         m.player.sponsors = [];
         m.player.offers = fresh.player?.offers ?? [];
       }
+      // objectives for sponsors signed before they existed
+      state.management = ensureSponsorGoals(m);
     }
     return withAgenda(state);
   } catch {
@@ -709,22 +713,14 @@ function openWeekend(s0: GameState): GameState {
 
 /** Grid penalties from the last race: each driver goes back N places from where he qualified. */
 function withGridPenalties(s: GameState, ids: string[]): { ids: string[]; used: string[]; notes: string[] } {
-  const pens = s.gridPenalties ?? {};
-  const out = [...ids];
-  const used: string[] = [];
-  const notes: string[] = [];
-  // from the front, so two penalised drivers keep their relative order
-  for (const id of ids) {
-    const p = pens[id];
-    if (!p) continue;
-    const from = out.indexOf(id);
-    const to = Math.min(out.length - 1, from + p.places);
-    out.splice(from, 1);
-    out.splice(to, 0, id);
-    used.push(id);
-    notes.push(`${s.teamsData.flatMap((t) => t.drivers).find((d) => d.id === id)?.shortName ?? id} sale ${to - from} puestos más atrás (P${to + 1}) por ${p.reason}`);
-  }
-  return { ids: out, used, notes };
+  const g = gridAfterPenalties(ids, s.gridPenalties);
+  const used = Object.keys(g.moved);
+  const notes = used.map((id) => {
+    const m = g.moved[id];
+    const pos = g.ids.indexOf(id);
+    return `${s.teamsData.flatMap((t) => t.drivers).find((d) => d.id === id)?.shortName ?? id} sale ${pos - m.from} puestos más atrás (P${pos + 1}) por ${m.reason}`;
+  });
+  return { ids: g.ids, used, notes };
 }
 
 const clearGridPenalties = (s: GameState, used: string[]): GameState =>

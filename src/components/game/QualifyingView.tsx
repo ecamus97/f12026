@@ -19,6 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { Race } from "@/data/f1Data";
 import {
   advanceTo,
+  gridAfterPenalties,
   runToEnd,
   clockRemaining,
   redFlagAt,
@@ -65,6 +66,7 @@ interface Props {
   onStartRace: () => void;
   weather?: WeatherTimeline; // the race's weather (shown as a forecast)
   sprint?: boolean; // sprint qualifying (SQ1-SQ3)
+  gridPenalties?: Record<string, { places: number; reason: string }>; // carried from the last race
 }
 
 const INFO = {
@@ -209,10 +211,12 @@ export function QualifyingView({
   onLive,
   onNext,
   onStartRace,
+  gridPenalties,
 }: Props) {
   const fmt = sprint ? QUALI_FORMAT.sprint : QUALI_FORMAT.gp;
   const info = sprint ? INFO.sprint : INFO.gp;
   const done = quali.grid.length > 0;
+  const startGrid = useMemo(() => gridAfterPenalties(quali.grid, gridPenalties), [quali.grid, gridPenalties]);
   const [tab, setTab] = useState<string>(done ? "grid" : "live");
   const [lv, setLv] = useState<QualiLive | null>(live);
   const [playing, setPlaying] = useState(false);
@@ -371,7 +375,8 @@ export function QualifyingView({
             </div>
           )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
-            {quali.grid.map((id, i) => {
+            {startGrid.ids.map((id, i) => {
+              const pen = startGrid.moved[id];
               const e = entryMap.get(id);
               if (!e) return null;
               const mine = e.team.id === playerTeamId;
@@ -398,6 +403,14 @@ export function QualifyingView({
                   <span className="text-[10px] text-muted-foreground truncate">
                     {e.team.shortName}
                   </span>
+                  {pen && (
+                    <span
+                      className="ml-auto shrink-0 rounded bg-amber-400/20 text-amber-300 px-1 text-[10px] font-racing"
+                      title={`Clasificó P${pen.from + 1}: ${i - pen.from} puestos de penalización por ${pen.reason}`}
+                    >
+                      P{pen.from + 1} → P{i + 1}
+                    </span>
+                  )}
                 </motion.div>
               );
             })}

@@ -778,3 +778,22 @@ export function runQualifying(
   const { live, result } = startQualifying(ctx, race.id, seed);
   return finishQualifying(ctx, live, result);
 }
+
+/** Grid after the penalties carried from the last race: each driver goes back N places (from the front, so two penalised drivers keep their order). */
+export function gridAfterPenalties(
+  ids: string[],
+  pens: Record<string, { places: number; reason: string }> | undefined,
+): { ids: string[]; moved: Record<string, { from: number; to: number; reason: string }> } {
+  const out = [...ids];
+  const moved: Record<string, { from: number; to: number; reason: string }> = {};
+  for (const id of ids) {
+    const p = pens?.[id];
+    if (!p) continue;
+    const from = out.indexOf(id);
+    const to = Math.min(out.length - 1, from + p.places);
+    out.splice(from, 1);
+    out.splice(to, 0, id);
+    moved[id] = { from: ids.indexOf(id), to, reason: p.reason };
+  }
+  return { ids: out, moved };
+}

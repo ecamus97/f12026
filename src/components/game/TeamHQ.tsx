@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Building2, FlaskConical, Wallet, Inbox, Hammer, Users, Briefcase, TrendingUp, TrendingDown, Clock, CheckCircle2 } from "lucide-react";
+import { Building2, FlaskConical, Wallet, Inbox, Hammer, Users, Briefcase, TrendingUp, TrendingDown, Clock, CheckCircle2, Target, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { races2026, type Team } from "@/data/f1Data";
 import { calendar } from "@/data/calendar";
@@ -10,7 +10,7 @@ import {
   expectedPerRace, facilityUpgradeCost, facilityBuildRaces, maxProjects, projectRaces, successChance, payroll,
   seasonInvestment, constructorsPrize, carRankOf, champRankOf,
   type PeopleState,
-  type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot,
+  type DevArea, type FacilityKey, type LedgerCategory, type ManagementState, type SponsorDeal, type SponsorSlot, type SponsorGoal, goalLabel, goalProgress,
 } from "@/engine";
 import { PerformanceChart, type Metric } from "./PerformanceChart";
 import { TeamStripe } from "./common";
@@ -597,6 +597,7 @@ const TYPICAL = { points: 6, podiums: 0, wins: 0, pole: false, dnfs: 0.2 };
 
 function Sponsors({ management, onSignSponsor }: { management: ManagementState; onSignSponsor: (id: string) => void }) {
   const p = management.player!;
+  const rank = champRankOf(management, p.teamId);
   return (
     <div className="panel p-4 space-y-4">
       <div>
@@ -621,13 +622,13 @@ function Sponsors({ management, onSignSponsor }: { management: ManagementState; 
               </span>
             </div>
             {signed.map((s) => (
-              <SponsorCard key={s.id} s={s} signed />
+              <SponsorCard key={s.id} s={s} signed rank={rank} />
             ))}
             {free > 0 && (
               <div className="grid md:grid-cols-2 gap-2">
                 {offers.map((o) => {
                   const blocked = canSignSponsor(management, o.id);
-                  return <SponsorCard key={o.id} s={o} blocked={blocked} onSign={() => onSignSponsor(o.id)} />;
+                  return <SponsorCard key={o.id} s={o} blocked={blocked} rank={rank} onSign={() => onSignSponsor(o.id)} />;
                 })}
               </div>
             )}
@@ -638,7 +639,36 @@ function Sponsors({ management, onSignSponsor }: { management: ManagementState; 
   );
 }
 
-function SponsorCard({ s, signed, blocked, onSign }: { s: SponsorDeal; signed?: boolean; blocked?: string | null; onSign?: () => void }) {
+function GoalRow({ g, rank, signed }: { g: SponsorGoal; rank: number; signed?: boolean }) {
+  const pr = goalProgress(g, rank);
+  const tone = g.status === "done" ? "text-green-400" : g.status === "failed" ? "text-red-400" : "text-foreground";
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 text-[11px]">
+        {g.status === "done" ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
+        ) : g.status === "failed" ? (
+          <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+        ) : (
+          <Target className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+        )}
+        <span className={cn("flex-1 min-w-0 truncate", tone, g.status === "failed" && "line-through")}>{goalLabel(g)}</span>
+        {signed && g.status === "active" && <span className="font-mono text-muted-foreground shrink-0">{pr.text}</span>}
+        <span className="shrink-0 rounded bg-green-500/15 text-green-300 px-1">+{g.reward.toFixed(1)} M</span>
+        {g.fine > 0 && <span className="shrink-0 rounded bg-red-500/15 text-red-300 px-1">−{g.fine.toFixed(1)} M</span>}
+      </div>
+      {signed && g.status === "active" && (
+        <div className="h-1 rounded-full bg-white/10 overflow-hidden">
+          <div className={cn("h-full", pr.frac >= 1 ? "bg-green-500" : pr.frac >= 0.5 ? "bg-amber-400" : "bg-red-500")} style={{ width: `${pr.frac * 100}%` }} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SponsorCard({
+  s, signed, blocked, onSign, rank,
+}: { s: SponsorDeal; signed?: boolean; blocked?: string | null; onSign?: () => void; rank: number }) {
   const bonuses = [
     s.perPoint > 0 && `${s.perPoint.toFixed(2)} M por punto`,
     s.perPodium > 0 && `${s.perPodium.toFixed(2)} M por podio`,
@@ -669,6 +699,14 @@ function SponsorCard({ s, signed, blocked, onSign }: { s: SponsorDeal; signed?: 
         {s.perDnf < 0 && <span className="rounded bg-red-500/15 text-red-300 px-1.5 py-0.5">Multa {s.perDnf.toFixed(2)} M por abandono</span>}
         {s.minRank !== null && <span className="rounded bg-yellow-500/15 text-yellow-300 px-1.5 py-0.5">Requiere top {s.minRank} en constructores</span>}
       </div>
+      {!!s.goals?.length && (
+        <div className="rounded-md border border-border/60 p-2 space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Objetivos del contrato</div>
+          {s.goals.map((g, i) => (
+            <GoalRow key={i} g={g} rank={rank} signed={signed} />
+          ))}
+        </div>
+      )}
       <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>
           {signed ? `Quedan ${s.racesLeft} carrera${s.racesLeft === 1 ? "" : "s"} · cobrado ${s.earned.toFixed(1)} M` : `Contrato de ${s.duration} carreras`}

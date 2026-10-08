@@ -1,9 +1,12 @@
 // Team management: budget, R&D projects, facilities and AI development.
 // Pure functions over a serialisable ManagementState.
-import { races2026, type Team } from "@/data/f1Data";
+import { races2026, teams as TEAM_LIST, type Team } from "@/data/f1Data";
 import { calendar } from "@/data/calendar";
 import { createRng, type Rng } from "./rng";
-import { generateOffers, SLOT_INFO, sponsorPayout, tvRights, type RaceOutcome, type SponsorDeal, type SponsorSlot } from "./sponsors";
+import {
+  generateOffers, goalLabel, makeSponsorGoals, SLOT_INFO, sponsorPayout, tvRights, updateSponsorGoals,
+  type RaceOutcome, type SponsorDeal, type SponsorSlot,
+} from "./sponsors";
 import type { ClassifiedRow } from "./types";
 
 export type DevArea = "aero" | "powerUnit" | "chassis" | "reliability" | "pitCrew";
@@ -274,7 +277,7 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
         ...generateOffers(rng, { slot: "secundario", count: 4, champRank: carRank, racesLeftInSeason: calendar().length, usedNames: used, uidStart: 10 }),
       ]
     : [];
-  return {
+  return ensureSponsorGoals({
     version: 1,
     dev,
     aiBudget,
@@ -299,7 +302,7 @@ export function initManagement(teams: Team[], playerTeamId: string | null, seed:
     rngState: rng.state(),
     nextUid: 100,
     history: [{ round: 0, dev: structuredClone(dev) }],
-  };
+  });
 }
 
 export const carPace = (d: CarDev) =>
@@ -427,6 +430,29 @@ export function champRankOf(m: ManagementState, teamId: string) {
   return i >= 0 ? i + 1 : carRankOf(m, teamId);
 }
 
+/** Give objectives to signed contracts and offers that don't have them yet (new offers, old saves). */
+export function ensureSponsorGoals(m: ManagementState): ManagementState {
+  const p = m.player;
+  if (!p) return m;
+  const missing = (d: SponsorDeal) => !d.goals;
+  if (!p.sponsors.some(missing) && !p.offers.some(missing)) return m;
+  const order = m.champOrder?.length ? m.champOrder : Object.keys(m.dev).sort((a, b) => carPace(m.dev[b]) - carPace(m.dev[a]));
+  const i = order.indexOf(p.teamId);
+  const team = (id?: string) => {
+    if (!id) return undefined;
+    const t = TEAM_LIST.find((x) => x.id === id);
+    return { id, name: t?.name ?? id };
+  };
+  const ctx = {
+    champRank: champRankOf(m, p.teamId),
+    carRank: carRankOf(m, p.teamId),
+    rivalAbove: i > 0 ? team(order[i - 1]) : undefined,
+    rivalBelow: i >= 0 ? team(order[i + 1]) : undefined,
+  };
+  const fill = (d: SponsorDeal) => (d.goals ? d : { ...d, goals: makeSponsorGoals(d, { ...ctx, races: d.racesLeft }) });
+  return { ...m, player: { ...p, sponsors: p.sponsors.map(fill), offers: p.offers.map(fill) } };
+}
+
 export function canSignSponsor(m: ManagementState, offerId: string): string | null {
   const p = m.player;
   const o = p?.offers.find((x) => x.id === offerId);
@@ -532,6 +558,7 @@ export function processRaceWeekend(
   constructorsOrder?: string[],
 ): ManagementState {
   if (constructorsOrder?.length) m = { ...m, champOrder: constructorsOrder };
+  m = ensureSponsorGoals(m);
   const rng = createRng(m.rngState);
   const inbox: InboxMessage[] = [];
   const ai = developAi(m, teams, rng);
@@ -555,7 +582,37 @@ export function processRaceWeekend(
     // sponsors pay and count down
     const sponsors: SponsorDeal[] = [];
     const expiredSlots = new Set<SponsorSlot>();
-    for (const sp of player.sponsors) {
+    const rivalPoints: Record<string, number> = {};
+    for (const r of rows) rivalPoints[r.teamId] = (rivalPoints[r.teamId] ?? 0) + r.points;
+    const goalRace = {
+      points,
+      podiums: outcome.podiums,
+      bothScored: myRows.filter((r) => r.points > 0).length >= 2,
+      dnfs: dnfs.length,
+      rivalPoints,
+    };
+    const rankNow = champRankOf(m, player.teamId);
+    for (const sp0 of player.sponsors) {
+      // objectives first: a bonus when achieved, a fine (demanding sponsors) when failed
+      let sp = sp0;
+      if (sp.goals?.length) {
+        const res = updateSponsorGoals(sp.goals, goalRace, rankNow, sp.racesLeft - 1 <= 0);
+        sp = { ...sp, goals: res.goals };
+        for (const g of res.settled) {
+          if (g.status === "done") {
+            ledger.push({ race: round, concept: `${sp.name}: objetivo cumplido`, amount: g.reward, category: "sponsor" });
+            sp = { ...sp, earned: +(sp.earned + g.reward).toFixed(2) };
+            inbox.push({ race: round, tone: "good", text: `🎯 Objetivo de ${sp.name} cumplido (${goalLabel(g)}): bono de US$ ${g.reward.toFixed(1)} M.` });
+          } else {
+            if (g.fine > 0) ledger.push({ race: round, concept: `${sp.name}: objetivo no cumplido`, amount: -g.fine, category: "sponsor" });
+            inbox.push({
+              race: round,
+              tone: "bad",
+              text: `${sp.name}: objetivo no cumplido (${goalLabel(g)})${g.fine > 0 ? `. Multa de US$ ${g.fine.toFixed(1)} M.` : ". Te quedas sin el bono."}`,
+            });
+          }
+        }
+      }
       const lines = sponsorPayout(sp, outcome);
       const tpK = tpSponsorMult(m.staffRatings?.[player.teamId]?.tp);
       lines.forEach((l, li) =>
@@ -638,7 +695,7 @@ export function processRaceWeekend(
     if (round % 6 === 0 && round < calendar().length) inbox.push({ race: round, tone: "info", text: "Nuevas ofertas de patrocinio disponibles." });
   }
 
-  return {
+  return ensureSponsorGoals({
     ...m,
     dev,
     player,
@@ -646,7 +703,7 @@ export function processRaceWeekend(
     rngState: rng.state(),
     history: [...(m.history ?? []), { round, dev: structuredClone(dev) }],
     lastAiPackages: ai.packages,
-  };
+  });
 }
 
 /** Rough per-race balance with the current contracts (no bonuses or prizes). */
@@ -734,7 +791,7 @@ export function startNewSeason(m: ManagementState, teams: Team[], constructorsOr
     for (const slot of ["principal", "secundario"] as SponsorSlot[]) player = refreshSlotOffers(nm, player, slot, 0, rng, applyDevToTeams(teams, nm));
     inbox.push({ race: 0, tone: "info", text: `Temporada ${season - 1}: ingresos US$ ${fin.income} M, gastos US$ ${fin.expenses} M, inversión US$ ${fin.investments} M.` });
   }
-  return { ...nm, player, inbox: [...m.inbox, ...inbox].slice(-60), rngState: rng.state(), history: [{ round: -1, dev: structuredClone(m.dev) }, { round: 0, dev: structuredClone(dev) }] };
+  return ensureSponsorGoals({ ...nm, player, inbox: [...m.inbox, ...inbox].slice(-60), rngState: rng.state(), history: [{ round: -1, dev: structuredClone(m.dev) }, { round: 0, dev: structuredClone(dev) }] });
 }
 
 /** Field ranking (1 = best) of a team in each area. */

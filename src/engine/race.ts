@@ -220,6 +220,8 @@ export function simulateLap(prev: RaceState): RaceState {
   const startRank = new Map(running.map((c, i) => [c.id, i]));
 
   let newSafetyCar = false;
+  // cars that went off or limped this lap (a mistake, a puncture): whoever is right behind goes straight by
+  const slowed = new Map<string, number>();
 
   running.forEach((car, idx) => {
     car.pittedThisLap = false;
@@ -358,6 +360,7 @@ export function simulateLap(prev: RaceState): RaceState {
         const loss = 1 + rng.next() * 3;
         time += loss;
         mistakeLoss = loss;
+        slowed.set(car.id, loss);
         events.push({ lap, type: "mistake", text: `${name(car)} se pasa de largo y pierde ${loss.toFixed(1)}s`, drivers: [car.id] });
       }
       // track limits: three warnings, then 5 seconds (and 10 more after three more)
@@ -390,6 +393,7 @@ export function simulateLap(prev: RaceState): RaceState {
           const loss = 16 + rng.next() * 12;
           time += loss;
           mistakeLoss += loss;
+          slowed.set(car.id, (slowed.get(car.id) ?? 0) + loss);
           events.push({
             lap,
             type: "puncture",
@@ -557,13 +561,16 @@ export function simulateLap(prev: RaceState): RaceState {
         const ersBonus =
           (behind.ersMode === "deploy" && (behind.battery ?? 0) > 10 ? 0.6 : 0) -
           (ahead.ersMode === "deploy" && (ahead.battery ?? 0) > 10 ? 0.4 : 0);
-        const p = overtakeChance({
+        let p = overtakeChance({
           delta,
           attacker: behind.entry,
           defender: ahead.entry,
           track,
           bonus: bonus + ersBonus + (state.rules?.overtakeAid ? 0.6 : 0) + atk - def,
         });
+        // a car that ran wide or is limping can't defend; a much faster car gets by sooner or later
+        if ((slowed.get(ahead.id) ?? 0) > 0.5 && delta > 0.3) p = 1;
+        else if (delta > 1.2) p = 1 - (1 - p) * (1 - Math.min(0.9, (delta - 1.2) * 0.5) * (def ? 0.6 : 1));
         if (rng.chance(p)) {
           order[j] = ahead;
           order[j - 1] = behind;

@@ -431,7 +431,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
                 open={openCards.includes(car.id)}
                 onToggle={() => setOpenCards((o) => (o.includes(car.id) ? o.filter((x) => x !== car.id) : [...o, car.id]))}
                 car={car}
-                pos={state.cars.indexOf(car) + 1}
+                pos={towerRows.find((r) => r.car.id === car.id)?.pos ?? state.cars.indexOf(car) + 1}
                 state={state}
                 onApply={apply}
                 onMode={(fn) => applyMode(car.id, fn)}
