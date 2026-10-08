@@ -11,7 +11,7 @@ import {
 } from "@/engine";
 import { TeamStripe, TyreBadge, mineStyle } from "./common";
 import { RaceResults } from "./RaceResults";
-import { TrackMap, lapProgressDetailed, type LapAnimation } from "./TrackMap";
+import { TrackMap, lapProgressDetailed, PIT_ENTRY, type LapAnimation } from "./TrackMap";
 import { StrategyPlanner } from "./StrategyPlanner";
 import { DuelPanel, TeamOrdersPanel } from "./RaceInstructions";
 import { moraleLabel } from "@/engine";
@@ -233,6 +233,21 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
     [anim, apply, detailed, onUpdate, state],
   );
 
+  /**
+   * Pit calls: if the car hasn't reached the pit entry yet, it stops at the end of this very lap
+   * (the lap is simulated again with the call); past the entry it has to wait for the next pass.
+   */
+  const applyPit = useCallback(
+    (carId: string, fn: (s: RaceState) => RaceState) => {
+      const f = detailed?.[carId]?.frac;
+      if (!anim || f == null || f >= PIT_ENTRY - 0.015 || anim.to.redFlag) return apply(fn);
+      const changed = fn(state);
+      onUpdate(changed);
+      setAnim((a) => (a ? { ...a, to: simulateLap(changed) } : a));
+    },
+    [anim, apply, detailed, onUpdate, state],
+  );
+
   const [openCards, setOpenCards] = useState<string[]>([]); // pit wall cards start closed
   const leader = state.cars[0];
   const myCars = state.cars.filter((c) => c.entry.team.id === playerTeamId);
@@ -435,6 +450,7 @@ export function RaceView({ race, state, playerTeamId, onUpdate, onFinish, round 
                 state={state}
                 onApply={apply}
                 onMode={(fn) => applyMode(car.id, fn)}
+                onPit={(fn) => applyPit(car.id, fn)}
                 live={anim ? { frac: Math.max(0, Math.min(1, detailed?.[car.id]?.frac ?? 0)), to: anim.to.cars.find((c) => c.id === car.id) } : null}
                 finishing={!!anim && (detailed?.[car.id]?.frac ?? 0) < 0}
               />
@@ -624,8 +640,9 @@ function TowerRow({
 }
 
 function PitWallCard({
-  car, pos, state, onApply, onMode, live, finishing = false, open = false, onToggle,
+  car, pos, state, onApply, onMode, onPit, live, finishing = false, open = false, onToggle,
 }: {
+  onPit: (fn: (s: RaceState) => RaceState) => void;
   open?: boolean;
   onToggle?: () => void;
   finishing?: boolean; // still completing the previous lap
@@ -700,7 +717,7 @@ function PitWallCard({
             <Button
               size="sm"
               className="h-7 text-xs bg-red-600 hover:bg-red-500 text-white"
-              onClick={() => onApply((s) => requestPit(s, car.id, car.plan[1]?.compound ?? car.compound))}
+              onClick={() => onPit((s) => requestPit(s, car.id, car.plan[1]?.compound ?? car.compound))}
             >
               Box ahora
             </Button>
@@ -839,7 +856,7 @@ function PitWallCard({
             <div className="flex items-center gap-2 rounded-md bg-orange-500/15 border border-orange-500/40 px-2 py-1.5 text-xs">
               <Wrench className="w-3.5 h-3.5 text-orange-400" />
               <span className="flex-1">Box en la próxima pasada → {COMPOUNDS[car.pitRequest].name}</span>
-              <button onClick={() => onApply((s) => requestPit(s, car.id, null))} title="Cancelar">
+              <button onClick={() => onPit((s) => requestPit(s, car.id, null))} title="Cancelar">
                 <X className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -847,7 +864,7 @@ function PitWallCard({
             <div className={cn("flex items-center gap-1 rounded-md px-1", sc && "bg-yellow-400/10 py-1")}>
               <span className="text-[11px] text-muted-foreground mr-1">{sc ? "Box ahora (barato con SC):" : "Box ahora:"}</span>
               {compounds.map((c) => (
-                <button key={c} onClick={() => onApply((s) => requestPit(s, car.id, c))} className="hover:scale-110 transition-transform" title={`Parar y poner ${COMPOUNDS[c].name}`}>
+                <button key={c} onClick={() => onPit((s) => requestPit(s, car.id, c))} className="hover:scale-110 transition-transform" title={`Parar y poner ${COMPOUNDS[c].name}`}>
                   <TyreBadge compound={c} />
                 </button>
               ))}

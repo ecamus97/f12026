@@ -158,12 +158,23 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
   }
 }
 
+function hashId(text: string) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
 /** Simulate one lap for the whole field. */
 export function simulateLap(prev: RaceState): RaceState {
   if (prev.finished) return prev;
   const state = clone(prev);
   const rng = createRng(state.rngState);
   const lap = state.lap + 1;
+  // pit stops and each on-track duel draw from their own streams: a stop called in the middle of a lap
+  // (the lap gets simulated again) changes that car's lap and not what happened to everyone else
+  const seed0 = state.rngState >>> 0;
+  const subRng = (...keys: (string | number)[]) =>
+    createRng(keys.reduce<number>((h, k) => (Math.imul(h ^ (typeof k === "number" ? k : hashId(k)), 2654435761) + 0x9e3779b9) >>> 0, seed0));
   const { track, config } = state;
   const events: RaceEvent[] = [];
   const sc = state.safetyCar;
@@ -427,7 +438,7 @@ export function simulateLap(prev: RaceState): RaceState {
       const call = car.pitRequest ?? weatherCall ?? aiPitDecision(car, lap, state.totalLaps, track, scLap);
       if (call) {
         const manual = !!car.pitRequest;
-        doPitStop(car, call, state, rng, events, lap);
+        doPitStop(car, call, state, subRng("pit", car.id, lap), events, lap);
         // weather stops (or switching between dry and rain tyres) need a fresh plan
         if (weatherCall && !manual) car.plan = replan(call, lap, state.totalLaps, track, car.entry.driver.tyreMgmt);
         else if (manual && isWetTyre(call)) car.plan = [{ compound: call, untilLap: state.totalLaps }];
@@ -454,6 +465,7 @@ export function simulateLap(prev: RaceState): RaceState {
     while (j > 0) {
       const behind = order[j];
       const ahead = order[j - 1];
+      const prng = subRng("duel", behind.id, ahead.id, lap);
       if (behind.total >= ahead.total + MIN_GAP) break;
       const pitSwap = behind.pittedThisLap || ahead.pittedThisLap;
       if (pitSwap || neutral) {
@@ -472,7 +484,7 @@ export function simulateLap(prev: RaceState): RaceState {
       const sameTeam = behind.entry.team.id === ahead.entry.team.id;
       if (sameTeam && behind.total < ahead.total && state.teamOrders?.[behind.entry.team.id]?.kind === "hold") {
         // team order: hold positions
-        behind.total = ahead.total + MIN_GAP + rng.next() * 0.3;
+        behind.total = ahead.total + MIN_GAP + prng.next() * 0.3;
         break;
       }
       if (behind.total < ahead.total) {
@@ -483,18 +495,18 @@ export function simulateLap(prev: RaceState): RaceState {
         if ((atk || def || sameTeam) && !contacted.has(behind.id) && !standing) {
           const cons = (200 - behind.entry.driver.consistency - ahead.entry.driver.consistency) / 40;
           const pc = 0.0015 * (atk ? 1.8 : 1) * (def ? 1.8 : 1) * (sameTeam ? 1.5 : 1) * config.incidents * (1 + wet) * (1 + cons);
-          if (rng.chance(pc)) {
+          if (prng.chance(pc)) {
             contacted.add(behind.id);
             contacted.add(ahead.id);
-            const at = +(0.2 + rng.next() * 0.7).toFixed(3);
+            const at = +(0.2 + prng.next() * 0.7).toFixed(3);
             const who = `${name(behind)} y ${name(ahead)}${sameTeam ? " (¡compañeros de equipo!)" : ""}`;
-            const roll = rng.next();
-            const victim = rng.chance(0.5) ? behind : ahead;
+            const roll = prng.next();
+            const victim = prng.chance(0.5) ? behind : ahead;
             const other = victim === behind ? ahead : behind;
             const hurt = (c: CarState) => {
               // a broken front wing: time lost now and every lap until it's changed
-              c.damage = { part: "wing", pace: +(0.8 + rng.next() * 1.4).toFixed(2) };
-              c.total += 1.5 + rng.next() * 2;
+              c.damage = { part: "wing", pace: +(0.8 + prng.next() * 1.4).toFixed(2) };
+              c.total += 1.5 + prng.next() * 2;
               if (!c.controlled && lap < state.totalLaps - 1) c.pitRequest = c.pitRequest ?? c.plan[1]?.compound ?? c.compound;
             };
             const retiredHere: CarState[] = [];
@@ -514,31 +526,31 @@ export function simulateLap(prev: RaceState): RaceState {
               // one of them is out (broken suspension, puncture and floor damage...)
               out(victim, other);
               events.push({ lap, type: "dnf", text: `💥 Choque entre ${who}: ${name(victim)} abandona`, drivers: [victim.id, other.id], at });
-              if (rng.chance(0.5)) {
+              if (prng.chance(0.5)) {
                 hurt(other);
                 events.push({ lap, type: "damage", text: `🔧 ${name(other)} sigue con el alerón dañado (−${other.damage!.pace.toFixed(1)}s por vuelta)`, drivers: [other.id], at: Math.min(0.99, at + 0.01) });
-              } else other.total += 0.5 + rng.next();
+              } else other.total += 0.5 + prng.next();
             } else if (roll < 0.37) {
               hurt(behind);
               hurt(ahead);
               events.push({ lap, type: "damage", text: `💥 Contacto entre ${who}: los dos dañan el alerón delantero`, drivers: [behind.id, ahead.id], at });
             } else if (roll < 0.8) {
               hurt(victim);
-              other.total += 0.5 + rng.next();
+              other.total += 0.5 + prng.next();
               events.push({ lap, type: "damage", text: `💥 Contacto entre ${who}: ${name(victim)} daña el alerón delantero (−${victim.damage!.pace.toFixed(1)}s por vuelta)`, drivers: [victim.id, other.id], at });
             } else {
-              behind.total += 0.4 + rng.next() * 0.8;
-              ahead.total += 0.4 + rng.next() * 0.8;
+              behind.total += 0.4 + prng.next() * 0.8;
+              ahead.total += 0.4 + prng.next() * 0.8;
               events.push({ lap, type: "mistake", text: `💥 Toque entre ${who}, sin daños: pierden algo de tiempo`, drivers: [behind.id, ahead.id], at });
             }
             // the stewards look at it: usually the attacker is to blame (even if he is the one who retired)
-            if (rng.chance(0.55)) {
-              const guilty = rng.chance(def && !atk ? 0.45 : 0.7) ? behind : ahead;
+            if (prng.chance(0.55)) {
+              const guilty = prng.chance(def && !atk ? 0.45 : 0.7) ? behind : ahead;
               const reason = guilty === behind ? `provocar un choque con ${name(ahead)}` : `cambiar de trayectoria al defenderse de ${name(behind)}`;
-              if (guilty.status === "running") givePenalty(guilty, rng.chance(0.3) ? 10 : 5, reason, lap, events, Math.min(0.99, at + 0.05));
+              if (guilty.status === "running") givePenalty(guilty, prng.chance(0.3) ? 10 : 5, reason, lap, events, Math.min(0.99, at + 0.05));
               else {
                 // out of the race: the penalty moves to the grid of the next one
-                const places = rng.chance(0.3) ? 5 : 3;
+                const places = prng.chance(0.3) ? 5 : 3;
                 guilty.gridPenalty = { places, reason };
                 events.push({
                   lap,
@@ -571,10 +583,10 @@ export function simulateLap(prev: RaceState): RaceState {
         // a car that ran wide or is limping can't defend; a much faster car gets by sooner or later
         if ((slowed.get(ahead.id) ?? 0) > 0.5 && delta > 0.3) p = 1;
         else if (delta > 1.2) p = 1 - (1 - p) * (1 - Math.min(0.9, (delta - 1.2) * 0.5) * (def ? 0.6 : 1));
-        if (rng.chance(p)) {
+        if (prng.chance(p)) {
           order[j] = ahead;
           order[j - 1] = behind;
-          ahead.total = Math.max(ahead.total, behind.total + MIN_GAP + rng.next() * 0.3);
+          ahead.total = Math.max(ahead.total, behind.total + MIN_GAP + prng.next() * 0.3);
           behind.total += 0.1;
           ahead.total += 0.1;
           events.push({
@@ -586,7 +598,7 @@ export function simulateLap(prev: RaceState): RaceState {
           j--;
           continue;
         }
-        behind.total = ahead.total + MIN_GAP + rng.next() * 0.3;
+        behind.total = ahead.total + MIN_GAP + prng.next() * 0.3;
       }
       break;
     }
