@@ -68,7 +68,7 @@ export interface StaffRecord {
   birthYear?: number;
   retired?: boolean;
   /** Signed to replace someone: joins this team when the season ends. */
-  signed?: { teamId: string; until: number; salary: number } | null;
+  signed?: { teamId: string; until: number; salary: number; fee?: number } | null; // fee: signing bonus, paid when joining
 }
 
 export interface PeopleState {
@@ -512,7 +512,7 @@ export function hireStaff(p: PeopleState, staffId: string, teamId: string, years
         ...p,
         staff: {
           ...p.staff,
-          [staffId]: { ...s, signed: { teamId, until, salary: pay } },
+          [staffId]: { ...s, signed: { teamId, until, salary: pay, fee: cost } },
           [current.id]: { ...current, until: Math.min(current.until ?? p.season, p.season) },
         },
       },

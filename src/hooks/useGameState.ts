@@ -1375,13 +1375,17 @@ export function useGameState() {
     const s = stateRef.current;
     if (!s.people || !s.management || !s.playerTeamId) return { ok: false, message: "No disponible", result: "reject" };
     const r = offerStaffContract(s.people, staffId, s.playerTeamId, salary, years, s.currentRaceIndex + 1);
-    if (r.result === "accept" && (s.management.player?.budget ?? 0) < r.cost) {
+    // someone joining next season is paid his signing bonus when he arrives
+    const deferred = r.result === "accept" && !!r.people.staff[staffId]?.signed;
+    if (r.result === "accept" && !deferred && (s.management.player?.budget ?? 0) < r.cost) {
       return { ok: false, message: `Aceptaría, pero no tienes presupuesto para la prima de firma (US$ ${r.cost.toFixed(1)} M).`, result: "reject" };
     }
     setGameState((cur) => {
       if (!cur.people || !cur.management || !cur.playerTeamId) return cur;
       if (r.result !== "accept") return { ...cur, people: { ...cur.people, talks: r.people.talks } };
-      const m = chargePlayer(withStaff(cur.management, r.people), cur.currentRaceIndex, `Contratación: ${r.people.staff[staffId].name}`, -r.cost, "transfers", r.message);
+      const m = deferred
+        ? { ...withStaff(cur.management, r.people), inbox: [...cur.management.inbox, { race: cur.currentRaceIndex, tone: "good" as const, text: `${r.message} La prima de firma (US$ ${r.cost.toFixed(1)} M) se paga cuando llegue.` }].slice(-60) }
+        : chargePlayer(withStaff(cur.management, r.people), cur.currentRaceIndex, `Contratación: ${r.people.staff[staffId].name}`, -r.cost, "transfers", r.message);
       const n = marketNews({
         season: cur.season,
         round: cur.currentRaceIndex,
@@ -1393,7 +1397,7 @@ export function useGameState() {
           ? `${lookupOf(cur).team(cur.playerTeamId)?.name} ficha a ${r.people.staff[staffId].name} para ${cur.season + 1}`
           : `${lookupOf(cur).team(cur.playerTeamId)?.name} contrata a ${r.people.staff[staffId].name}`,
         summary: r.message,
-        body: [r.message, `Sueldo US$ ${salary.toFixed(1)} M/año. Prima de firma: US$ ${r.cost.toFixed(1)} M.`],
+        body: [r.message, `Sueldo US$ ${salary.toFixed(1)} M/año. Prima de firma: US$ ${r.cost.toFixed(1)} M${deferred ? " (al incorporarse)" : ""}.`],
       });
       return { ...cur, people: r.people, management: m, news: addNews(cur.news, [n]) };
     });
@@ -1581,6 +1585,9 @@ export function useGameState() {
         };
       }
       let management: ManagementState = { ...withStaff(startNewSeason(s.management, s.teamsData, order, people.season), people), regs: regsOf(rules) };
+      // signing bonuses of the staff signed last year for this season
+      const arriving = Object.values(s.people.staff).filter((st) => st.signed?.teamId === s.playerTeamId && st.signed.fee);
+      for (const st of arriving) management = chargePlayer(management, 0, `Prima de firma: ${st.name}`, -(st.signed!.fee ?? 0), "transfers");
       const changes = proposals.filter((p) => p.effective === people.season && (p.status === "approved" || p.status === "decreed"));
       if (changes.length) {
         management = {

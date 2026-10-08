@@ -515,9 +515,9 @@ export function StaffPanel({
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Cada candidato tiene un sueldo estimado; puedes ofrecer más o menos. Al firmar se paga medio año del sueldo acordado como prima. Si el
-          puesto está vacante entra de inmediato; si está ocupado, llega al final de la temporada, cuando sale quien lo ocupa (sin indemnización).
-          Solo despedir a alguien tiene costo de indemnización.
+          Cada candidato tiene un sueldo estimado; puedes ofrecer más o menos. La prima de firma es medio año del sueldo acordado. Si el puesto
+          está vacante entra de inmediato y la prima se paga al firmar; si está ocupado, llega al final de la temporada (cuando sale quien lo
+          ocupa, sin indemnización) y la prima se paga al llegar. Solo despedir a alguien tiene costo de indemnización.
         </p>
         <div className="divide-y divide-border/40">
           {free.map((s) => {
@@ -540,7 +540,22 @@ export function StaffPanel({
                     {current && <span className="text-[10px] text-muted-foreground"> vs {current.rating}</span>}
                   </span>
                   <span className="text-muted-foreground">{m1(s.salary)}/año</span>
-                  <Button size="sm" variant="outline" className="h-7 text-xs" disabled={budget < cost * 0.6 || taken} onClick={() => setTalking({ id: s.id, mode: "hire" })}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    disabled={taken || (!current && budget < cost * 0.6)}
+                    onClick={() => setTalking({ id: s.id, mode: "hire" })}
+                    title={
+                      taken
+                        ? "Ya firmaste a alguien para ese puesto"
+                        : !current && budget < cost * 0.6
+                          ? `Sin presupuesto para la prima de firma (≈ US$ ${cost.toFixed(1)} M)`
+                          : current
+                            ? `Llega en ${season + 1}; la prima de firma se paga entonces`
+                            : undefined
+                    }
+                  >
                     Negociar
                   </Button>
                 </span>
@@ -604,7 +619,9 @@ export function StaffPanel({
           costNote={(salary) => {
             if (talking.mode === "renew") return `Renovación: el nuevo sueldo rige desde ya.`;
             const cur = mine[tStaff.role];
-            return `Al firmar pagas US$ ${(salary * 0.5).toFixed(1)} M de prima.${cur ? ` Llega al terminar ${season}, cuando sale ${cur.name} (sin indemnización).` : " Entra de inmediato."}`;
+            return cur
+              ? `Llega al terminar ${season}, cuando sale ${cur.name} (sin indemnización). La prima de US$ ${(salary * 0.5).toFixed(1)} M se paga al llegar.`
+              : `Al firmar pagas US$ ${(salary * 0.5).toFixed(1)} M de prima. Entra de inmediato.`;
           }}
         />
       )}
