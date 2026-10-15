@@ -177,6 +177,8 @@ export function DriversPanel({
         people={people}
         team={team}
         teams={teams}
+        seatFor={openNow ? season : nextLine.length < 2 ? next : null}
+        onPromote={openOffer}
         onHire={onHireReserve}
         onRelease={onReleaseReserve}
         onProfile={onProfile}
@@ -272,8 +274,10 @@ export function DriversPanel({
 
 /** The reserve / test driver: cheap, works in the simulator and is the first option if a seat opens. */
 function ReservePanel({
-  people, team, teams, onHire, onRelease, onProfile,
+  people, team, teams, onHire, onRelease, onProfile, seatFor, onPromote,
 }: {
+  seatFor?: number | null; // a race seat free for this season (now) or the next one
+  onPromote?: (d: DriverRecord) => void;
   people: PeopleState;
   team: Team;
   teams: Team[];
@@ -323,6 +327,22 @@ function ReservePanel({
             {m1(cur.reserveSalary ?? 0)}/año · hasta {cur.reserveUntil ?? season}
           </span>
           <div className="w-full flex gap-2">
+            {cur.nextContract?.teamId === team.id && (
+              <span className="text-[11px] text-green-400 self-center flex items-center gap-1">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Titular desde {season + 1}
+              </span>
+            )}
+            {seatFor != null && onPromote && !cur.nextContract && (
+              f1Ready(cur) && !willRetire(cur, season) && (seatFor === season ? signableNow(cur) : availableForNextSeason(people, cur)) ? (
+                <Button size="sm" className="h-7 text-xs" onClick={() => onPromote(cur)}>
+                  <UserPlus className="w-3 h-3 mr-1" /> Subir a titular {seatFor === season ? "ya" : `para ${seatFor}`}
+                </Button>
+              ) : (
+                <span className="text-[11px] text-muted-foreground self-center" title="Necesita más nivel o una temporada en F2">
+                  Todavía no puede ser titular
+                </span>
+              )
+            )}
             <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => setOpen((o) => !o)}>
               Cambiar reserva
             </Button>

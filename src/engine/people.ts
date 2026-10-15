@@ -1,7 +1,7 @@
 // Drivers and staff over the years: contracts, salaries, the market, ageing and retirements.
 import type { Driver, Team } from "@/data/f1Data";
 import {
-  EXTRA_DRIVERS, GRID_BIOS, STAFF, STAFF_ROLES, STAFF_ROLE_INFO,
+  EXTRA_DRIVERS, F3_REAL, GRID_BIOS, STAFF, STAFF_ROLES, STAFF_ROLE_INFO,
   type StaffRole,
 } from "@/data/peopleData";
 import { createRng, type Rng } from "./rng";
@@ -80,6 +80,7 @@ export interface PeopleState {
   nextJunior: number;
   salaryCap?: number | null; // regulation: max salary per driver
   talks?: Record<string, Talk>; // ongoing negotiations ("d:<id>" drivers, "s:<id>" staff)
+  juniorsV?: number; // version of the junior ladder rules the save was migrated to
 }
 
 // --- Negotiations -----------------------------------------------------------------
@@ -231,7 +232,11 @@ export function initPeople(teams: Team[], seed: number): PeopleState {
     const { status, origin, birthYear, potential, ...base } = e;
     drivers[e.id] = {
       ...base, birthYear, potential, contract: null, nextContract: null, status, origin, f1Seasons: F1_EXPERIENCE[e.id] ?? 0,
-      ...(status === "junior" ? { series: "F2" as const, seriesSeasons: F2_SEASONS[e.id] ?? 1 } : {}),
+      ...(status === "junior"
+        ? F3_REAL.has(e.id)
+          ? { series: "F3" as const, seriesSeasons: 1, juniorTeam: F3_TEAMS[Math.floor(hash01(e.id) * F3_TEAMS.length)] }
+          : { series: "F2" as const, seriesSeasons: F2_SEASONS[e.id] ?? 1 }
+        : {}),
     };
   }
   seedFeeder(drivers, seed, FIRST_SEASON);
@@ -239,7 +244,7 @@ export function initPeople(teams: Team[], seed: number): PeopleState {
   assignReserves(drivers, teams, FIRST_SEASON, null, createRng(seed ^ 0xbeef));
   const staff: Record<string, StaffRecord> = {};
   for (const s of STAFF) staff[s.id] = { ...s, salary: staffSalary(s.role, s.rating), until: s.teamId ? s.until ?? FIRST_SEASON + 1 : undefined, birthYear: staffBirth(s.id) };
-  return { version: 1, season: FIRST_SEASON, drivers, staff, rngState: seed, nextJunior: 100 };
+  return { version: 1, season: FIRST_SEASON, drivers, staff, rngState: seed, nextJunior: 100, juniorsV: 2 };
 }
 
 /** Staff ages (game values): between 38 and 64 in 2026. */
@@ -283,12 +288,47 @@ export function migrateFeeder(p: PeopleState): PeopleState {
   return { ...p, drivers, nextJunior: Math.max(p.nextJunior, 100) };
 }
 
+/**
+ * Saves from before the slower junior ladder: invented juniors had grown too fast (an 18-year-old
+ * with F1 pace in F2), and the real Formula 3 drivers were missing.
+ */
+export function migrateJuniors(p: PeopleState): PeopleState {
+  if ((p.juniorsV ?? 0) >= 2) return p;
+  const drivers = structuredClone(p.drivers);
+  const years = Math.max(0, p.season - FIRST_SEASON);
+  for (const e of EXTRA_DRIVERS) {
+    if (!F3_REAL.has(e.id) || drivers[e.id]) continue;
+    const { status, origin, birthYear, potential, ...base } = e;
+    void origin;
+    const grow = Math.min(potential - base.pace, years * 2.2);
+    drivers[e.id] = {
+      ...base, pace: +(base.pace + grow).toFixed(1), birthYear, potential, contract: null, nextContract: null, status, f1Seasons: 0,
+      ...(years >= 1
+        ? { series: "F2" as const, origin: "Fórmula 2", seriesSeasons: years - 1, juniorTeam: F2_TEAMS[Math.floor(hash01(e.id) * F2_TEAMS.length)] }
+        : { series: "F3" as const, origin: "Fórmula 3", seriesSeasons: 1, juniorTeam: F3_TEAMS[Math.floor(hash01(e.id) * F3_TEAMS.length)] }),
+    };
+  }
+  for (const d of Object.values(drivers)) {
+    const m = /^jr(\d{4})-/.exec(d.id);
+    if (!m || d.status !== "junior") continue;
+    const since = Math.max(0, p.season - Number(m[1]));
+    const cap = 64 + since * 3 + (d.series === "F2" ? 3 : 0);
+    if (d.pace > cap) {
+      const cut = d.pace - cap;
+      d.pace = +cap.toFixed(1);
+      d.potential = +Math.max(d.pace + 8, d.potential - cut * 0.5).toFixed(1);
+    }
+  }
+  return { ...p, drivers, juniorsV: 2 };
+}
+
 /** Is a junior good enough for an F1 seat? Only proven F2 drivers are. */
 export function f1Ready(d: DriverRecord) {
   if (d.status !== "junior") return true;
   if (d.series !== "F2" && d.series !== "F3") return true;
   if (d.series !== "F2") return false;
-  return d.pace >= 77 || ((d.seriesSeasons ?? 0) >= 2 && d.pace >= 75);
+  // at least a season in F2 first (unless clearly above the field)
+  return d.pace >= 80 || ((d.seriesSeasons ?? 0) >= 1 && d.pace >= 77) || ((d.seriesSeasons ?? 0) >= 2 && d.pace >= 75);
 }
 
 /** Contract length: usually two or three years, one for veterans (or sometimes). */
@@ -439,7 +479,16 @@ export function offerDriverContract(
       ok: true,
       result: "accept",
       message: `${d.name} firma por ${years} año${years > 1 ? "s" : ""} (US$ ${salary.toFixed(1)} M/año) y corre desde ya`,
-      people: { ...n.people, drivers: { ...n.people.drivers, [driverId]: { ...d, status: "active", contract: { teamId, salary, until } } } },
+      people: {
+        ...n.people,
+        drivers: {
+          ...n.people.drivers,
+          [driverId]: {
+            ...d, status: "active", contract: { teamId, salary, until },
+            series: undefined, juniorTeam: undefined, reserveOf: null, reserveSalary: undefined, reserveUntil: undefined,
+          },
+        },
+      },
     };
   }
   const next = p.season + 1;
@@ -705,7 +754,9 @@ export function teamWants(d: DriverRecord, carRank: number, season: number) {
     // F1 experience always counts; rookies are a risk, above all for the top teams
     Math.min(exp, 6) * (0.4 + 0.4 * (1 - t)) -
     (exp === 0 ? 2 + 7 * (1 - t) : 0) +
-    growth * (0.08 + 0.6 * t) +
+    Math.min(growth, 8) * (0.06 + 0.3 * t) +
+    // a proven F2 driver is a safer bet than an unknown
+    (d.status === "junior" && d.series === "F2" ? Math.min(d.seriesSeasons ?? 0, 3) * 0.8 : 0) +
     (age <= 22 ? 3 * t : 0) -
     (age >= 34 ? (age - 33) * (0.4 + t) : 0) -
     marketValue(d, season) * (0.015 + 0.12 * t)
@@ -724,7 +775,8 @@ function develop(d: DriverRecord, season: number, rng: Rng, coach = 80, form = 0
   const gap = Math.max(0, d.potential - d.pace);
   const k = Math.max(0.7, Math.min(1.3, 1 + (coach - 80) * 0.02)); // race engineering boss helps them grow
   let dp: number;
-  if (age <= 23) dp = gap * (0.25 + rng.next() * 0.25) * k;
+  if (d.status === "junior" && (d.series === "F3" || d.series === "F2")) dp = gap * (0.1 + rng.next() * 0.12) + rng.next() * 0.4; // learning in the junior series
+  else if (age <= 23) dp = gap * (0.25 + rng.next() * 0.25) * k;
   else if (age <= 27) dp = gap * (0.15 + rng.next() * 0.2) * k;
   else if (age <= 31) dp = (rng.next() - 0.4) * 0.8;
   else if (age <= 35) dp = -rng.next() * 0.9;
@@ -734,7 +786,7 @@ function develop(d: DriverRecord, season: number, rng: Rng, coach = 80, form = 0
   dp += form * 0.8;
   // a year without a seat: juniors keep racing in F2, everybody else gets rusty
   if (d.status === "free" && age >= 24) dp -= 0.3 + rng.next() * 0.7;
-  if (d.status === "junior") dp += rng.next() * 0.6; // an F2 season
+
   return {
     ...d,
     pace: +clamp(d.pace + dp).toFixed(1),
@@ -756,9 +808,11 @@ function newJunior(rng: Rng, season: number, n: number, existing: Record<string,
   const name = nameFor(flag, rng, new Set(Object.values(existing).map((d) => d.name)));
   const last = name.split(" ").slice(-1)[0].normalize("NFD").replace(/[^A-Za-z]/g, "").toUpperCase();
   const f3 = series === "F3";
-  const pace = f3 ? 64 + rng.next() * 7 : 70 + rng.next() * 6;
-  const potential = Math.min(97, pace + (f3 ? 12 : 8) + rng.next() * (f3 ? 16 : 12));
-  const base = (f3 ? 66 : 71) + rng.next() * 6;
+  // most arrive raw: a few seasons in F3 and F2 before they are F1 material; a real prodigy is rare
+  const prodigy = rng.chance(0.04);
+  const pace = (f3 ? 60 + rng.next() * 7 : 66 + rng.next() * 6) + (prodigy ? 4 : 0);
+  const potential = Math.min(96, pace + 8 + rng.next() * 14 + (prodigy ? 6 : 0));
+  const base = (f3 ? 63 : 68) + rng.next() * 6;
   const used = new Set(Object.values(existing).filter((d) => d.status !== "retired").map((d) => d.shortName));
   const short = [last.slice(0, 3), last.slice(0, 2) + last.slice(-1), last[0] + last.slice(2, 4), `J${(n % 90) + 10}`].find((c) => c.length === 3 && !used.has(c)) ?? `J${(n % 90) + 10}`;
   return {

@@ -67,6 +67,7 @@ import {
   offerStaffRenewal,
   migrateStaff,
   migrateFeeder,
+  migrateJuniors,
   migrateReserves,
   megaChange,
   applyMegaRegulation,
@@ -402,7 +403,7 @@ export function hydrate(raw: unknown): GameState | null {
     }
     // saves from before contracts and staff existed
     if (state.playerTeamId && !state.people) state.people = initPeople(state.teamsData, randomSeed());
-    if (state.people) state.people = migrateReserves(migrateFeeder(migrateStaff(state.people)), state.teamsData);
+    if (state.people) state.people = migrateJuniors(migrateReserves(migrateFeeder(migrateStaff(state.people)), state.teamsData));
     if (state.management && state.people) {
       state.management = withStaff(state.management, state.people);
       const pl = state.management.player;

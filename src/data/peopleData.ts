@@ -80,7 +80,19 @@ export const EXTRA_DRIVERS: ExtraDriver[] = [
   x("cra", "Jak Crawford", "CRA", 38, "🇺🇸", 76, 77, 75, 77, 76, 2005, 87, "junior", "Fórmula 2"),
   x("vrs", "Richard Verschoor", "VSR", 39, "🇳🇱", 77, 78, 77, 79, 78, 2000, 80, "junior", "Fórmula 2"),
   x("mar", "Victor Martins", "MAR", 45, "🇫🇷", 75, 76, 74, 77, 75, 2001, 82, "junior", "Fórmula 2"),
+  // Formula 3 (game values): the next ones in line, ahead of the invented juniors
+  x("ugo", "Ugo Ugochukwu", "UGO", 61, "🇺🇸", 72, 73, 71, 72, 71, 2007, 91, "junior", "Fórmula 3"),
+  x("sla", "Freddie Slater", "SLA", 62, "🇬🇧", 72, 72, 70, 71, 71, 2008, 92, "junior", "Fórmula 3"),
+  x("tap", "Tuukka Taponen", "TAP", 63, "🇫🇮", 72, 73, 71, 72, 72, 2006, 88, "junior", "Fórmula 3"),
+  x("cnh", "Mattia Colnaghi", "CNH", 64, "🇮🇹", 71, 72, 70, 71, 71, 2007, 89, "junior", "Fórmula 3"),
+  x("leo", "Noel León", "LEO", 65, "🇲🇽", 71, 72, 71, 72, 71, 2004, 85, "junior", "Fórmula 3"),
+  x("wha", "James Wharton", "WHA", 66, "🇦🇺", 71, 71, 70, 71, 70, 2006, 88, "junior", "Fórmula 3"),
+  x("bad", "Brando Badoer", "BAD", 67, "🇮🇹", 70, 71, 70, 71, 70, 2007, 86, "junior", "Fórmula 3"),
+  x("wur", "Charlie Wurz", "WUR", 68, "🇦🇹", 70, 71, 70, 72, 71, 2005, 85, "junior", "Fórmula 3"),
 ];
+
+/** Formula 3 drivers of the list above. */
+export const F3_REAL = new Set(["ugo", "sla", "tap", "cnh", "leo", "wha", "bad", "wur"]);
 
 export type StaffRole = "tp" | "td" | "aero" | "pu" | "sport" | "race";
 
