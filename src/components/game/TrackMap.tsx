@@ -54,10 +54,10 @@ export function lapProgressDetailed(
     if (clock < from && before && before.lastLap) {
       // still on the previous lap: use its sectors and its pit stop
       const pFrom = from - before.lastLap;
-      const f = sectorFraction(pFrom, from, before.lastSectors, clock, before.lastPitTime ?? 0) - 1;
+      const f = sectorFraction(pFrom, from, before.lastSectors, clock, before.lastPitTime ?? 0, before.lastPitStop) - 1;
       out[c.id] = { frac: f, inPit: inPitLane(f + 1, before.lastPitTime) };
     } else {
-      const f = sectorFraction(from, to, c.lastSectors, clock, c.lastPitTime ?? 0);
+      const f = sectorFraction(from, to, c.lastSectors, clock, c.lastPitTime ?? 0, c.lastPitStop);
       out[c.id] = { frac: f, inPit: inPitLane(f, c.lastPitTime) };
     }
   }
@@ -126,7 +126,7 @@ function pointAt(g: Geometry, frac: number): [number, number] {
 export const PIT_ENTRY = 0.965; // lap fraction where the pit lane starts
 export const PIT_BOX = 0.985; // where the car stops
 
-function sectorFraction(from: number, to: number, sectors: number[] | undefined, t: number, pit = 0) {
+export function sectorFraction(from: number, to: number, sectors: number[] | undefined, t: number, pit = 0, stop?: number) {
   if (!sectors || sectors.length !== 3) return carFraction(from, to, t);
   const [s1, s2, s3] = sectors.map((x) => Math.max(0.05, x));
   const c1 = from + s1;
@@ -135,13 +135,19 @@ function sectorFraction(from: number, to: number, sectors: number[] | undefined,
   if (t <= c1) return (t - from) / (3 * s1);
   if (t <= c2) return 1 / 3 + (t - c1) / (3 * s2);
   if (pit <= 0) return 2 / 3 + (t - c2) / (3 * s3);
-  // pit lap: race to the pit entry, then drive in, stop at the box, drive out
-  const pitStart = to - pit;
-  if (t <= pitStart) return 2 / 3 + ((t - c2) / Math.max(0.05, pitStart - c2)) * (PIT_ENTRY - 2 / 3);
-  const u = Math.min(1, (t - pitStart) / pit);
-  if (u < 0.2) return PIT_ENTRY + (PIT_BOX - PIT_ENTRY) * (u / 0.2);
-  if (u < 0.8) return PIT_BOX; // stationary in the box
-  return PIT_BOX + (1 - PIT_BOX) * ((u - 0.8) / 0.2);
+  // pit lap: full speed until the pit entry (same pace as the rest of the sector), then the pit lane
+  const track3 = Math.max(0.05, s3 - pit); // the sector's time on track, without the stop
+  const pitStart = c2 + track3 * (PIT_ENTRY - 2 / 3) * 3;
+  if (t <= pitStart) return 2 / 3 + (t - c2) / (3 * track3);
+  // in the pit lane: limiter speed to the box, the stop, limiter speed to the exit
+  const lane = Math.max(0.1, to - pitStart);
+  const still = Math.min(lane * 0.5, Math.max(0, stop ?? Math.min(3, lane * 0.12)));
+  const drive = lane - still;
+  const toBox = drive * ((PIT_BOX - PIT_ENTRY) / (1 - PIT_ENTRY));
+  const u = t - pitStart;
+  if (u < toBox) return PIT_ENTRY + (PIT_BOX - PIT_ENTRY) * (u / toBox);
+  if (u < toBox + still) return PIT_BOX; // stationary in the box
+  return Math.min(1, PIT_BOX + (1 - PIT_BOX) * ((u - toBox - still) / Math.max(0.05, drive - toBox)));
 }
 
 /** Is the car in the pit lane at this lap fraction? */

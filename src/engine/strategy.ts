@@ -3,7 +3,7 @@ import { createRng } from "./rng";
 import type { Track } from "@/data/f1Data";
 import type { Rng } from "./rng";
 import type { CarState, Compound, Stint } from "./types";
-import { bestTyreFor, DRY_COMPOUNDS, isWetTyre, raceLapTime, tyreLife, wetPenalty } from "./model";
+import { bestTyreFor, DRY_COMPOUNDS, isWetTyre, pitLaneLoss, raceLapTime, tyreLife, wetPenalty } from "./model";
 import type { Entry } from "./types";
 import { DEFAULT_SIM_CONFIG } from "./types";
 
@@ -108,7 +108,7 @@ export function estimatePlanTime(entry: Entry, track: Track, plan: Stint[]): num
         lap, totalLaps: track.laps, cfg: DEFAULT_SIM_CONFIG, noise: 0,
       });
     }
-    if (i < plan.length - 1) total += track.pitLoss + PIT_STATIONARY + (100 - entry.team.pitCrew) * 0.025;
+    if (i < plan.length - 1) total += pitLaneLoss(track) + PIT_STATIONARY + (100 - entry.team.pitCrew) * 0.025;
   });
   return total;
 }
@@ -261,7 +261,7 @@ export function aiWeatherPit(
   const dry = dryCompoundFor(lapsLeft, track, car.entry.driver.tyreMgmt);
   const options: Compound[] = [dry, "I", "W"];
   const stay = costOver(car.compound);
-  const pitLoss = track.pitLoss * (scActive ? 0.55 : 1) + 2.5;
+  const pitLoss = pitLaneLoss(track) * (scActive ? 0.55 : 1) + 2.5;
   let best: Compound | null = null;
   let bestGain = 0;
   for (const c of options) {

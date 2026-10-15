@@ -158,3 +158,9 @@ export function overtakeChance(params: {
     bonus;
   return sigmoid(x);
 }
+
+/**
+ * Time lost driving through the pit lane (entry to exit, against staying on track), without the stop
+ * itself. A normal stop costs 20-30 s in total depending on the circuit.
+ */
+export const pitLaneLoss = (track: Pick<Track, "pitLoss">) => Math.min(30, Math.max(20, track.pitLoss)) - 2.4;

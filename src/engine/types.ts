@@ -73,6 +73,7 @@ export interface CarState {
   dnfAt?: number; // where on the lap it stopped (0..1)
   pittedThisLap: boolean;
   lastPitTime?: number; // seconds spent in the pit lane at the end of the last lap (0 = no stop)
+  lastPitStop?: number; // of which stationary in the box
   pitFrom?: { compound: Compound; tyreAge: number; stops: number }; // tyres before this lap's stop (for the live view)
   prevLastLap?: number; // lap time of the lap before (shown while the car is still finishing it)
   instruction?: Instruction; // attack the car ahead / defend from the one behind

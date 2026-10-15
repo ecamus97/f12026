@@ -49,8 +49,15 @@ describe("race instructions and team orders", () => {
     let logged = 0;
     for (let seed = 1; seed <= 20; seed++) {
       let s = createRace(race, allEntries(), seed, undefined, "williams");
-      while (s.lap < 20) s = simulateLap(s);
-      const mine = s.cars.filter((c) => c.controlled && c.status === "running");
+      // a moment of the race when the two cars of the team run close together
+      const mineOf = (x: typeof s) => x.cars.filter((c) => c.controlled && c.status === "running");
+      const close = (x: typeof s) => {
+        const m = mineOf(x);
+        return m.length === 2 && Math.abs(m[0].total - m[1].total) < 2.5;
+      };
+      while (s.lap < 12 || (!close(s) && s.lap < 45 && !s.finished)) s = simulateLap(s);
+      if (!close(s)) continue;
+      const mine = mineOf(s);
       if (mine.length < 2) continue;
       s = setTeamOrder(s, "williams", { kind: "swap", favored: mine[1].id });
       for (let i = 0; i < 6 && !s.finished; i++) s = simulateLap(s);

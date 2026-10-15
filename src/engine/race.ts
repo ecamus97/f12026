@@ -7,7 +7,7 @@ import { obeyChance } from "./mood";
 import { DEFAULT_SIM_CONFIG } from "./types";
 import {
   bestTyreFor, COMPOUNDS, DIRTY_AIR_WINDOW, ERS_MODES, FUEL_MARGIN, FUEL_MODES, isWetTyre, MIN_GAP, MODES,
-  overtakeChance, raceLapTime, tyreLife,
+  overtakeChance, pitLaneLoss, raceLapTime, tyreLife,
 } from "./model";
 import { advancePlan, aiPitDecision, aiWeatherPit, buildPlan, normalisePlan, recommendPlans, replan, weatherStyle } from "./strategy";
 import { generateWeather, type WeatherTimeline } from "./weather";
@@ -134,10 +134,11 @@ function doPitStop(car: CarState, compound: Compound, state: RaceState, rng: Rng
     slow += " · cambia el alerón delantero";
     car.damage = undefined;
   }
-  const pitTime = track.pitLoss * scFactor + stationary;
+  const pitTime = pitLaneLoss(track) * scFactor + stationary;
   car.pitFrom = { compound: car.compound, tyreAge: car.tyreAge, stops: car.stops };
   car.total += pitTime;
   car.lastPitTime = pitTime;
+  car.lastPitStop = stationary;
   car.plan = advancePlan(car, compound, lap, state.totalLaps);
   car.compound = compound;
   car.tyreAge = 0;
@@ -237,6 +238,7 @@ export function simulateLap(prev: RaceState): RaceState {
   running.forEach((car, idx) => {
     car.pittedThisLap = false;
     car.lastPitTime = 0;
+    car.lastPitStop = 0;
     car.pitFrom = undefined;
     car.prevLastLap = car.lastLap;
     car.tyreAge = +(car.tyreAge + (scLap ? 0.25 : 1)).toFixed(2); // behind the safety car the tyres hardly wear

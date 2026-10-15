@@ -422,6 +422,19 @@ export function hydrate(raw: unknown): GameState | null {
         filled.push(exact ?? { round: r, dev: fallback.dev });
       }
       m.history = [...hist.filter((h) => h.round < 0), ...filled];
+      // saves where last year's point already included the work finished in the winter: take it from the archive
+      const last = state.archive[state.archive.length - 1];
+      if (last && last.season === state.season - 1) {
+        m.history = m.history.map((h) => {
+          if (h.round !== -1) return h;
+          const dev = { ...h.dev };
+          for (const t of last.teams) {
+            const d = dev[t.id];
+            if (d && t.aero != null && t.powerUnit != null && t.chassis != null) dev[t.id] = { ...d, aero: t.aero, powerUnit: t.powerUnit, chassis: t.chassis, reliability: t.reliability };
+          }
+          return { ...h, dev };
+        });
+      }
       if (m.player && !m.player.sponsors) {
         const fresh = initManagement(state.teamsData, state.playerTeamId, randomSeed());
         m.player.sponsors = [];
@@ -1554,6 +1567,7 @@ export function useGameState() {
       const sprints = pickSprints(newCal, s.nextSprints ?? s.sprints, s.seed ^ s.season);
       setActiveCalendar(newCal);
       // pending work in the factory is finished during the winter
+      const devAtSeasonEnd = s.management.dev; // the chart's "last year" point: before the winter work
       const off = completeOffSeason(s.management, randomSeed());
       s = { ...s, management: off.m };
       // how each driver did against the team-mate shapes next year's development
@@ -1584,6 +1598,7 @@ export function useGameState() {
         };
       }
       let management: ManagementState = { ...withStaff(startNewSeason(s.management, s.teamsData, order, people.season), people), regs: regsOf(rules) };
+      management = { ...management, history: management.history.map((h) => (h.round === -1 ? { ...h, dev: structuredClone(devAtSeasonEnd) } : h)) };
       // signing bonuses of the staff signed last year for this season
       const arriving = Object.values(s.people.staff).filter((st) => st.signed?.teamId === s.playerTeamId && st.signed.fee);
       for (const st of arriving) management = chargePlayer(management, 0, `Prima de firma: ${st.name}`, -(st.signed!.fee ?? 0), "transfers");
